@@ -4,6 +4,7 @@
 A self-hosted replacement for a paid ESP, where the list, the sending, and the
 engagement data stay yours.
 
+[![CI](https://github.com/robconery/big-mailer/actions/workflows/ci.yml/badge.svg)](https://github.com/robconery/big-mailer/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6.svg)](tsconfig.json)
 [![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers%20%C2%B7%20D1%20%C2%B7%20Queues%20%C2%B7%20R2-F38020.svg)](https://workers.cloudflare.com/)
