@@ -156,7 +156,7 @@ function shell(inner: string, footer: string, pixel: string): string {
 <body style="margin:0;padding:0;background:#f6f5f3">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f6f5f3">
 <tr><td align="center" style="padding:32px 16px">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:10px;border:1px solid #e6e3de">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:640px;background:#ffffff;border-radius:10px;border:1px solid #e6e3de">
 <tr><td style="padding:36px 40px;font:16px/1.65 -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#22262b">
 ${inner}
 </td></tr>

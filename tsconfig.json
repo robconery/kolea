@@ -19,7 +19,7 @@
     "noEmit": true,
     "isolatedModules": true
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "scripts/**/*.ts", "drizzle.config.ts"],
+  "include": ["src/**/*.ts", "src/**/*.tsx", "drizzle.config.ts"],
   // The browser bundle has its own config — see src/client/tsconfig.json.
   "exclude": ["src/client"]
 }

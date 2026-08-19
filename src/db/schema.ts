@@ -50,6 +50,8 @@ export const subscribers = sqliteTable(
     uniqueIndex('subscribers_email_key').on(t.email),
     uniqueIndex('subscribers_unsub_token_key').on(t.unsubToken),
     index('subscribers_status_idx').on(t.status),
+    // The audience list orders by this on every page load, over 13k+ rows.
+    index('subscribers_created_at_idx').on(t.createdAt),
   ],
 )
 

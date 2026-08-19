@@ -5,6 +5,7 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260804.1",
     "@types/bun": "latest",
+    "@types/turndown": "^5.0.6",
     "drizzle-kit": "^0.31.10",
     "playwright-core": "^1.62.1",
     "wrangler": "^4.120.0"
@@ -36,6 +37,7 @@
     "hono": "^4.13.1",
     "lowlight": "^3.3.0",
     "marked": "^18.0.9",
+    "turndown": "^7.2.4",
     "zod": "^4.4.3"
   },
   "scripts": {
@@ -45,7 +47,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "wrangler d1 migrations apply big-mailer --local",
     "db:studio": "drizzle-kit studio",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p src/client",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p src/client && tsc --noEmit -p scripts",
     "deploy": "bun run build:client && wrangler deploy --env production",
     "smoke": "node scripts/smoke-editor.mjs"
   }

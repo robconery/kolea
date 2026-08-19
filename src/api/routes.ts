@@ -122,7 +122,14 @@ const PIXEL = Uint8Array.from(
 api.get('/t/open/:id{[0-9]+\\.gif}', async (c) => {
   const db = getDb(c.env)
   const messageId = Number(c.req.param('id').replace('.gif', ''))
-  if (messageId) await recordEvent(db, messageId, 'open')
+
+  // Recording must never be able to break the pixel (SPEC 5.4) — a message row
+  // deleted after send would otherwise 500 this from inboxes forever.
+  try {
+    if (messageId) await recordEvent(db, messageId, 'open')
+  } catch {
+    /* swallow — the pixel matters more than the datapoint */
+  }
 
   return c.body(PIXEL as unknown as ArrayBuffer, 200, {
     'Content-Type': 'image/gif',

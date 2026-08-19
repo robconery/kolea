@@ -44,7 +44,10 @@ audience.get('/subscribers', async (c) => {
       .select()
       .from(subscribers)
       .where(filters.length ? and(...filters) : undefined)
-      .orderBy(desc(subscribers.id))
+      // Newest joiner first. Not `id` — the Kit import inserted 13.7k people in
+      // CSV order, so ids no longer track signup date at all. `id` stays as the
+      // tiebreaker for the same-timestamp rows a bulk import produces.
+      .orderBy(desc(subscribers.createdAt), desc(subscribers.id))
       .limit(200)
       .all(),
     db.select().from(tags).orderBy(asc(tags.name)).all(),

@@ -1,0 +1,1 @@
+CREATE INDEX `subscribers_created_at_idx` ON `subscribers` (`created_at`);

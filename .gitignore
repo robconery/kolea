@@ -4,7 +4,7 @@ build/
 out/
 coverage/
 .cache/
-
+data/
 .env
 .env.*
 !.env.example
@@ -39,3 +39,6 @@ public/*.js.map
 .claude/skills/rob/
 .cursor/
 to-do.md
+.cf-token
+.import-kit/
+.import-kit-content/

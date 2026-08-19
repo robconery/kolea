@@ -76,6 +76,39 @@
       "workers_dev": false,
       "routes": [{ "pattern": "__HOSTNAME__", "custom_domain": true }],
 
+      // ⚠️ Wrangler environments do NOT inherit bindings from the top level —
+      // every binding above must be repeated here or production deploys without
+      // a database, bucket, or queues (env.DB === undefined at runtime).
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "big-mailer",
+          "database_id": "local-dev-placeholder",
+          "migrations_dir": "migrations"
+        }
+      ],
+      "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "big-mailer-media" }],
+      "queues": {
+        "producers": [{ "binding": "SEND_QUEUE", "queue": "big-mailer-send" }],
+        "consumers": [
+          {
+            "queue": "big-mailer-send",
+            "max_batch_size": 100,
+            "max_batch_timeout": 5,
+            "max_retries": 3,
+            "dead_letter_queue": "big-mailer-dlq",
+            "max_concurrency": 6
+          },
+          {
+            "queue": "big-mailer-dlq",
+            "max_batch_size": 100,
+            "max_batch_timeout": 30,
+            "max_retries": 1
+          }
+        ]
+      },
+      "triggers": { "crons": ["*/1 * * * *", "17 9 * * *"] },
+
       "vars": {
         // First deploy renders mail into the Outbox instead of sending, so the
         // whole stack can be verified live with nothing able to leave. Flip to

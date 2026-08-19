@@ -24,7 +24,14 @@ export async function listBroadcasts(db: Db, limit = 50) {
   return await db
     .select()
     .from(broadcasts)
-    .orderBy(desc(broadcasts.createdAt))
+    .orderBy(
+      // Newest send first. `created_at` is the wrong axis now that history has
+      // been imported — a 2023 broadcast pulled in from Kit was *created* today,
+      // so ordering by that buries this month's mail under three years of it.
+      // Drafts and scheduled mail have no `sent_at`, so they fall back to the
+      // date they're actually pegged to.
+      desc(sql`coalesce(${broadcasts.sentAt}, ${broadcasts.scheduledAt}, ${broadcasts.createdAt})`),
+    )
     .limit(limit)
     .all()
 }
