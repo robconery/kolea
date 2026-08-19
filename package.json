@@ -1,0 +1,52 @@
+{
+  "name": "big-mailer",
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260804.1",
+    "@types/bun": "latest",
+    "drizzle-kit": "^0.31.10",
+    "playwright-core": "^1.62.1",
+    "wrangler": "^4.120.0"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2.0.0",
+    "@tiptap/core": "^3",
+    "@tiptap/extension-bubble-menu": "^3",
+    "@tiptap/extension-code-block-lowlight": "^3",
+    "@tiptap/extension-details": "^3",
+    "@tiptap/extension-drag-handle": "^3",
+    "@tiptap/extension-file-handler": "^3",
+    "@tiptap/extension-highlight": "^3",
+    "@tiptap/extension-image": "^3",
+    "@tiptap/extension-list": "^3",
+    "@tiptap/extension-node-range": "^3",
+    "@tiptap/extension-table": "^3",
+    "@tiptap/extension-text-align": "^3",
+    "@tiptap/extension-typography": "^3",
+    "@tiptap/extension-youtube": "^3",
+    "@tiptap/extensions": "^3",
+    "@tiptap/pm": "^3",
+    "@tiptap/starter-kit": "^3",
+    "@tiptap/suggestion": "^3",
+    "drizzle-orm": "^0.45.2",
+    "hono": "^4.13.1",
+    "lowlight": "^3.3.0",
+    "marked": "^18.0.9",
+    "zod": "^4.4.3"
+  },
+  "scripts": {
+    "dev": "bun run build:client && wrangler dev",
+    "build:client": "bun build src/client/editor.ts --outdir public --target browser --minify --entry-naming editor.js && cp src/client/editor.css public/editor.css",
+    "watch:client": "bun build src/client/editor.ts --outdir public --target browser --entry-naming editor.js --watch",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "wrangler d1 migrations apply big-mailer --local",
+    "db:studio": "drizzle-kit studio",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p src/client",
+    "deploy": "bun run build:client && wrangler deploy --env production",
+    "smoke": "node scripts/smoke-editor.mjs"
+  }
+}

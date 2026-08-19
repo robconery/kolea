@@ -1,0 +1,20 @@
+# Copy to `.dev.vars`. Everything here is a secret — `.dev.vars` is gitignored,
+# this example file is not, so never paste a real value below.
+
+# ── Mail ────────────────────────────────────────────────────────────────────
+# Leave EMAIL_PROVIDER=console (the default in wrangler.jsonc) to keep everything
+# in the in-app Outbox instead of sending for real.
+EMAIL_PROVIDER=resend
+RESEND_API_KEY=re_xxxxxxxxxxxxxxxxxxxxxxxx
+RESEND_WEBHOOK_SECRET=whsec_xxxxxxxxxxxx
+
+# ── MCP ─────────────────────────────────────────────────────────────────────
+# The unguessable path segment the MCP server answers on: POST /mcp/<secret>.
+# Unset means the endpoint 404s, so MCP is off until you set this.
+# Generate one: openssl rand -hex 24
+MCP_PATH_SECRET=set-me-to-something-random
+
+# ── Stripe ──────────────────────────────────────────────────────────────────
+# Restricted key, read-only on charges / refunds / customers. Used by the daily
+# reconciliation cron and the stripe_* MCP tools.
+STRIPE_SECRET_KEY=rk_test_xxxxxxxxxxxx

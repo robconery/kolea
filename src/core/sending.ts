@@ -1,0 +1,322 @@
+import { eq, inArray } from 'drizzle-orm'
+import type { Db } from '../db/index.ts'
+import { broadcasts, messages, sequenceSteps, sequences, subscribers } from '../db/schema.ts'
+import { ConsoleProvider } from '../providers/console.ts'
+import { ResendProvider } from '../providers/resend.ts'
+import type { EmailProvider, OutgoingEmail } from '../providers/types.ts'
+import type { Env, SendJob } from '../types.ts'
+import {
+  type ConsentSnapshot,
+  type Scope,
+  canReceiveBroadcastIn,
+  canReceiveSequenceIn,
+  canReceiveTransactionalIn,
+  loadConsentSnapshot,
+} from './consent.ts'
+import { type EmailBody, renderEmail } from './render.ts'
+
+/** D1 caps bound parameters at 100 per query. */
+const PARAM_CHUNK = 100
+
+function providerFor(env: Env, db: Db): EmailProvider {
+  if (env.EMAIL_PROVIDER === 'resend') {
+    if (!env.RESEND_API_KEY) throw new Error('EMAIL_PROVIDER=resend but RESEND_API_KEY is unset')
+    return new ResendProvider(env.RESEND_API_KEY)
+  }
+  return new ConsoleProvider(db)
+}
+
+/**
+ * Hand work to the queue, or run it inline if no queue binding exists.
+ *
+ * The fallback is not a nicety: it keeps `wrangler dev` working on machines
+ * where Queues aren't provisioned, so the app is always runnable locally.
+ */
+export async function dispatch(env: Env, db: Db, messageIds: number[]): Promise<void> {
+  if (env.SEND_QUEUE) {
+    for (let i = 0; i < messageIds.length; i += 100) {
+      const chunk = messageIds.slice(i, i + 100)
+      await env.SEND_QUEUE.sendBatch(chunk.map((messageId) => ({ body: { messageId } as SendJob })))
+    }
+    return
+  }
+  await sendMessages(env, db, messageIds)
+}
+
+/**
+ * Send every still-queued message synchronously.
+ *
+ * Used by seeding and tests, where "the queue will get to it eventually" makes
+ * results nondeterministic. Safe alongside the queue: `sendMessages` skips
+ * anything no longer `queued`.
+ */
+export async function drainQueued(env: Env, db: Db, limit = 500): Promise<number> {
+  const pending = await db
+    .select({ id: messages.id })
+    .from(messages)
+    .where(eq(messages.status, 'queued'))
+    .limit(limit)
+    .all()
+  await sendMessages(
+    env,
+    db,
+    pending.map((m) => m.id),
+  )
+  return pending.length
+}
+
+export type SendOutcome =
+  | { status: 'sent' }
+  | { status: 'suppressed'; reason: string }
+  | { status: 'failed'; error: string; retryable: boolean }
+  | { status: 'skipped' }
+
+/**
+ * Send exactly one materialized message.
+ *
+ * Idempotent by design: a message that is not `queued` is skipped, so queue
+ * redelivery after a crash can never double-send (SPEC 3.8).
+ */
+export async function sendMessage(env: Env, db: Db, messageId: number): Promise<SendOutcome> {
+  const outcomes = await sendMessages(env, db, [messageId])
+  return outcomes.get(messageId) ?? { status: 'skipped' }
+}
+
+type MessageRow = typeof messages.$inferSelect
+type SubscriberRow = typeof subscribers.$inferSelect
+
+/** Load rows whose ids are in `ids`, respecting D1's bound-parameter cap. */
+async function loadByIds<T>(
+  ids: number[],
+  fetchChunk: (chunk: number[]) => Promise<T[]>,
+): Promise<T[]> {
+  const unique = [...new Set(ids)]
+  const out: T[] = []
+  for (let i = 0; i < unique.length; i += PARAM_CHUNK) {
+    out.push(...(await fetchChunk(unique.slice(i, i + PARAM_CHUNK))))
+  }
+  return out
+}
+
+/**
+ * Send a set of materialized messages as one batch.
+ *
+ * Identical rules to sending them one at a time — including the deliberate
+ * last-moment consent check — but every lookup is hoisted out of the per-message
+ * loop and the provider receives the whole set in one request. A queue batch of
+ * 100 costs roughly 100 D1 queries and a single provider call, where the
+ * one-at-a-time path cost 500 queries and 100 calls.
+ *
+ * Idempotent: anything not `queued` is skipped, so queue redelivery after a
+ * crash can never double-send (SPEC 3.8).
+ */
+export async function sendMessages(
+  env: Env,
+  db: Db,
+  messageIds: number[],
+): Promise<Map<number, SendOutcome>> {
+  const outcomes = new Map<number, SendOutcome>()
+  const ids = [...new Set(messageIds)]
+  if (ids.length === 0) return outcomes
+  for (const id of ids) outcomes.set(id, { status: 'skipped' })
+
+  const msgs = await loadByIds(ids, (chunk) =>
+    db.select().from(messages).where(inArray(messages.id, chunk)).all(),
+  )
+  const queued = msgs.filter((m) => m.status === 'queued')
+  if (queued.length === 0) return outcomes
+
+  // ── everything this batch touches, fetched once
+
+  const subs = await loadByIds(
+    queued.map((m) => m.subscriberId),
+    (chunk) => db.select().from(subscribers).where(inArray(subscribers.id, chunk)).all(),
+  )
+  const subById = new Map(subs.map((s) => [s.id, s]))
+
+  const bcasts = await loadByIds(
+    queued.flatMap((m) => (m.kind === 'broadcast' && m.broadcastId ? [m.broadcastId] : [])),
+    (chunk) => db.select().from(broadcasts).where(inArray(broadcasts.id, chunk)).all(),
+  )
+  const bcastById = new Map(bcasts.map((b) => [b.id, b]))
+
+  const steps = await loadByIds(
+    queued.flatMap((m) => (m.kind === 'sequence' && m.sequenceStepId ? [m.sequenceStepId] : [])),
+    (chunk) => db.select().from(sequenceSteps).where(inArray(sequenceSteps.id, chunk)).all(),
+  )
+  const stepById = new Map(steps.map((s) => [s.id, s]))
+
+  const seqs = await loadByIds(
+    steps.map((s) => s.sequenceId),
+    (chunk) => db.select().from(sequences).where(inArray(sequences.id, chunk)).all(),
+  )
+  const seqById = new Map(seqs.map((s) => [s.id, s]))
+
+  const snapshot = await loadConsentSnapshot(
+    db,
+    queued.map((m) => m.toEmail),
+    queued.map((m) => m.subscriberId),
+    seqs.map((s) => s.id),
+  )
+
+  // ── decide, render, collect
+
+  const pending: { message: MessageRow; email: OutgoingEmail }[] = []
+
+  for (const msg of queued) {
+    const sub = subById.get(msg.subscriberId)
+    if (!sub) {
+      outcomes.set(msg.id, await markSuppressed(db, msg.id, 'no_subscriber'))
+      continue
+    }
+
+    const resolved = resolveSource(msg, bcastById, stepById, seqById)
+    if ('missing' in resolved) {
+      outcomes.set(msg.id, await markSuppressed(db, msg.id, resolved.missing))
+      continue
+    }
+
+    const block = eligibility(snapshot, msg, sub, resolved.scope)
+    if (block.blocked) {
+      outcomes.set(msg.id, await markSuppressed(db, msg.id, block.reason))
+      continue
+    }
+
+    // Transactional mail carries no unsubscribe footer and no tracking — it isn't
+    // marketing, and offering to unsubscribe from a receipt is nonsense.
+    const isMarketing = msg.kind !== 'transactional'
+
+    const rendered = renderEmail(resolved.body, {
+      publicUrl: env.PUBLIC_URL,
+      messageId: msg.id,
+      unsubToken: sub.unsubToken,
+      scope: resolved.scope,
+      scopeLabel: resolved.scopeLabel,
+      subscriber: { email: sub.email, name: sub.name },
+      trackOpens: isMarketing,
+      trackClicks: isMarketing,
+      showFooter: isMarketing,
+    })
+
+    pending.push({
+      message: msg,
+      email: {
+        ref: msg.id,
+        to: sub.email,
+        fromEmail: env.FROM_EMAIL,
+        fromName: env.FROM_NAME,
+        subject: msg.subject,
+        html: rendered.html,
+        text: rendered.text,
+        listUnsubscribeUrl: rendered.oneClickUnsubscribeUrl,
+      },
+    })
+  }
+
+  if (pending.length === 0) return outcomes
+
+  // ── one provider request for the lot
+
+  const provider = providerFor(env, db)
+  const results = await provider.sendBatch(pending.map((p) => p.email))
+
+  for (const [i, { message }] of pending.entries()) {
+    const result = results[i]
+    if (!result) {
+      // Shouldn't happen — the port promises one result per input — but a silent
+      // `sent` here would be a lost email, so treat it as retryable.
+      outcomes.set(message.id, { status: 'failed', error: 'no provider result', retryable: true })
+      continue
+    }
+
+    if (result.ok) {
+      await db
+        .update(messages)
+        .set({
+          status: 'sent',
+          provider: provider.name,
+          providerMessageId: result.providerMessageId,
+          sentAt: new Date(),
+          error: null,
+        })
+        .where(eq(messages.id, message.id))
+      outcomes.set(message.id, { status: 'sent' })
+      continue
+    }
+
+    await db
+      .update(messages)
+      .set({ status: result.retryable ? 'queued' : 'failed', error: result.error })
+      .where(eq(messages.id, message.id))
+    outcomes.set(message.id, {
+      status: 'failed',
+      error: result.error,
+      retryable: result.retryable,
+    })
+  }
+
+  return outcomes
+}
+
+/** Resolve a message's body and consent scope from the pre-loaded sources. */
+function resolveSource(
+  msg: MessageRow,
+  bcastById: Map<number, typeof broadcasts.$inferSelect>,
+  stepById: Map<number, typeof sequenceSteps.$inferSelect>,
+  seqById: Map<number, typeof sequences.$inferSelect>,
+): { body: EmailBody; scope: Scope; scopeLabel: string } | { missing: string } {
+  if (msg.kind === 'broadcast' && msg.broadcastId) {
+    const b = bcastById.get(msg.broadcastId)
+    if (!b) return { missing: 'no_broadcast' }
+    return {
+      body: { json: b.bodyJson, md: b.bodyMd },
+      scope: { kind: 'broadcast' },
+      scopeLabel: 'the newsletter',
+    }
+  }
+
+  if (msg.kind === 'sequence' && msg.sequenceStepId) {
+    const step = stepById.get(msg.sequenceStepId)
+    if (!step) return { missing: 'no_step' }
+    const seq = seqById.get(step.sequenceId)
+    if (!seq) return { missing: 'no_sequence' }
+    return {
+      body: { json: step.bodyJson, md: step.bodyMd },
+      scope: { kind: 'sequence', sequenceId: seq.id },
+      scopeLabel: seq.name,
+    }
+  }
+
+  return {
+    body: { md: msg.bodyMd ?? '' },
+    scope: { kind: 'broadcast' },
+    scopeLabel: 'account notifications',
+  }
+}
+
+/**
+ * ⭐ Consent is checked here, immediately before the provider call — the last
+ * possible moment, so a mid-broadcast opt-out is honoured. Reading it from a
+ * snapshot rather than the database doesn't change that: the snapshot is loaded
+ * inside this same batch, well after the recipient rows were materialized.
+ */
+function eligibility(
+  snapshot: ConsentSnapshot,
+  msg: MessageRow,
+  sub: SubscriberRow,
+  scope: Scope,
+) {
+  if (msg.kind === 'broadcast') return canReceiveBroadcastIn(snapshot, sub)
+  if (msg.kind === 'sequence' && scope.kind === 'sequence') {
+    return canReceiveSequenceIn(snapshot, sub, scope.sequenceId)
+  }
+  return canReceiveTransactionalIn(snapshot, sub.email)
+}
+
+async function markSuppressed(db: Db, messageId: number, reason: string): Promise<SendOutcome> {
+  await db
+    .update(messages)
+    .set({ status: 'suppressed', suppressedReason: reason })
+    .where(eq(messages.id, messageId))
+  return { status: 'suppressed', reason }
+}

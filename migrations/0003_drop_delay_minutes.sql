@@ -1,0 +1,1 @@
+ALTER TABLE `sequence_steps` DROP COLUMN `delay_minutes`;

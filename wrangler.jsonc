@@ -1,0 +1,102 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "big-mailer",
+  "main": "src/worker.tsx",
+  "compatibility_date": "2025-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  "assets": { "directory": "./public", "binding": "ASSETS" },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "big-mailer",
+      "database_id": "local-dev-placeholder",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  // Image uploads. R2 is S3-compatible but the native binding needs no credentials,
+  // which is what makes uploads work in `wrangler dev` offline.
+  "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "big-mailer-media" }],
+
+  "queues": {
+    "producers": [{ "binding": "SEND_QUEUE", "queue": "big-mailer-send" }],
+    "consumers": [
+      {
+        "queue": "big-mailer-send",
+        "max_batch_size": 100,
+        "max_batch_timeout": 5,
+        "max_retries": 3,
+        "dead_letter_queue": "big-mailer-dlq",
+        // One batch = one provider request, so this IS our request rate. Left
+        // unset, Queues autoscales to 250 concurrent consumers and buries
+        // Resend's 10 req/s limit under 429s, which then burn all three retries
+        // and dead-letter perfectly good mail. Six concurrent batches of 100 is
+        // ~600 emails/sec of headroom while staying under the limit.
+        "max_concurrency": 6
+      },
+      {
+        // Nothing sends from here — the handler just marks the message failed so
+        // a give-up is a row in D1 instead of a log line that expires in a week.
+        "queue": "big-mailer-dlq",
+        "max_batch_size": 100,
+        "max_batch_timeout": 30,
+        "max_retries": 1
+      }
+    ]
+  },
+
+  // Minutely: sequence ticks and scheduled broadcasts. Daily at 09:17 UTC: the
+  // Stripe reconciliation. `worker.tsx` switches on `controller.cron`, so the
+  // second string here has to stay in sync with `DAILY_CRON` there.
+  "triggers": { "crons": ["*/1 * * * *", "17 9 * * *"] },
+
+  "vars": {
+    // "console" writes mail to the in-app Outbox instead of sending. Local default.
+    "EMAIL_PROVIDER": "console",
+    "FROM_EMAIL": "rob@example.com",
+    "FROM_NAME": "Rob Conery",
+    "PUBLIC_URL": "http://localhost:8787",
+    // Local only: bypasses the Cloudflare Access check. Never set in production.
+    "DEV_AUTH_BYPASS": "true",
+    // Locally the provider is "console", so an MCP send lands in the Outbox
+    // rather than in anyone's inbox — safe to leave on for development.
+    "MCP_ALLOW_SEND": "true"
+  },
+
+  // `wrangler deploy --env production` turns the bypass off and takes the admin
+  // console back behind Cloudflare Access. The top-level vars above are dev-only;
+  // deploying without this env would publish an unauthenticated admin console.
+  "env": {
+    "production": {
+      // No workers.dev URL. Cloudflare Access can only protect a hostname on a
+      // zone you control, so leaving the *.workers.dev route enabled would
+      // publish an unauthenticated way around it straight to the origin.
+      "workers_dev": false,
+      "routes": [{ "pattern": "__HOSTNAME__", "custom_domain": true }],
+
+      "vars": {
+        // First deploy renders mail into the Outbox instead of sending, so the
+        // whole stack can be verified live with nothing able to leave. Flip to
+        // "resend" once you've confirmed it works.
+        "EMAIL_PROVIDER": "console",
+        "FROM_EMAIL": "__FROM_EMAIL__",
+        "FROM_NAME": "Rob Conery",
+        // Baked into tracking links and image URLs at send time — a wrong value
+        // ships permanently broken email. Must match the route above.
+        "PUBLIC_URL": "https://__HOSTNAME__",
+        "DEV_AUTH_BYPASS": "false",
+
+        // Admin console identity. Both are required: `web/auth.ts` fails closed
+        // and refuses everyone if either is missing.
+        "CF_ACCESS_TEAM_DOMAIN": "__TEAM__.cloudflareaccess.com",
+        "CF_ACCESS_AUD": "__AUD__",
+
+        // Off by default: MCP can read and draft everything, but cannot put
+        // mail on the wire until this is "true". A var, not a secret.
+        "MCP_ALLOW_SEND": "false"
+      }
+    }
+  }
+}

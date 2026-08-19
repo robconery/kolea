@@ -1,0 +1,20 @@
+{
+  // The client bundle runs in a browser, not in workerd. It needs DOM types and
+  // must NOT see @cloudflare/workers-types, whose Response/Headers shadow the
+  // DOM ones and make `element.append(...)` resolve to the wrong overload.
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true,
+    "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true,
+    "isolatedModules": true,
+    "noEmit": true
+  },
+  "include": ["./**/*.ts"]
+}

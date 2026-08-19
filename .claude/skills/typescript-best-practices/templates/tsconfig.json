@@ -1,0 +1,45 @@
+{
+  // Strict baseline. Copy into a project; adjust `target`/`module`/`outDir`
+  // and `lib` for your runtime. The compiler flags below are the
+  // non-negotiable safety net — do not relax them to silence errors.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022"],
+    "outDir": "./dist",
+    "rootDir": "./src",
+
+    /* Strictness — the whole point */
+    "strict": true,                          // implies the next block
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "strictFunctionTypes": true,
+    "strictBindCallApply": true,
+    "strictPropertyInitialization": true,
+    "useUnknownInCatchVariables": true,      // catch (e) is `unknown`
+    "alwaysStrict": true,
+
+    /* Extra safety beyond `strict` */
+    "noUncheckedIndexedAccess": true,        // arr[i] is T | undefined
+    "exactOptionalPropertyTypes": true,      // {x?: T} ≠ {x: T | undefined}
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "forceConsistentCasingInFileNames": true,
+
+    /* Interop / output */
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}

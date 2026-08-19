@@ -1,0 +1,41 @@
+node_modules/
+dist/
+build/
+out/
+coverage/
+.cache/
+
+.env
+.env.*
+!.env.example
+
+*.log
+npm-debug.log*
+yarn-error.log*
+
+.DS_Store
+.idea/
+.vscode/
+
+*.db
+*.sqlite
+*.sqlite3
+
+.claude/settings.local.json
+
+# wrangler local state + local secrets
+.wrangler/
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+
+# client bundle build output
+public/editor.js
+public/editor.css
+public/*.js.map
+
+# personal agent config — kept local, not published
+.claude/settings.json
+.claude/skills/rob/
+.cursor/
+to-do.md

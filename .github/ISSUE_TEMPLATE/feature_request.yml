@@ -1,0 +1,37 @@
+name: 💡 Idea or change
+description: Propose a change — please read the scope note first
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Before you write this up:** big-mailer is deliberately single-operator and
+        deliberately small. Multi-tenancy, a drag-and-drop builder, self-run SMTP, and
+        swapping out Cloudflare are all out of scope by design, not by omission — see
+        `CONTRIBUTING.md` and `docs/PROJECT.md`.
+
+        Forking is genuinely encouraged. This tracker is for changes that fit the
+        project as scoped.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What can't you do today? Describe the situation, not the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you'd change
+    validations:
+      required: true
+  - type: textarea
+    id: consent
+    attributes:
+      label: Effect on the three consent scopes
+      description: >
+        If this touches sending, say what it does to sequence-level, broadcast-level,
+        and global consent. If it touches none of them, say "none".
+      placeholder: "none"
+    validations:
+      required: true
