@@ -71,9 +71,10 @@ admin.get('/', async (c) => {
     .all()
 
   return c.html(
-    <Layout title="Dashboard" nav="home">
+    <Layout title="Dashboard" nav="home" charts>
       <div class="head">
         <div>
+          <div class="eyebrow">Mission control</div>
           <h1>Dashboard</h1>
           <div class="sub">
             Provider: <span class="mono">{c.env.EMAIL_PROVIDER}</span>
@@ -118,23 +119,23 @@ admin.get('/', async (c) => {
         <div class="card-b flush">
           <div class="stats">
             <div class="stat">
-              <div class="n">{subs?.n ?? 0}</div>
+              <div class="n">{(subs?.n ?? 0).toLocaleString('en-US')}</div>
               <div class="l">Subscribers</div>
             </div>
             <div class="stat hi">
-              <div class="n">{active?.n ?? 0}</div>
+              <div class="n">{(active?.n ?? 0).toLocaleString('en-US')}</div>
               <div class="l">Active</div>
             </div>
             <div class="stat">
-              <div class="n">{seqCount?.n ?? 0}</div>
+              <div class="n">{(seqCount?.n ?? 0).toLocaleString('en-US')}</div>
               <div class="l">Live series</div>
             </div>
             <div class="stat">
-              <div class="n">{sent?.n ?? 0}</div>
+              <div class="n">{(sent?.n ?? 0).toLocaleString('en-US')}</div>
               <div class="l">Sent</div>
             </div>
             <div class="stat">
-              <div class="n">{drafts?.n ?? 0}</div>
+              <div class="n">{(drafts?.n ?? 0).toLocaleString('en-US')}</div>
               <div class="l">Drafts</div>
             </div>
           </div>
@@ -150,24 +151,8 @@ admin.get('/', async (c) => {
             yearOrders={months.reduce((n, m) => n + m.orders, 0)}
             liveCount={liveOffers}
             catalogCount={catalog.length}
+            trend={months.map((m) => m.cents)}
           />
-
-          <div class="card">
-            <div class="card-h">
-              <h2>Revenue, last 12 months</h2>
-              <div class="actions">
-                <a class="btn sm" href="/store">
-                  The whole store
-                </a>
-              </div>
-            </div>
-            <div class="card-b">
-              <ColumnChart data={months.map(monthColumn)} />
-              <div class="faint" style="font-size:12px;margin-top:8px;text-align:right">
-                The last column is the current month so far, not a finished one.
-              </div>
-            </div>
-          </div>
 
           <TierCard
             tiers={tiers}
@@ -183,33 +168,61 @@ admin.get('/', async (c) => {
         </div>
       )}
 
-      <div class="card">
-        <div class="card-h">
-          <h2>Consent, by scope</h2>
-          <div class="actions">
-            <a class="btn sm" href="/consent">
-              Details
-            </a>
-          </div>
-        </div>
-        <div class="card-b">
-          <div class="note">
-            <strong>The whole point.</strong> {optouts?.n ?? 0} people left an individual series
-            and are <em>still on the list</em>. Only {suppressed?.n ?? 0} asked to be removed from
-            everything. On Kit those two numbers would be the same.
-          </div>
-          <div class="stats" style="border:1px solid var(--line);border-radius:8px;overflow:hidden">
-            <div class="stat hi">
-              <div class="n">{optouts?.n ?? 0}</div>
-              <div class="l">Left one series</div>
+      {/* Money on the left, conscience on the right — the two things worth
+          looking at every morning, side by side rather than stacked. */}
+      <div class="bento">
+        {totals.orders > 0 ? (
+          <div class="card col-7">
+            <div class="card-h">
+              <h2>Revenue, last 12 months</h2>
+              <div class="actions">
+                <a class="btn sm" href="/store">
+                  The whole store
+                  <span class="chip" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M6 18 18 6M9 6h9v9" />
+                    </svg>
+                  </span>
+                </a>
+              </div>
             </div>
-            <div class="stat">
-              <div class="n">{unsub?.n ?? 0}</div>
-              <div class="l">Off newsletter</div>
+            <div class="card-b">
+              <ColumnChart data={months.map(monthColumn)} height={300} />
+              <div class="faint" style="font-size:12px;margin-top:10px;text-align:right">
+                The last column is the current month so far, not a finished one.
+              </div>
             </div>
-            <div class="stat">
-              <div class="n">{suppressed?.n ?? 0}</div>
-              <div class="l">Gone entirely</div>
+          </div>
+        ) : null}
+
+        <div class={totals.orders > 0 ? 'card col-5' : 'card col-12'}>
+          <div class="card-h">
+            <h2>Consent, by scope</h2>
+            <div class="actions">
+              <a class="btn sm" href="/consent">
+                Details
+              </a>
+            </div>
+          </div>
+          <div class="card-b">
+            <div class="note">
+              <strong>The whole point.</strong> {optouts?.n ?? 0} people left an individual series
+              and are <em>still on the list</em>. Only {suppressed?.n ?? 0} asked to be removed
+              from everything. On Kit those two numbers would be the same.
+            </div>
+            <div class="stats" style="padding:0">
+              <div class="stat hi">
+                <div class="n">{(optouts?.n ?? 0).toLocaleString('en-US')}</div>
+                <div class="l">Left one series</div>
+              </div>
+              <div class="stat">
+                <div class="n">{(unsub?.n ?? 0).toLocaleString('en-US')}</div>
+                <div class="l">Off newsletter</div>
+              </div>
+              <div class="stat">
+                <div class="n">{(suppressed?.n ?? 0).toLocaleString('en-US')}</div>
+                <div class="l">Gone entirely</div>
+              </div>
             </div>
           </div>
         </div>
@@ -304,7 +317,7 @@ admin.get('/outbox', async (c) => {
               <table>
                 <tbody>
                   {items.map((i) => (
-                    <tr style={i.id === selected?.id ? 'background:#f6f5f3' : ''}>
+                    <tr class={i.id === selected?.id ? 'sel' : ''}>
                       <td>
                         <a href={`/outbox?id=${i.id}`}>
                           <div style="font-weight:500">{i.subject}</div>
@@ -577,7 +590,7 @@ admin.get('/settings', async (c) => {
           <p class="muted">
             Your other apps post here. Suppression is enforced, and every send is recorded.
           </p>
-          <pre class="mono" style="background:#f6f5f3;padding:14px;border-radius:8px;overflow:auto">
+          <pre class="mono code">
 {`curl -X POST ${c.env.PUBLIC_URL}/api/send \\
   -H 'Authorization: Bearer <key>' \\
   -H 'Content-Type: application/json' \\

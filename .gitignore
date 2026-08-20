@@ -32,6 +32,7 @@ yarn-error.log*
 # client bundle build output
 public/editor.js
 public/editor.css
+public/charts.js
 public/*.js.map
 
 # personal agent config — kept local, not published

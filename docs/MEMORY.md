@@ -248,3 +248,78 @@ should be the actual dashboard".
 
 Noticed in the data, for Rob: **`Top Shelf` and `Top Shelf Import` are duplicate tags** — same 400
 people, same 96% buy rate, same $64,315. Candidates for `tag_merge`.
+
+## 2026-08-19 — Abyssal redesign (left rail, real charts)
+
+Full visual redesign on `feat/abyssal-redesign`. The brief: the top nav had outgrown itself, and
+the admin should be somewhere you want to sit, not a form.
+
+- **The nav moved to a fixed left rail** grouped Dashboard / Audience / Mail / Money / System.
+  It is a floating glass panel, not a flush sidebar, and its open state on narrow screens is a
+  `<input type="checkbox">` + sibling selectors — so the drawer, the scrim, and the
+  hamburger→X morph all work with JavaScript off. The admin still ships zero JS outside the
+  composer and the two charting screens.
+- **The look is "Abyssal"**: deep water at the bottom of the page, sunlight raked through the
+  surface, caustics, grain, and a few drifting motes — all in one fixed `pointer-events:none`
+  layer behind everything, animated only via `transform`. `backdrop-filter` is confined to the
+  rail and the mobile bar; putting it on scrolling content repaints every frame.
+- **Every card is a double bezel** — a lit glass tray with a darker plate inset 6px inside it,
+  built as a `::before` so the existing `.card-h` / `.card-b` markup did not have to change.
+  That is why the redesign is ~one stylesheet plus a shell rewrite: the class vocabulary
+  (`card`, `stat`, `pill`, `btn`, `tabs`, `note`, `empty`) was already good, so it was restyled
+  rather than replaced, and all six admin screens came along for free.
+- **Charts are ApexCharts now**, not hand-rolled SVG. Server-configured, client-rendered: a
+  chart is a `<div data-chart="{...}">` carrying a complete JSON spec, and `/charts.js` turns
+  every one of them into a drawing. The bundle is large (~970KB raw), so `Layout` only links it
+  on the screens that plot something. Every chart is still backed by a real table on the same
+  card.
+- **The ordinal ramp survived the repaint** (`#a5f3fc → #38bdf8 → #6366f1 → #8b5cf6`, light→deep).
+  Donut slices fall toward a *darker version of themselves* rather than toward a shared light:
+  Apex's plain `shadeIntensity` washes every slice toward the same value and flattens exactly the
+  ordering the tiers exist to show.
+- **The composer stays on white paper inside a dark tray.** Mail lands on paper in somebody
+  else's client; composing against a dark canvas would mean writing blind to the contrast people
+  actually read at. The chrome around it — toolbar, slash menu, bubble bar — went dark, because
+  that chrome belongs to the app, not to the mail.
+- **Reveals are a staggered CSS entrance, deliberately not a `view()` scroll timeline.** Tried the
+  timeline first; a card taller than the viewport never finishes its entry range, so the
+  subscribers table sat there permanently half-faded and blurred. A fixed-duration keyframe
+  always completes.
+- Verified against the running app at every step (screenshots at 1440 and 414), and the 33-check
+  editor smoke suite still passes with no JS errors.
+
+## 2026-08-19 — The flow pass (no containers)
+
+First cut of the redesign put everything in glass trays — cards with a bezel, a floating rail
+panel, a 1,080px column. Rob's verdict: *"it looks like someone took paste and glued some pictures
+onto the screen."* Correct, and worth writing down.
+
+- **There are no containers now.** Not a card, not a panel, not a sidebar with a wall around it.
+  Every region sits directly on the water, and the only thing separating two of them is a
+  one-pixel gradient rule that fades out before it reaches either end. **A rule that fades has no
+  corners, and without corners nothing reads as a window pasted onto the page.** Whitespace does
+  the rest.
+- **`.card` stopped being a container and became a band of the page**: one hairline above it, air
+  around it, nothing else. Same markup, so every screen came along unchanged.
+- **KPI rows are divided, not boxed** — numbers in a row with vertical hairlines between them.
+- **The layout is edge to edge.** No max-width on the shell; the gutter is
+  `clamp(26px, 3.4vw, 64px)` and the content uses whatever the display gives it.
+- **Except forms.** `.field`, `.row` and the composer cap at 1,040px. A 1,500px text input is not
+  using the space, it is making somebody track a metre of empty box with their eye — and the
+  composer's page is a preview of mail that lands about 600px wide. Data (tables, charts, KPI
+  rows) still runs the full width.
+- **Bar width is computed, not guessed.** Apex only takes a percentage of the band, so at full
+  bleed twelve months became 70px slabs. The client measures the mount and asks for whatever
+  percentage lands a 34px column.
+- Bug worth remembering: `label{display:block}` lives in the `controls` layer, and the hamburger
+  and drawer scrim are `<label>` elements declared in the `shell` layer. **Cascade layers beat
+  specificity**, so the generic rule silently reset both. `label:not(.burger):not(.scrim)`.
+- **One typeface, not three.** The first cut set headlines in Instrument Serif over Plus Jakarta
+  Sans body and Sora numerals. Rob wanted the cleaner Inter/Helvetica look, and he was right for
+  a second reason: three families read as three opinions. Everything is Inter now, carried by
+  weight, size and tracking — big type earns presence from `-0.038em` and weight 700, not from a
+  different family. Inter's tabular figures matter here; most of this UI is numbers. JetBrains
+  Mono stays for code. Two font families instead of four is also two fewer requests.
+- The composer's *page* keeps a plain system-sans body on purpose — it is a preview of mail, and
+  mail does not render in the admin's typeface.
+
