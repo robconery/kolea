@@ -57,15 +57,20 @@ function tip(title: string, value: string, colour: string) {
   )
 }
 
-function columnOptions(s: Spec & { t: 'column' }) {
+function columnOptions(s: Spec & { t: 'column' }, width: number) {
   const fmt = fmtOf(s.fmt)
   const peak = Math.max(...s.values, 0)
+  // Apex only takes a percentage of the band, so on a full-bleed layout twelve
+  // months turn into 70px slabs. Measure the band and ask for whatever
+  // percentage lands a 34px column, which is a column and not a wall.
+  const band = Math.max(1, (width - 70) / Math.max(1, s.values.length))
+  const columnWidth = `${Math.round(Math.max(12, Math.min(60, (34 / band) * 100)))}%`
   return {
     chart: { ...chrome(s.height), type: 'bar' as const },
     series: [{ name: 'Revenue', data: s.values }],
     plotOptions: {
       bar: {
-        columnWidth: s.values.length > 8 ? '52%' : '38%',
+        columnWidth,
         borderRadius: 7,
         borderRadiusApplication: 'end' as const,
       },
@@ -237,8 +242,8 @@ function sparkOptions(s: Spec & { t: 'spark' }) {
   }
 }
 
-function optionsFor(spec: Spec) {
-  if (spec.t === 'column') return columnOptions(spec)
+function optionsFor(spec: Spec, width: number) {
+  if (spec.t === 'column') return columnOptions(spec, width)
   if (spec.t === 'donut') return donutOptions(spec)
   return sparkOptions(spec)
 }
@@ -254,10 +259,13 @@ function boot() {
     } catch {
       continue
     }
+    // Measured before the placeholder is cleared, while the box still has its
+    // reserved height and its final width.
+    const width = el.clientWidth || 900
     // The shimmer is a stand-in for the drawing, not part of it.
     el.replaceChildren()
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const chart = new ApexCharts(el, optionsFor(spec) as any)
+    const chart = new ApexCharts(el, optionsFor(spec, width) as any)
     void chart.render()
     el.classList.add('is-live')
   }

@@ -6,15 +6,21 @@ import type { Campaign, DocNode } from '../db/schema.ts'
  * The look: "Abyssal".
  *
  * A dashboard you sit in front of for hours should feel like somewhere, not like
- * a form. This one is a dive — deep water at the bottom of the page, sunlight
- * raking down from above, and the working surfaces floating in it like coral:
- * lit from within, edged in a bright hairline, never flat on the background.
+ * a form. This one is a dive: deep water at the bottom of the page, sunlight
+ * raking down from above, and the work floating in it.
+ *
+ * There are no containers. Not a card, not a panel, not a sidebar with a wall
+ * around it — everything sits directly on the water, edge to edge, and the only
+ * thing that ever separates two regions is a one-pixel gradient rule that fades
+ * out before it reaches either end. A rule that fades has no corners, and
+ * without corners nothing reads as a window pasted onto the page. Whitespace
+ * does the rest of the work.
  *
  * Rules that keep it fast on a Worker with no framework:
  *   · One stylesheet, inlined. No CSS build, no utility runtime.
  *   · Animation is `transform` and `opacity` only — never width/height/top/left.
- *   · `backdrop-filter` lives on fixed furniture (the rail, the mobile bar) and
- *     never on scrolling content, where it would repaint every frame.
+ *   · `backdrop-filter` appears only on the mobile bar, which is the one piece
+ *     of furniture with content scrolling beneath it.
  *   · The ocean is one fixed, `pointer-events:none` layer behind everything.
  *   · Entrances are a staggered CSS keyframe on load. Zero JavaScript.
  */
@@ -24,18 +30,21 @@ export const CSS = `
 @layer base {
 :root{
   /* depth */
-  --abyss:#03060f; --deep:#050c22; --mid:#08142f; --shelf:#0b1c3d;
+  --abyss:#03060f; --deep:#050c22; --mid:#08142f;
   /* light */
   --cyan:#22d3ee; --azure:#3b82f6; --indigo:#6366f1; --violet:#a855f7;
   --aqua:#2dd4bf; --rose:#fb7185;
   --beam:linear-gradient(120deg,#22d3ee 0%,#60a5fa 38%,#a855f7 100%);
-  --beam-soft:linear-gradient(120deg,rgba(34,211,238,.22),rgba(168,85,247,.20));
   /* ink */
   --ink:#eaf3ff; --muted:#9db2d4; --faint:#6d84a8;
-  --line:rgba(148,190,255,.13); --line-2:rgba(148,190,255,.075);
-  --glass:rgba(255,255,255,.045);
-  --accent:#5eead4;
-  --radius:20px;
+  /* The only two dividers in the building. Both fade out at their ends, so a
+     rule never terminates in a hard corner and nothing reads as a box. */
+  --rule:linear-gradient(90deg,transparent,rgba(148,190,255,.17) 6%,
+    rgba(148,190,255,.17) 94%,transparent);
+  --rule-v:linear-gradient(180deg,transparent,rgba(148,190,255,.15) 10%,
+    rgba(148,190,255,.15) 90%,transparent);
+  --rule-faint:linear-gradient(90deg,transparent,rgba(148,190,255,.085) 4%,
+    rgba(148,190,255,.085) 96%,transparent);
   --sans:'Plus Jakarta Sans',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;
   --display:'Sora',var(--sans);
   --serif:'Instrument Serif',ui-serif,Georgia,serif;
@@ -43,10 +52,11 @@ export const CSS = `
   /* the only easing curves in the building */
   --spring:cubic-bezier(.32,.72,0,1);
   --glide:cubic-bezier(.22,1,.36,1);
-  --rail-w:266px;
+  --rail-w:250px;
+  --gut:clamp(26px,3.4vw,64px);
 }
 *{box-sizing:border-box}
-html{scrollbar-color:rgba(148,190,255,.22) transparent}
+html{scrollbar-color:rgba(148,190,255,.2) transparent}
 body{margin:0;background:var(--abyss);color:var(--ink);
   font:15px/1.6 var(--sans);letter-spacing:-.005em;
   -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
@@ -54,17 +64,17 @@ body{margin:0;background:var(--abyss);color:var(--ink);
 a{color:#7dd3fc;text-decoration:none;transition:color .35s var(--glide)}
 a:hover{color:#a5f3fc}
 h1,h2,h3{margin:0;font-weight:600;letter-spacing:-.02em}
-h1{font:400 clamp(30px,3.6vw,42px)/1.06 var(--serif);letter-spacing:-.015em;
+h1{font:400 clamp(32px,3.8vw,46px)/1.05 var(--serif);letter-spacing:-.015em;
   background:linear-gradient(178deg,#ffffff 8%,#a8c6ee 92%);
   -webkit-background-clip:text;background-clip:text;color:transparent}
-h2{font:600 15.5px/1.3 var(--display);letter-spacing:-.01em;color:#dce9ff}
+h2{font:600 17px/1.3 var(--display);letter-spacing:-.015em;color:#e6f0ff}
 h3{font:600 10.5px/1 var(--display);text-transform:uppercase;letter-spacing:.19em;color:var(--faint)}
 p{margin:0 0 12px}
-hr{border:0;height:1px;background:var(--line-2);margin:22px 0}
-::-webkit-scrollbar{width:10px;height:10px}
-::-webkit-scrollbar-thumb{background:rgba(148,190,255,.18);border-radius:99px;
+hr{border:0;height:1px;background:var(--rule);margin:26px 0}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:rgba(148,190,255,.16);border-radius:99px;
   border:3px solid transparent;background-clip:content-box}
-::-webkit-scrollbar-thumb:hover{background:rgba(148,190,255,.32);background-clip:content-box}
+::-webkit-scrollbar-thumb:hover{background:rgba(148,190,255,.3);background-clip:content-box}
 ::-webkit-scrollbar-track{background:transparent}
 }
 
@@ -133,21 +143,19 @@ hr{border:0;height:1px;background:var(--line-2);margin:22px 0}
 .rail-cb{position:absolute;opacity:0;pointer-events:none}
 .shell{position:relative;z-index:2;min-height:100dvh}
 
-.rail{position:fixed;top:16px;bottom:16px;left:16px;width:var(--rail-w);z-index:40;
-  padding:6px;border-radius:30px;
-  background:linear-gradient(158deg,rgba(255,255,255,.18),rgba(255,255,255,.03) 45%,rgba(125,211,252,.13));
-  box-shadow:0 40px 80px -40px rgba(0,0,0,.95),0 0 0 1px rgba(255,255,255,.04);
+/* No panel. The rail is type and icons standing on the water, separated from
+   the work by one hairline that fades out top and bottom. */
+.rail{position:fixed;top:0;bottom:0;left:0;width:var(--rail-w);z-index:40;
   transition:transform .6s var(--spring)}
-.rail-in{height:100%;border-radius:24px;display:flex;flex-direction:column;
-  padding:22px 14px 14px;overflow:hidden;
-  background:linear-gradient(168deg,rgba(11,28,61,.92),rgba(5,12,34,.96) 60%,rgba(8,20,47,.94));
-  -webkit-backdrop-filter:blur(28px) saturate(150%);backdrop-filter:blur(28px) saturate(150%);
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.10),inset 0 -70px 90px -60px rgba(34,211,238,.30)}
+.rail::after{content:'';position:absolute;top:0;bottom:0;right:0;width:1px;
+  background:var(--rule-v)}
+.rail-in{height:100%;display:flex;flex-direction:column;
+  padding:34px 24px 22px;overflow:hidden}
 
-.brand{display:flex;align-items:center;gap:11px;padding:0 8px 20px;color:var(--ink)}
+.brand{display:flex;align-items:center;gap:11px;padding:0 0 26px;color:var(--ink)}
 .brand:hover{color:var(--ink)}
-.brand .sigil{width:34px;height:34px;flex:0 0 auto;border-radius:12px;display:grid;place-items:center;
-  background:var(--beam);box-shadow:0 6px 20px -6px rgba(34,211,238,.85),inset 0 1px 0 rgba(255,255,255,.5);
+.brand .sigil{width:32px;height:32px;flex:0 0 auto;border-radius:11px;display:grid;place-items:center;
+  background:var(--beam);box-shadow:0 8px 24px -8px rgba(34,211,238,.9);
   transition:transform .6s var(--spring)}
 .brand:hover .sigil{transform:rotate(-8deg) scale(1.06)}
 .brand .wm{font:400 20px/1 var(--serif);letter-spacing:.005em}
@@ -156,149 +164,145 @@ hr{border:0;height:1px;background:var(--line-2);margin:22px 0}
 .brand .wm em{display:block;font:500 8.5px/1 var(--display);font-style:normal;
   text-transform:uppercase;letter-spacing:.28em;color:var(--faint);margin-top:5px}
 
-.rail nav{display:flex;flex-direction:column;gap:2px;overflow-y:auto;flex:1;
-  margin:0 -4px;padding:0 4px;scrollbar-width:thin}
-.rail .grp{padding:16px 12px 7px;font:600 9.5px/1 var(--display);text-transform:uppercase;
-  letter-spacing:.22em;color:rgba(109,132,168,.85)}
-.rail .grp:first-child{padding-top:2px}
-.rail nav a{position:relative;display:flex;align-items:center;gap:11px;padding:9px 12px;
-  border-radius:13px;color:rgba(196,216,244,.72);font:500 14px/1 var(--sans);
-  transition:color .4s var(--glide),background-color .4s var(--glide),transform .5s var(--spring)}
-.rail nav a svg{width:17px;height:17px;flex:0 0 auto;opacity:.62;
-  transition:opacity .4s var(--glide),transform .5s var(--spring)}
-.rail nav a:hover{background:rgba(255,255,255,.055);color:#fff;transform:translateX(3px)}
-.rail nav a:hover svg{opacity:1;transform:scale(1.08)}
-.rail nav a.on{color:#fff;background:var(--beam-soft);
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.16),0 10px 26px -18px rgba(34,211,238,.9)}
+/* The wash bleeds to both edges of the rail, so the active row has no left or
+   right boundary — it dissolves instead of stopping. */
+.rail nav{display:flex;flex-direction:column;gap:1px;overflow-y:auto;flex:1;
+  margin:0 -24px;padding:0 24px;scrollbar-width:thin}
+.rail .grp{padding:20px 0 8px;font:600 9.5px/1 var(--display);text-transform:uppercase;
+  letter-spacing:.22em;color:rgba(109,132,168,.8)}
+.rail .grp:first-child{padding-top:0}
+.rail nav a{position:relative;display:flex;align-items:center;gap:13px;padding:9px 24px;
+  margin:0 -24px;color:rgba(196,216,244,.7);font:500 14px/1 var(--sans);
+  transition:color .4s var(--glide),transform .5s var(--spring)}
+.rail nav a svg{width:17px;height:17px;flex:0 0 auto;opacity:.6;
+  transition:opacity .4s var(--glide),color .4s var(--glide)}
+.rail nav a:hover{color:#fff;transform:translateX(3px)}
+.rail nav a:hover svg{opacity:1}
+.rail nav a.on{color:#fff;
+  background:linear-gradient(90deg,rgba(34,211,238,.16),rgba(168,85,247,.07) 55%,transparent)}
 .rail nav a.on svg{opacity:1;color:#7dd3fc}
-.rail nav a.on::before{content:'';position:absolute;left:-5px;top:50%;width:3px;height:17px;
-  border-radius:9px;background:var(--beam);transform:translateY(-50%);
-  box-shadow:0 0 14px 1px rgba(34,211,238,.9)}
-.rail nav a .badge{margin-left:auto;font:600 10px/1 var(--display);letter-spacing:.04em;
-  padding:4px 7px;border-radius:99px;background:rgba(255,255,255,.07);color:var(--muted)}
+.rail nav a.on::before{content:'';position:absolute;left:0;top:0;bottom:0;width:2px;
+  background:var(--beam);box-shadow:0 0 14px 1px rgba(34,211,238,.8)}
 
-.rail-foot{margin-top:14px;padding:13px 12px 4px;border-top:1px solid var(--line-2);
-  font:500 10.5px/1.5 var(--display);letter-spacing:.1em;text-transform:uppercase;color:var(--faint);
-  display:flex;align-items:center;gap:8px}
-.pulse{width:6px;height:6px;border-radius:50%;background:var(--aqua);flex:0 0 auto;
+.rail-foot{margin-top:18px;padding:16px 0 0;position:relative;
+  font:500 10px/1.5 var(--display);letter-spacing:.18em;text-transform:uppercase;color:var(--faint);
+  display:flex;align-items:center;gap:9px}
+.rail-foot::before{content:'';position:absolute;top:0;left:-24px;right:-24px;height:1px;
+  background:var(--rule)}
+.pulse{width:5px;height:5px;border-radius:50%;background:var(--aqua);flex:0 0 auto;
   box-shadow:0 0 0 0 rgba(45,212,191,.65);animation:pulse 3.4s var(--glide) infinite}
 @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(45,212,191,.6)}
   70%{box-shadow:0 0 0 8px rgba(45,212,191,0)}100%{box-shadow:0 0 0 0 rgba(45,212,191,0)}}
 
-.stage{margin-left:calc(var(--rail-w) + 30px);min-height:100dvh}
-.wrap{max-width:1240px;margin:0 auto;padding:44px 40px 120px}
+/* Edge to edge. The screen is the canvas; there is no page inside it. */
+.stage{margin-left:var(--rail-w);min-height:100dvh}
+.wrap{max-width:none;margin:0;padding:46px var(--gut) 140px}
 
-/* Mobile furniture — hidden entirely on the desktop layout. */
 .mobar{display:none}
 .scrim{display:none}
 
 @media (max-width:1080px){
-  .rail{transform:translateX(calc(-100% - 20px));width:min(300px,84vw)}
+  .rail{transform:translateX(-100%);width:min(292px,84vw);
+    background:linear-gradient(120deg,rgba(6,16,40,.97),rgba(4,10,28,.99))}
   .rail-cb:checked ~ .shell .rail{transform:none}
   .stage{margin-left:0}
-  .wrap{padding:18px 16px 96px;max-width:none}
+  .wrap{padding:20px 20px 110px}
   .mobar{display:flex;position:sticky;top:0;z-index:30;align-items:center;gap:12px;
-    padding:10px 14px;margin:0 0 6px;
-    background:linear-gradient(180deg,rgba(5,12,34,.88),rgba(5,12,34,.55));
-    -webkit-backdrop-filter:blur(22px) saturate(150%);backdrop-filter:blur(22px) saturate(150%);
-    border-bottom:1px solid var(--line-2)}
-  .burger{width:40px;height:40px;border-radius:14px;display:grid;place-items:center;cursor:pointer;
-    background:rgba(255,255,255,.06);box-shadow:inset 0 1px 0 rgba(255,255,255,.12)}
-  .burger span{position:relative;display:block;width:17px;height:2px}
-  .burger i{position:absolute;left:0;top:0;display:block;width:17px;height:2px;border-radius:2px;
+    padding:11px 20px;margin:0 0 4px;
+    background:linear-gradient(180deg,rgba(5,12,34,.9),rgba(5,12,34,.55));
+    -webkit-backdrop-filter:blur(22px) saturate(150%);backdrop-filter:blur(22px) saturate(150%)}
+  .mobar::after{content:'';position:absolute;left:0;right:0;bottom:0;height:1px;background:var(--rule)}
+  .mobar .brand{padding:0}
+  /* -8px so the 18px glyph inside the 34px hit area lines up with the page
+     gutter, not the button's own box edge. */
+  .burger{width:34px;height:34px;display:grid;place-items:center;cursor:pointer;margin:0 0 0 -8px}
+  .burger span{position:relative;display:block;width:18px;height:2px}
+  .burger i{position:absolute;left:0;top:0;display:block;width:18px;height:1.5px;border-radius:2px;
     background:var(--ink);transition:transform .5s var(--spring)}
   .burger i:first-child{transform:translateY(-4px)}
   .burger i:last-child{transform:translateY(4px)}
   .rail-cb:checked ~ .shell .burger i:first-child{transform:translateY(0) rotate(45deg)}
   .rail-cb:checked ~ .shell .burger i:last-child{transform:translateY(0) rotate(-45deg)}
   .scrim{display:block;position:fixed;inset:0;z-index:35;opacity:0;pointer-events:none;
-    background:rgba(3,6,15,.68);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);
+    background:rgba(3,6,15,.7);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);
     transition:opacity .5s var(--glide)}
   .rail-cb:checked ~ .shell .scrim{opacity:1;pointer-events:auto}
+  .hide-sm{display:none}
 }
-@media (max-width:1080px){.hide-sm{display:none}}
 }
 
-/* ─────────────────────────────────────────────────────── the surfaces */
+/* ─────────────────────────────────────────────────── the working surface */
 @layer surface {
-.head{display:flex;align-items:flex-end;gap:20px;margin:0 0 30px;flex-wrap:wrap}
-.head .sub{color:var(--muted);font-size:14px;margin-top:9px;max-width:64ch}
-.head .actions{margin-left:auto;display:flex;gap:9px;align-items:center;flex-wrap:wrap}
-.eyebrow{display:inline-flex;align-items:center;gap:7px;margin-bottom:13px;
-  padding:5px 11px 5px 8px;border-radius:99px;background:rgba(255,255,255,.05);
-  border:1px solid var(--line);font:600 9.5px/1 var(--display);
-  text-transform:uppercase;letter-spacing:.2em;color:#a5c4ea}
-.eyebrow::before{content:'';width:5px;height:5px;border-radius:50%;background:var(--beam);
-  box-shadow:0 0 10px 1px rgba(34,211,238,.9)}
+.head{display:flex;align-items:flex-end;gap:24px;margin:0 0 8px;flex-wrap:wrap;
+  padding-bottom:34px}
+.head .sub{color:var(--muted);font-size:14px;margin-top:11px;max-width:70ch}
+.head .actions{margin-left:auto;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.eyebrow{display:inline-flex;align-items:center;gap:8px;margin-bottom:15px;
+  font:600 9.5px/1 var(--display);text-transform:uppercase;letter-spacing:.24em;color:#8fb4dd}
+.eyebrow::before{content:'';width:18px;height:1.5px;border-radius:2px;background:var(--beam);
+  box-shadow:0 0 10px rgba(34,211,238,.9)}
 
-/* The double bezel: an outer tray of lit glass, an inner plate that sits in it.
-   Built with a pseudo-element so the existing .card-h / .card-b markup is
-   untouched — the plate is painted at inset 6px and the children float on it. */
-.card{position:relative;margin-bottom:24px;padding:6px;border-radius:28px;
-  background:linear-gradient(158deg,rgba(255,255,255,.15),rgba(255,255,255,.025) 42%,rgba(125,211,252,.10));
-  box-shadow:0 34px 70px -38px rgba(0,0,0,.92),0 1px 2px rgba(0,0,0,.35);
-  transition:box-shadow .7s var(--glide),transform .7s var(--spring)}
-.card::before{content:'';position:absolute;inset:6px;border-radius:22px;z-index:0;
-  background:linear-gradient(168deg,rgba(13,30,63,.86),rgba(6,14,36,.92) 58%,rgba(10,23,52,.88));
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.10),inset 0 0 0 1px rgba(148,190,255,.055),
-    inset 0 -80px 110px -70px rgba(34,211,238,.26)}
-.card>*{position:relative;z-index:1}
-.card:hover{box-shadow:0 40px 84px -38px rgba(0,0,0,.95),0 0 44px -22px rgba(56,189,248,.30)}
-.card-h{padding:17px 22px 15px;display:flex;align-items:center;gap:14px;
-  border-bottom:1px solid var(--line-2)}
-.card-h .actions{margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.card-b{padding:22px}
-.card-b.flush{padding:0;border-radius:0 0 22px 22px;overflow:hidden}
+/* A "card" is no longer a container. It is a band of the page: one hairline
+   above it, air around it, and nothing else. Nothing is enclosed, nothing is
+   glued on — the content sits directly on the water. */
+.card{position:relative;margin:0;padding:44px 0 0;background:none;box-shadow:none;border:0}
+.card::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:var(--rule)}
+.card-h{padding:0 0 22px;display:flex;align-items:baseline;gap:16px;border:0;flex-wrap:wrap}
+.card-h .actions{margin-left:auto;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.card-b{padding:0 0 42px}
+.card-b.flush{padding:0 0 42px}
 
-/* Asymmetric grid. Twelve columns on the desktop layout, one everywhere else —
-   a half-width card on a phone is not a layout, it is a squint. */
-.bento{display:grid;grid-template-columns:repeat(12,1fr);gap:24px;margin-bottom:24px;align-items:stretch}
-.bento>.card{margin-bottom:0;height:100%;display:flex;flex-direction:column}
-.bento>.card>.card-b{flex:1}
+/* Side by side, split by a vertical hairline rather than by two boxes. */
+.bento{display:grid;grid-template-columns:repeat(12,1fr);column-gap:var(--gut);align-items:start}
+.bento>*{grid-column:span 12}
 .col-4{grid-column:span 4}.col-5{grid-column:span 5}.col-6{grid-column:span 6}
 .col-7{grid-column:span 7}.col-8{grid-column:span 8}.col-12{grid-column:span 12}
-@media (max-width:1180px){.bento{grid-template-columns:1fr;gap:20px}
-  .bento>*{grid-column:auto!important}}
+.bento>.card+.card::after{content:'';position:absolute;left:calc(var(--gut) / -2);
+  top:44px;bottom:42px;width:1px;background:var(--rule-v)}
+@media (max-width:1180px){
+  .bento{column-gap:0}
+  .bento>*{grid-column:span 12!important}
+  .bento>.card+.card::after{display:none}
+}
 
-/* Feature card: same tray, brighter water inside. For the one thing that matters. */
-.card.feature::before{background:
-  radial-gradient(120% 130% at 8% 0%,rgba(34,211,238,.20),transparent 58%),
-  radial-gradient(110% 120% at 100% 100%,rgba(168,85,247,.20),transparent 60%),
-  linear-gradient(168deg,rgba(15,34,72,.90),rgba(7,16,40,.94))}
+.tabs{display:flex;gap:30px;margin:-6px 0 34px;padding:0;background:none;
+  border:0;flex-wrap:wrap}
+.tabs a{position:relative;padding:0 0 12px;border-radius:0;font:500 14px/1 var(--sans);
+  color:var(--muted);transition:color .4s var(--glide)}
+.tabs a:hover{color:var(--ink);background:none}
+.tabs a.on{color:#fff;background:none;font-weight:600}
+.tabs a.on::after{content:'';position:absolute;left:0;right:0;bottom:0;height:2px;border-radius:2px;
+  background:var(--beam);box-shadow:0 0 14px rgba(34,211,238,.7)}
 
-.tabs{display:inline-flex;gap:3px;margin:-8px 0 26px;padding:4px;border-radius:99px;flex-wrap:wrap;
-  background:rgba(255,255,255,.04);border:1px solid var(--line)}
-.tabs a{padding:7px 15px;border-radius:99px;font:500 13.5px/1 var(--sans);color:var(--muted);
-  transition:color .4s var(--glide),background-color .4s var(--glide)}
-.tabs a:hover{color:var(--ink);background:rgba(255,255,255,.05)}
-.tabs a.on{color:#04121f;background:var(--beam);font-weight:600;
-  box-shadow:0 8px 22px -12px rgba(34,211,238,.95),inset 0 1px 0 rgba(255,255,255,.45)}
-
-.note{position:relative;border-radius:18px;padding:15px 18px 15px 20px;font-size:13.5px;
-  color:#cfe2ff;margin-bottom:20px;overflow:hidden;
-  background:linear-gradient(120deg,rgba(34,211,238,.10),rgba(99,102,241,.09));
-  box-shadow:inset 0 0 0 1px rgba(148,190,255,.14)}
-.note::before{content:'';position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--beam)}
+/* An aside, not a box: a gradient rule down the left and a wash that fades to
+   nothing before it reaches the right-hand side. */
+.note{position:relative;border:0;border-radius:0;box-shadow:none;
+  padding:2px 0 2px 20px;margin:0 0 24px;font-size:13.5px;color:#cfe2ff;
+  background:linear-gradient(90deg,rgba(34,211,238,.075),transparent 62%)}
+.note::before{content:'';position:absolute;left:0;top:0;bottom:0;width:2px;border-radius:2px;
+  background:linear-gradient(180deg,#22d3ee,rgba(168,85,247,.35))}
 .note strong{color:#fff;font-weight:600}
-.note a{border-bottom:1px solid rgba(125,211,252,.35)}
 
-.flash{border-radius:18px;padding:14px 18px;margin-bottom:22px;font-size:14px;color:#d7fff6;
-  background:linear-gradient(120deg,rgba(45,212,191,.16),rgba(34,211,238,.10));
-  box-shadow:inset 0 0 0 1px rgba(94,234,212,.26),0 18px 40px -30px rgba(45,212,191,.8)}
-.flash.warn{color:#f0dcff;background:linear-gradient(120deg,rgba(168,85,247,.18),rgba(99,102,241,.12));
-  box-shadow:inset 0 0 0 1px rgba(196,132,252,.30)}
+.flash{position:relative;border:0;border-radius:0;box-shadow:none;
+  padding:14px 0 14px 20px;margin:0 0 30px;font-size:14px;color:#d7fff6;
+  background:linear-gradient(90deg,rgba(45,212,191,.13),transparent 58%)}
+.flash::before{content:'';position:absolute;left:0;top:0;bottom:0;width:2px;border-radius:2px;
+  background:linear-gradient(180deg,#5eead4,rgba(34,211,238,.3))}
+.flash.warn{color:#f0dcff;background:linear-gradient(90deg,rgba(168,85,247,.15),transparent 58%)}
+.flash.warn::before{background:linear-gradient(180deg,#c084fc,rgba(99,102,241,.3))}
 
-.empty{padding:56px 22px;text-align:center;color:var(--faint)}
+.empty{padding:64px 0;text-align:center;color:var(--faint)}
 .empty p{margin:0 0 6px}
 .empty p:first-child{color:var(--muted);font-size:15px}
 
-pre.code,.card pre{background:rgba(2,8,23,.55);padding:16px 18px;border-radius:16px;overflow:auto;
-  font:13px/1.6 var(--mono);color:#bfe3ff;box-shadow:inset 0 0 0 1px rgba(148,190,255,.11)}
+pre.code,.card pre{background:linear-gradient(180deg,rgba(2,8,23,.5),rgba(2,8,23,.28));
+  padding:18px 20px;border-radius:14px;overflow:auto;border:0;
+  font:13px/1.6 var(--mono);color:#bfe3ff}
 
-.mailview{border-radius:20px;overflow:hidden;background:rgba(2,8,23,.5);
-  box-shadow:inset 0 0 0 1px rgba(148,190,255,.13)}
-.mailview iframe{width:100%;height:560px;border:0;display:block;background:#f6f5f3}
-.mailhead{padding:14px 18px;border-bottom:1px solid var(--line-2);font-size:13px;color:var(--muted)}
+.mailview{border-radius:14px;overflow:hidden;background:rgba(2,8,23,.4);border:0}
+.mailview iframe{width:100%;height:620px;border:0;display:block;background:#f6f5f3}
+.mailhead{position:relative;padding:14px 0;font-size:13px;color:var(--muted)}
+.mailhead::after{content:'';position:absolute;left:0;right:0;bottom:0;height:1px;background:var(--rule)}
 .mailhead b{display:inline-block;min-width:56px;color:var(--faint);font-weight:500}
 
 .mono{font-family:var(--mono);font-size:12.5px;letter-spacing:-.01em}
@@ -311,127 +315,140 @@ pre.code,.card pre{background:rgba(2,8,23,.55);padding:16px 18px;border-radius:1
 .btn{position:relative;display:inline-flex;align-items:center;gap:8px;padding:9px 17px;
   border-radius:99px;border:0;cursor:pointer;white-space:nowrap;
   font:600 13.5px/1 var(--display);letter-spacing:-.01em;
-  background:rgba(255,255,255,.06);color:var(--ink);
-  box-shadow:inset 0 0 0 1px rgba(148,190,255,.18),inset 0 1px 0 rgba(255,255,255,.10);
-  transition:transform .45s var(--spring),background-color .45s var(--glide),box-shadow .45s var(--glide),color .45s var(--glide)}
-.btn:hover{background:rgba(255,255,255,.11);color:#fff;transform:translateY(-1px)}
+  background:rgba(255,255,255,.065);color:var(--ink);box-shadow:none;
+  transition:transform .45s var(--spring),background-color .45s var(--glide),color .45s var(--glide)}
+.btn:hover{background:rgba(255,255,255,.13);color:#fff;transform:translateY(-1px)}
 .btn:active{transform:scale(.975)}
 .btn:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
 .btn.primary{background:var(--beam);color:#03121f;
-  box-shadow:0 12px 30px -14px rgba(56,189,248,.95),inset 0 1px 0 rgba(255,255,255,.45)}
-.btn.primary:hover{color:#03121f;transform:translateY(-1px);
-  box-shadow:0 18px 40px -14px rgba(56,189,248,1),inset 0 1px 0 rgba(255,255,255,.55)}
+  box-shadow:0 12px 30px -16px rgba(56,189,248,.95)}
+.btn.primary:hover{color:#03121f;box-shadow:0 18px 40px -16px rgba(56,189,248,1)}
 .btn.accent{background:linear-gradient(120deg,#2dd4bf,#22d3ee);color:#032420;
-  box-shadow:0 12px 30px -14px rgba(45,212,191,.9),inset 0 1px 0 rgba(255,255,255,.4)}
-.btn.danger{color:#ffc4cd;box-shadow:inset 0 0 0 1px rgba(251,113,133,.34)}
-.btn.danger:hover{background:rgba(251,113,133,.16);color:#ffdde2}
-.btn.sm{padding:6px 12px;font-size:12px}
+  box-shadow:0 12px 30px -16px rgba(45,212,191,.9)}
+.btn.danger{color:#ffc4cd;background:rgba(251,113,133,.1)}
+.btn.danger:hover{background:rgba(251,113,133,.2);color:#ffdde2}
+.btn.sm{padding:6px 13px;font-size:12px}
 .btn .chip{display:grid;place-items:center;width:22px;height:22px;margin:-4px -8px -4px 2px;
   border-radius:99px;background:rgba(0,0,0,.16);
-  transition:transform .5s var(--spring),background-color .4s var(--glide)}
-.btn:hover .chip{transform:translate(2px,-1px) scale(1.08);background:rgba(0,0,0,.24)}
-.btn:not(.primary):not(.accent) .chip{background:rgba(255,255,255,.10)}
+  transition:transform .5s var(--spring)}
+.btn:hover .chip{transform:translate(2px,-1px) scale(1.08)}
+.btn:not(.primary):not(.accent) .chip{background:rgba(255,255,255,.1)}
 
-.pill{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:99px;
-  font:600 11.5px/1.35 var(--display);letter-spacing:.01em;
-  background:rgba(255,255,255,.06);color:var(--muted);
-  box-shadow:inset 0 0 0 1px rgba(148,190,255,.14)}
-.pill.ok{background:rgba(45,212,191,.14);color:#7fecd8;box-shadow:inset 0 0 0 1px rgba(45,212,191,.3)}
-.pill.warn{background:rgba(168,85,247,.16);color:#e0bbff;box-shadow:inset 0 0 0 1px rgba(168,85,247,.32)}
-.pill.bad{background:rgba(251,113,133,.15);color:#ffb3bf;box-shadow:inset 0 0 0 1px rgba(251,113,133,.32)}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:99px;
+  font:600 11.5px/1.35 var(--display);background:rgba(255,255,255,.06);color:var(--muted);box-shadow:none}
+.pill.ok{background:rgba(45,212,191,.13);color:#7fecd8}
+.pill.warn{background:rgba(168,85,247,.15);color:#e0bbff}
+.pill.bad{background:rgba(251,113,133,.14);color:#ffb3bf}
 
-label{display:block;font:600 11px/1 var(--display);text-transform:uppercase;letter-spacing:.13em;
-  margin-bottom:9px;color:var(--faint)}
+/* Fields are a wash and an underline that lights up. No frames. */
+/* :not() on the two labels that are furniture rather than field captions. The
+   hamburger and the drawer scrim are <label> elements so the menu works with
+   JavaScript off, and this rule lives in a later @layer than the shell — layer
+   order beats specificity, so without the exclusion it would quietly reset
+   their display and un-centre the hamburger. */
+label:not(.burger):not(.scrim){display:block;font:600 10.5px/1 var(--display);
+  text-transform:uppercase;letter-spacing:.15em;margin-bottom:10px;color:var(--faint)}
 input[type=text],input[type=email],input[type=number],input[type=password],
 input[type=search],input[type=url],input[type=date],input[type=datetime-local],
 textarea,select{
-  width:100%;padding:11px 14px;border:0;border-radius:14px;color:var(--ink);
-  background:rgba(2,8,23,.45);font:14px var(--sans);
-  box-shadow:inset 0 0 0 1px rgba(148,190,255,.15);
+  width:100%;padding:11px 14px;border:0;border-radius:10px 10px 2px 2px;color:var(--ink);
+  background:linear-gradient(180deg,rgba(148,190,255,.045),rgba(148,190,255,.075));
+  font:14px var(--sans);
+  box-shadow:inset 0 -1px 0 rgba(148,190,255,.22);
   transition:box-shadow .4s var(--glide),background-color .4s var(--glide)}
 input::placeholder,textarea::placeholder{color:rgba(109,132,168,.7)}
 textarea{font:13px/1.65 var(--mono);resize:vertical;min-height:200px}
 select{appearance:none;cursor:pointer;padding-right:38px;
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239db2d4' stroke-width='1.4' stroke-linecap='round'%3E%3Cpath d='M6 9.5l6 5.5 6-5.5'/%3E%3C/svg%3E");
-  background-repeat:no-repeat;background-position:right 12px center;background-size:16px}
-select[multiple]{appearance:none;background-image:none;padding:8px;font-size:13px}
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239db2d4' stroke-width='1.4' stroke-linecap='round'%3E%3Cpath d='M6 9.5l6 5.5 6-5.5'/%3E%3C/svg%3E"),
+    linear-gradient(180deg,rgba(148,190,255,.045),rgba(148,190,255,.075));
+  background-repeat:no-repeat,repeat;background-position:right 12px center,0 0;
+  background-size:16px,auto}
+select[multiple]{appearance:none;padding:8px;font-size:13px;border-radius:10px;
+  background-image:none;background:rgba(148,190,255,.06)}
 option{background:#0a1730;color:var(--ink)}
-input:hover,textarea:hover,select:hover{background:rgba(2,8,23,.6)}
-input:focus,textarea:focus,select:focus{outline:0;background:rgba(2,8,23,.7);
-  box-shadow:inset 0 0 0 1px rgba(34,211,238,.65),0 0 0 4px rgba(34,211,238,.13)}
+input:hover,textarea:hover,select:hover{box-shadow:inset 0 -1px 0 rgba(148,190,255,.4)}
+input:focus,textarea:focus,select:focus{outline:0;
+  box-shadow:inset 0 -2px 0 #22d3ee,0 6px 22px -14px rgba(34,211,238,.9)}
 input[type=checkbox],input[type=radio]{appearance:none;-webkit-appearance:none;
   width:17px;height:17px;flex:0 0 auto;margin:0;cursor:pointer;border-radius:6px;
-  background:rgba(2,8,23,.5);box-shadow:inset 0 0 0 1px rgba(148,190,255,.28);
-  transition:background-color .3s var(--glide),box-shadow .3s var(--glide),transform .35s var(--spring)}
+  background:rgba(148,190,255,.12);
+  transition:background .3s var(--glide),transform .35s var(--spring)}
 input[type=radio]{border-radius:50%}
-input[type=checkbox]:hover,input[type=radio]:hover{box-shadow:inset 0 0 0 1px rgba(34,211,238,.7)}
-input[type=checkbox]:checked,input[type=radio]:checked{background:var(--beam);
-  box-shadow:0 0 14px -4px rgba(34,211,238,.9),inset 0 1px 0 rgba(255,255,255,.4)}
+input[type=checkbox]:hover,input[type=radio]:hover{background:rgba(148,190,255,.24)}
+input[type=checkbox]:checked,input[type=radio]:checked{background:var(--beam)}
 input[type=checkbox]:checked::after{content:'';display:block;width:100%;height:100%;
   background:no-repeat center/11px url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23041423' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7'/%3E%3C/svg%3E")}
 input[type=radio]:checked::after{content:'';display:block;width:100%;height:100%;
   background:radial-gradient(circle at 50% 50%,#041423 0 30%,transparent 32%)}
 input[type=checkbox]:focus-visible,input[type=radio]:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
-.field{margin-bottom:20px}
-.row{display:flex;gap:16px;flex-wrap:wrap}
+/* Forms get a measure. A 1,500px-wide text input is not "using the space", it
+   is making somebody track a metre of empty box with their eye — and the
+   composer's page is a preview of mail that lands about 600px wide. Data —
+   tables, charts, KPI rows — still runs edge to edge. */
+.field{margin-bottom:24px;max-width:1040px}
+.row{display:flex;gap:20px;flex-wrap:wrap;max-width:1040px}
 .row>*{flex:1;min-width:210px}
+.row .field{max-width:none}
+.bm-editor-host{max-width:1040px}
 }
 
 /* ──────────────────────────────────────────────────────────── the data */
 @layer data {
-.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(134px,1fr));gap:10px;padding:6px}
-/* Money is wide: "$1,254,107.10" is a lot of glyphs. These rows are always
-   five KPIs, so they get five explicit tracks that may be narrower than their
-   contents' natural width — auto-fit would measure the widest figure and drop
-   to four, orphaning the fifth on a row of its own. */
-.stats.money{grid-template-columns:repeat(5,minmax(0,1fr));padding:0}
-.stats.money .stat{padding:16px}
-.stats.money .stat .n{font-size:clamp(19px,1.7vw,24px);letter-spacing:-.04em;white-space:nowrap}
-@media (max-width:1180px){.stats.money{grid-template-columns:repeat(auto-fit,minmax(168px,1fr))}}
-.card-b.flush .stats{padding:14px}
-.stat{position:relative;padding:17px 18px 16px;border-radius:18px;overflow:hidden;
-  background:linear-gradient(165deg,rgba(255,255,255,.055),rgba(255,255,255,.015));
-  box-shadow:inset 0 0 0 1px rgba(148,190,255,.11),inset 0 1px 0 rgba(255,255,255,.07);
-  transition:transform .6s var(--spring),box-shadow .6s var(--glide)}
-.stat::after{content:'';position:absolute;left:18px;right:18px;top:0;height:1.5px;border-radius:0 0 3px 3px;
-  background:var(--beam);opacity:.35;transition:opacity .6s var(--glide)}
-.stat:hover{transform:translateY(-3px);
-  box-shadow:inset 0 0 0 1px rgba(148,190,255,.22),0 22px 40px -26px rgba(34,211,238,.7)}
-.stat:hover::after{opacity:1}
-.stat .n{font:600 30px/1 var(--display);font-variant-numeric:tabular-nums;letter-spacing:-.035em;
-  color:#f2f8ff;text-shadow:0 0 26px rgba(125,211,252,.28)}
-.stat .l{font:600 10px/1.3 var(--display);color:var(--faint);margin-top:9px;
+/* KPIs stand in a row divided by hairlines, not in five little windows. */
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:26px 0;padding:0}
+.stat{position:relative;padding:2px 26px}
+.stat:first-child{padding-left:0}
+.stat::before{content:'';position:absolute;left:0;top:2px;bottom:2px;width:1px;
+  background:var(--rule-v)}
+.stat:first-child::before{display:none}
+.stat .n{font:600 clamp(26px,2.4vw,34px)/1 var(--display);font-variant-numeric:tabular-nums;
+  letter-spacing:-.04em;color:#f2f8ff;text-shadow:0 0 30px rgba(125,211,252,.25)}
+.stat .l{font:600 10px/1.3 var(--display);color:var(--faint);margin-top:11px;
   text-transform:uppercase;letter-spacing:.17em}
-.stat .h,.stat .hint{font-size:12px;color:var(--muted);margin-top:6px}
-.stat.hi::after{opacity:1}
+.stat .h,.stat .hint{font-size:12.5px;color:var(--muted);margin-top:7px}
 .stat.hi .n{background:linear-gradient(120deg,#5eead4,#22d3ee 55%,#818cf8);
   -webkit-background-clip:text;background-clip:text;color:transparent;
-  filter:drop-shadow(0 0 18px rgba(34,211,238,.45))}
+  filter:drop-shadow(0 0 20px rgba(34,211,238,.4))}
+.stats.money .stat .n{font-size:clamp(21px,1.9vw,27px)}
+@media (max-width:900px){
+  .stats{grid-template-columns:repeat(auto-fit,minmax(140px,1fr))}
+  .stat{padding:2px 16px}
+  .stat:nth-child(odd){padding-left:0}
+  .stat:nth-child(odd)::before{display:none}
+}
 
+/* Tables run to the full width of the band and align on its left edge. */
 table{width:100%;border-collapse:collapse;font-size:13.5px}
-th{text-align:left;font:600 9.5px/1 var(--display);text-transform:uppercase;letter-spacing:.18em;
-  color:var(--faint);padding:14px 22px;border-bottom:1px solid var(--line-2);white-space:nowrap}
-td{padding:14px 22px;border-bottom:1px solid var(--line-2);vertical-align:middle;color:#d5e4fb}
-tr:last-child td{border-bottom:0}
+th{position:relative;text-align:left;font:600 9.5px/1 var(--display);text-transform:uppercase;
+  letter-spacing:.18em;color:var(--faint);padding:0 18px 14px;white-space:nowrap}
+th::after{content:'';position:absolute;left:0;right:0;bottom:0;height:1px;
+  background:rgba(148,190,255,.16)}
+/* Row rules stay flat. They are already inside a band the page has delimited,
+   and a fade on every one of two hundred rows reads as a printing fault. */
+td{position:relative;padding:15px 18px;vertical-align:middle;color:#d5e4fb}
+td::after{content:'';position:absolute;left:0;right:0;bottom:0;height:1px;
+  background:rgba(148,190,255,.08)}
+tr:last-child td::after{display:none}
+th:first-child,td:first-child{padding-left:0}
+th:last-child,td:last-child{padding-right:0}
 tbody tr{transition:background-color .35s var(--glide)}
-tbody tr:hover{background:linear-gradient(90deg,rgba(34,211,238,.075),rgba(168,85,247,.045) 70%,transparent)}
-tbody tr.sel{background:linear-gradient(90deg,rgba(34,211,238,.14),rgba(168,85,247,.08) 70%,transparent);
-  box-shadow:inset 2px 0 0 #22d3ee}
+tbody tr:hover{background:linear-gradient(90deg,rgba(34,211,238,.07),rgba(168,85,247,.03) 60%,transparent)}
+tbody tr.sel{background:linear-gradient(90deg,rgba(34,211,238,.14),transparent 70%)}
 td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
-td.tick,th.tick{width:38px;padding-right:0}
+td.tick,th.tick{width:32px;padding-right:0}
 td b,td strong{color:#fff;font-weight:600}
 td a{color:#dbe9ff}
 td a:hover{color:#7dd3fc}
 td a .faint{color:var(--faint)}
 
-.meter{height:6px;border-radius:99px;overflow:hidden;margin-top:8px;
-  background:rgba(148,190,255,.12)}
+.meter{height:5px;border-radius:99px;overflow:hidden;margin-top:8px;
+  background:rgba(148,190,255,.1)}
 .meter>i{display:block;height:100%;border-radius:99px;background:var(--beam);
-  box-shadow:0 0 12px rgba(56,189,248,.55)}
+  box-shadow:0 0 12px rgba(56,189,248,.5)}
 
 .chart{width:100%;min-height:60px;position:relative}
-.chart-wait{position:absolute;inset:0;border-radius:16px;overflow:hidden;
-  background:linear-gradient(100deg,rgba(148,190,255,.05),rgba(148,190,255,.10),rgba(148,190,255,.05));
+.chart-wait{position:absolute;inset:0;border-radius:10px;overflow:hidden;
+  background:linear-gradient(100deg,rgba(148,190,255,.03),rgba(148,190,255,.08),rgba(148,190,255,.03));
   background-size:200% 100%;animation:shimmer 1.6s var(--glide) infinite}
 @keyframes shimmer{from{background-position:120% 0}to{background-position:-120% 0}}
 .chart.is-live{animation:surface-in .8s var(--spring) both}
@@ -440,13 +457,10 @@ td a .faint{color:var(--faint)}
 .ct-dot{width:8px;height:8px;border-radius:3px;flex:0 0 auto}
 .ct-val{font-variant-numeric:tabular-nums}
 .apexcharts-canvas{margin:0 auto}
-.apexcharts-gridline{stroke-opacity:1}
-.chart-legend{display:flex;flex-wrap:wrap;gap:8px 20px;margin-top:14px}
-.chart-legend span{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted)}
 .apexcharts-tooltip{background:rgba(8,20,47,.94)!important;border:0!important;
-  border-radius:14px!important;box-shadow:0 24px 50px -22px rgba(0,0,0,.9),
-  inset 0 0 0 1px rgba(148,190,255,.22)!important;color:var(--ink)!important;
-  -webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);font-family:var(--sans)!important}
+  border-radius:12px!important;box-shadow:0 24px 50px -22px rgba(0,0,0,.9)!important;
+  color:var(--ink)!important;-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);
+  font-family:var(--sans)!important}
 .apexcharts-tooltip-title{background:rgba(148,190,255,.08)!important;border:0!important;
   font:600 11px/1 var(--display)!important;letter-spacing:.12em!important;text-transform:uppercase;
   color:var(--faint)!important;padding:10px 14px!important}
@@ -457,22 +471,20 @@ td a .faint{color:var(--faint)}
 
 /* ─────────────────────────────────────────────────────── choreography */
 @layer motion {
-/* Nothing arrives statically. Where the browser can drive it from scroll
-   position it does; everywhere else it is a staggered entrance on load. */
-@keyframes surface-in{from{opacity:0;transform:translate3d(0,26px,0) scale(.985);filter:blur(6px)}
+/* Nothing arrives statically. Deliberately not a view() scroll timeline: a
+   band taller than the viewport never finishes its entry range, so a long
+   table would sit there half-faded forever. A staggered entrance completes. */
+@keyframes surface-in{from{opacity:0;transform:translate3d(0,22px,0);filter:blur(5px)}
   to{opacity:1;transform:none;filter:blur(0)}}
 .head,.card,.tabs,.note,.flash,.reveal{animation:surface-in .9s var(--spring) both}
 .head{animation-delay:.02s}
 .card:nth-of-type(1){animation-delay:.08s}
-.card:nth-of-type(2){animation-delay:.15s}
-.card:nth-of-type(3){animation-delay:.22s}
-.card:nth-of-type(4){animation-delay:.29s}
-.card:nth-of-type(n+5){animation-delay:.34s}
-/* Deliberately not a view() scroll timeline: a card taller than the viewport
-   never finishes its entry range, so a long table would sit there half-faded
-   and blurred forever. A staggered entrance always completes. */
+.card:nth-of-type(2){animation-delay:.14s}
+.card:nth-of-type(3){animation-delay:.2s}
+.card:nth-of-type(4){animation-delay:.26s}
+.card:nth-of-type(n+5){animation-delay:.3s}
 .rail{animation:rail-in 1s var(--spring) both}
-@keyframes rail-in{from{opacity:0;transform:translate3d(-24px,0,0)}to{opacity:1;transform:none}}
+@keyframes rail-in{from{opacity:0;transform:translate3d(-20px,0,0)}to{opacity:1;transform:none}}
 @media (max-width:1080px){.rail{animation:none}}
 
 @media (prefers-reduced-motion:reduce){
@@ -484,37 +496,25 @@ td a .faint{color:var(--faint)}
 
 /* ────────────────────────────────────────────── public preference page */
 @layer surface {
-.prefs{max-width:600px;margin:0 auto;padding:min(12vh,110px) 20px 90px;position:relative;z-index:2}
-.prefs h1{font-size:clamp(28px,6vw,38px);margin-bottom:12px}
-.prefs .lede{color:var(--muted);margin-bottom:30px;font-size:15.5px}
-/* The form is the card here — the whole page is one decision surface, so it
-   gets the tray-and-plate treatment without a wrapper element to hang it on. */
-.prefs form{position:relative;padding:6px 6px 8px;border-radius:28px;
-  background:linear-gradient(158deg,rgba(255,255,255,.15),rgba(255,255,255,.025) 42%,rgba(125,211,252,.10));
-  box-shadow:0 34px 70px -38px rgba(0,0,0,.92);
-  animation:surface-in .9s var(--spring) both;animation-delay:.1s}
-.prefs form::before{content:'';position:absolute;inset:6px;border-radius:22px;z-index:0;
-  background:linear-gradient(168deg,rgba(13,30,63,.88),rgba(6,14,36,.93));
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.10),inset 0 0 0 1px rgba(148,190,255,.055),
-    inset 0 -80px 110px -70px rgba(34,211,238,.22)}
-.prefs form>*{position:relative;z-index:1;margin-left:22px;margin-right:22px}
-.prefs form h3:first-child{margin-top:20px}
-.prefs h1,.prefs .lede,.prefs .flash{animation:surface-in .9s var(--spring) both}
-.pref-item{display:flex;gap:15px;align-items:flex-start;padding:18px 0;
-  border-bottom:1px solid var(--line-2)}
-.pref-item:last-of-type{border-bottom:0}
+.prefs{max-width:640px;margin:0 auto;padding:min(13vh,120px) var(--gut) 100px;position:relative;z-index:2}
+.prefs h1{font-size:clamp(30px,6vw,40px);margin-bottom:14px}
+.prefs .lede{color:var(--muted);margin-bottom:14px;font-size:15.5px}
+.prefs form{position:relative;padding:0;animation:surface-in .9s var(--spring) both;
+  animation-delay:.1s}
+.prefs form h3{padding-top:28px}
+.pref-item{position:relative;display:flex;gap:16px;align-items:flex-start;padding:20px 0}
+.pref-item::after{content:'';position:absolute;left:0;right:0;bottom:0;height:1px;
+  background:rgba(148,190,255,.09)}
 .pref-item .txt{flex:1}
 .pref-item .nm{font-weight:600;font-size:15px;color:#fff}
 .pref-item .ds{font-size:13px;color:var(--muted);margin-top:4px}
-.pref-item.focus{margin:0 -16px;padding:18px 16px;border-radius:16px;border-bottom:0;
-  background:linear-gradient(120deg,rgba(34,211,238,.12),rgba(168,85,247,.10));
-  box-shadow:inset 0 0 0 1px rgba(148,190,255,.2)}
+.pref-item.focus{padding-left:20px;
+  background:linear-gradient(90deg,rgba(34,211,238,.1),transparent 70%)}
+.pref-item.focus::before{content:'';position:absolute;left:0;top:0;bottom:1px;width:2px;
+  border-radius:2px;background:linear-gradient(180deg,#22d3ee,rgba(168,85,247,.35))}
 .tag-focus{display:inline-block;font:600 9.5px/1 var(--display);text-transform:uppercase;
-  letter-spacing:.2em;color:#a5f3fc;background:rgba(34,211,238,.14);padding:5px 9px;
-  border-radius:99px;margin-bottom:8px}
-/* No rule of its own: the last preference row already draws one, and .nuke is
-   a div too, so :last-of-type never fires on that row and you get two. */
-.nuke{margin-top:6px;padding-top:22px;padding-bottom:8px}
+  letter-spacing:.2em;color:#a5f3fc;margin-bottom:9px}
+.nuke{margin-top:0;padding-top:26px}
 }
 `
 

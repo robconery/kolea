@@ -287,3 +287,31 @@ the admin should be somewhere you want to sit, not a form.
   always completes.
 - Verified against the running app at every step (screenshots at 1440 and 414), and the 33-check
   editor smoke suite still passes with no JS errors.
+
+## 2026-08-19 — The flow pass (no containers)
+
+First cut of the redesign put everything in glass trays — cards with a bezel, a floating rail
+panel, a 1,080px column. Rob's verdict: *"it looks like someone took paste and glued some pictures
+onto the screen."* Correct, and worth writing down.
+
+- **There are no containers now.** Not a card, not a panel, not a sidebar with a wall around it.
+  Every region sits directly on the water, and the only thing separating two of them is a
+  one-pixel gradient rule that fades out before it reaches either end. **A rule that fades has no
+  corners, and without corners nothing reads as a window pasted onto the page.** Whitespace does
+  the rest.
+- **`.card` stopped being a container and became a band of the page**: one hairline above it, air
+  around it, nothing else. Same markup, so every screen came along unchanged.
+- **KPI rows are divided, not boxed** — numbers in a row with vertical hairlines between them.
+- **The layout is edge to edge.** No max-width on the shell; the gutter is
+  `clamp(26px, 3.4vw, 64px)` and the content uses whatever the display gives it.
+- **Except forms.** `.field`, `.row` and the composer cap at 1,040px. A 1,500px text input is not
+  using the space, it is making somebody track a metre of empty box with their eye — and the
+  composer's page is a preview of mail that lands about 600px wide. Data (tables, charts, KPI
+  rows) still runs the full width.
+- **Bar width is computed, not guessed.** Apex only takes a percentage of the band, so at full
+  bleed twelve months became 70px slabs. The client measures the mount and asks for whatever
+  percentage lands a 34px column.
+- Bug worth remembering: `label{display:block}` lives in the `controls` layer, and the hamburger
+  and drawer scrim are `<label>` elements declared in the `shell` layer. **Cascade layers beat
+  specificity**, so the generic rule silently reset both. `label:not(.burger):not(.scrim)`.
+
