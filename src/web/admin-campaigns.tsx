@@ -687,13 +687,13 @@ campaignsAdmin.get('/forms/:id', async (c) => {
             Plain HTML, no JavaScript, no library. It works from a static site, a Ghost theme, or
             anywhere else you can put a <span class="mono">&lt;form&gt;</span>.
           </p>
-          <pre class="mono" style="background:#f6f5f3;padding:14px;border-radius:8px;overflow:auto">
+          <pre class="mono code">
             {html}
           </pre>
           <p class="muted" style="margin-top:18px">
             Or post JSON from a client component and stay on the page:
           </p>
-          <pre class="mono" style="background:#f6f5f3;padding:14px;border-radius:8px;overflow:auto">
+          <pre class="mono code">
             {js}
           </pre>
           <p class="faint">
@@ -797,7 +797,7 @@ campaignsAdmin.get('/sales', async (c) => {
           <h2>How to record one</h2>
         </div>
         <div class="card-b">
-          <pre class="mono" style="background:#f6f5f3;padding:14px;border-radius:8px;overflow:auto">
+          <pre class="mono code">
 {`curl -X POST ${c.env.PUBLIC_URL}/api/sales \\
   -H 'Authorization: Bearer <key>' \\
   -H 'Content-Type: application/json' \\

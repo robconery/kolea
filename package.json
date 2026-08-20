@@ -33,6 +33,7 @@
     "@tiptap/pm": "^3",
     "@tiptap/starter-kit": "^3",
     "@tiptap/suggestion": "^3",
+    "apexcharts": "^6.10.0",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.13.1",
     "lowlight": "^3.3.0",
@@ -42,7 +43,7 @@
   },
   "scripts": {
     "dev": "bun run build:client && wrangler dev",
-    "build:client": "bun build src/client/editor.ts --outdir public --target browser --minify --entry-naming editor.js && cp src/client/editor.css public/editor.css",
+    "build:client": "bun build src/client/editor.ts --outdir public --target browser --minify --entry-naming editor.js && bun build src/client/charts.ts --outdir public --target browser --minify --entry-naming charts.js && cp src/client/editor.css public/editor.css",
     "watch:client": "bun build src/client/editor.ts --outdir public --target browser --entry-naming editor.js --watch",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "wrangler d1 migrations apply big-mailer --local",

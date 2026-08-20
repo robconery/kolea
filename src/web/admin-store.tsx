@@ -14,7 +14,7 @@ import { createSegment } from '../core/segments.ts'
 import { getDb } from '../db/index.ts'
 import { type SegmentRule, purchaseStats, purchases, subscribers } from '../db/schema.ts'
 import type { Env } from '../types.ts'
-import { BarRow, ColumnChart, Donut, RAMP, Swatch } from './charts.tsx'
+import { BarRow, ColumnChart, Donut, RAMP, Sparkline, Swatch } from './charts.tsx'
 import { Flash, Layout, StoreTabs, fmtDay, fmtMoney } from './layout.tsx'
 
 /**
@@ -52,19 +52,24 @@ export function monthColumn(m: { month: string; cents: number; orders: number })
   }
 }
 
-const Stat = ({ label, value, hint }: { label: string; value: string; hint?: string }) => (
-  <div style="flex:1 1 148px;min-width:148px">
-    <div class="faint" style="font-size:11px;text-transform:uppercase;letter-spacing:.06em">
-      {label}
-    </div>
-    <div style="font-size:25px;font-weight:600;line-height:1.25;margin-top:3px;font-variant-numeric:tabular-nums">
-      {value}
-    </div>
-    {hint ? (
-      <div class="faint" style="font-size:12px">
-        {hint}
-      </div>
-    ) : null}
+/** One KPI, in the same tile the dashboard uses. Number first: the label is
+ *  what you read second, once the size of the thing has already landed. */
+const Stat = ({
+  label,
+  value,
+  hint,
+  trend,
+}: {
+  label: string
+  value: string
+  hint?: string
+  trend?: number[]
+}) => (
+  <div class="stat">
+    <div class="n">{value}</div>
+    <div class="l">{label}</div>
+    {hint ? <div class="h">{hint}</div> : null}
+    {trend && trend.length > 2 ? <Sparkline values={trend} /> : null}
   </div>
 )
 
@@ -92,6 +97,7 @@ export const StoreHeadline = ({
   yearOrders,
   liveCount,
   catalogCount,
+  trend,
 }: {
   totals: { cents: number; buyers: number; orders: number; reachable: number; firstAt: Date | null }
   head: HeadlineNumbers
@@ -99,11 +105,13 @@ export const StoreHeadline = ({
   yearOrders: number
   liveCount: number
   catalogCount: number
+  /** Monthly cents behind `yearCents`, drawn as a trend line inside its tile. */
+  trend?: number[]
 }) => (
   <>
     <div class="card">
       <div class="card-b">
-        <div style="display:flex;flex-wrap:wrap;gap:20px 24px">
+        <div class="stats money">
           <Stat
             label="Gross, all time"
             value={fmtMoney(totals.cents)}
@@ -113,6 +121,7 @@ export const StoreHeadline = ({
             label="Last 12 months"
             value={fmtMoney(yearCents)}
             hint={`${yearOrders.toLocaleString('en-US')} orders`}
+            trend={trend}
           />
           <Stat
             label="Average order"
@@ -141,7 +150,7 @@ export const StoreHeadline = ({
         </div>
       </div>
       <div class="card-b">
-        <div style="display:flex;flex-wrap:wrap;gap:20px 24px">
+        <div class="stats money">
           <Stat
             label="Revenue from this list"
             value={fmtMoney(head.reachableCents)}
@@ -286,7 +295,7 @@ store.get('/store', async (c) => {
   const maxChannel = Math.max(1, ...channels.map((ch) => ch.cents))
 
   return c.html(
-    <Layout title="Store" nav="store">
+    <Layout title="Store" nav="store" charts>
       <div class="head">
         <div>
           <h1>Store</h1>
@@ -307,6 +316,7 @@ store.get('/store', async (c) => {
         yearOrders={yearOrders}
         liveCount={liveCatalog.length}
         catalogCount={catalog.length}
+        trend={months.map((m) => m.cents)}
       />
 
       <div class="card">
@@ -518,7 +528,7 @@ store.get('/store/offers', async (c) => {
   const maxCents = Math.max(1, ...byOffer.map((o) => o.cents))
 
   return c.html(
-    <Layout title="Offers" nav="store">
+    <Layout title="Offers" nav="store" charts>
       <div class="head">
         <div>
           <h1>Offers</h1>
@@ -617,7 +627,7 @@ store.get('/store/customers', async (c) => {
   const top = rows[0]?.lifetimeCents ?? 1
 
   return c.html(
-    <Layout title="Customers" nav="store">
+    <Layout title="Customers" nav="store" charts>
       <div class="head">
         <div>
           <h1>Customers</h1>
@@ -718,7 +728,7 @@ store.get('/store/ideas', async (c) => {
   const ideas = await suggestSegments(db)
 
   return c.html(
-    <Layout title="Segment ideas" nav="store">
+    <Layout title="Segment ideas" nav="store" charts>
       <div class="head">
         <div>
           <h1>Segment ideas</h1>

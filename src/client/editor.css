@@ -6,8 +6,16 @@
   --e-faint: #9aa0a8;
   --e-line: #e8e5e0;
   --e-line-2: #f1efec;
-  --e-accent: #1f6f5c;
-  --e-accent-soft: #e8f2ef;
+  --e-accent: #0e7490;
+  --e-accent-soft: #e2f6fc;
+  /* Chrome (toolbar, menus) belongs to the app and is dark; the page it wraps
+     is paper, because that is what the mail will actually look like. */
+  --e-ui: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
+  --e-ui-ink: #eaf3ff;
+  --e-ui-muted: #9db2d4;
+  --e-ui-faint: #6d84a8;
+  --e-ui-line: rgba(148, 190, 255, 0.14);
+  --e-beam: linear-gradient(120deg, #22d3ee 0%, #60a5fa 38%, #a855f7 100%);
   --e-paper: #fff;
   --e-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Helvetica, Arial, sans-serif;
   --e-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
@@ -42,7 +50,7 @@
 .bm-tb:hover { background: var(--e-line-2); color: var(--e-ink); }
 .bm-tb.on { background: var(--e-ink); color: #fff; }
 .bm-tb code { font: 12px var(--e-mono); }
-.bm-hl { background: #fdf3c4; padding: 1px 4px; border-radius: 3px; color: var(--e-ink); }
+.bm-hl { background: #ede9fe; padding: 1px 4px; border-radius: 3px; color: var(--e-ink); }
 .bm-count { margin-left: auto; font: 12px var(--e-sans); color: var(--e-faint); padding-right: 4px; }
 
 /* ── the document surface */
@@ -207,7 +215,7 @@
 .bm-bb:hover { background: rgba(255, 255, 255, 0.14); color: #fff; }
 .bm-bb.on { background: #fff; color: var(--e-ink); }
 .bm-bb code { font: 12px var(--e-mono); }
-.bm-bb .bm-hl { background: #fdf3c4; color: var(--e-ink); }
+.bm-bb .bm-hl { background: #ede9fe; color: var(--e-ink); }
 .bm-bb-label { color: #9aa0a8; font: 12px var(--e-sans); padding: 0 6px 0 4px; }
 .bm-bb-input {
   width: 210px; padding: 5px 9px; border: 1px solid #3a3f46; border-radius: 6px;
@@ -220,3 +228,104 @@
   cursor: pointer; padding: 0;
 }
 .bm-swatch:hover { transform: scale(1.12); }
+
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Abyssal chrome.
+
+   The composer sits in the same lit-glass tray as every other card, and the
+   editing surface stays white inside it — deliberately. This is the one screen
+   where the thing on screen *is* the artefact: mail lands on paper in somebody
+   else's client, and composing it against a dark canvas would mean writing
+   blind to the contrast people will actually read at. So: dark tray, dark
+   toolbar, dark menus, paper page.
+   ───────────────────────────────────────────────────────────────────────── */
+
+.bm-editor-host {
+  border: 0;
+  border-radius: 22px;
+  padding: 6px;
+  background: linear-gradient(158deg, rgba(255, 255, 255, 0.15),
+    rgba(255, 255, 255, 0.03) 45%, rgba(125, 211, 252, 0.1));
+  box-shadow: 0 30px 62px -34px rgba(0, 0, 0, 0.9);
+}
+
+.bm-toolbar {
+  padding: 9px 11px;
+  border-bottom: 0;
+  border-radius: 16px 16px 0 0;
+  background: linear-gradient(180deg, rgba(14, 32, 66, 0.97), rgba(8, 19, 44, 0.97));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    inset 0 0 0 1px rgba(148, 190, 255, 0.1);
+}
+.bm-tb-group { border-right-color: var(--e-ui-line); }
+.bm-tb {
+  color: var(--e-ui-muted);
+  border-radius: 9px;
+  font-family: var(--e-ui);
+  transition: background-color 0.35s cubic-bezier(0.22, 1, 0.36, 1),
+    color 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.bm-tb:hover { background: rgba(255, 255, 255, 0.08); color: #fff; }
+.bm-tb.on { background: var(--e-beam); color: #03121f; }
+.bm-count { color: var(--e-ui-faint); font-family: var(--e-ui); }
+
+/* The page. Rounded to sit inside the tray, and lifted off it. */
+.bm-prose {
+  background: #fff;
+  border-radius: 0 0 16px 16px;
+  box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.06);
+}
+
+/* Floating furniture: slash menu, mention menu, bubble bar. All app chrome. */
+.bm-menu {
+  background: rgba(10, 24, 52, 0.94);
+  border: 0;
+  border-radius: 16px;
+  padding: 7px;
+  -webkit-backdrop-filter: blur(24px) saturate(150%);
+  backdrop-filter: blur(24px) saturate(150%);
+  box-shadow: 0 28px 60px -26px rgba(0, 0, 0, 0.95),
+    inset 0 0 0 1px rgba(148, 190, 255, 0.18);
+}
+.bm-menu-item { color: var(--e-ui-ink); font-family: var(--e-ui); border-radius: 11px; }
+.bm-menu-item.on { background: linear-gradient(100deg, rgba(34, 211, 238, 0.22), rgba(168, 85, 247, 0.2)); }
+.bm-menu-icon {
+  border: 0;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--e-ui-muted);
+  box-shadow: inset 0 0 0 1px rgba(148, 190, 255, 0.16);
+  font-family: var(--e-ui);
+}
+.bm-menu-sub, .bm-menu-empty { color: var(--e-ui-faint); font-family: var(--e-ui); }
+
+.bm-bubble {
+  padding: 6px;
+  border-radius: 14px;
+  background: rgba(10, 24, 52, 0.94);
+  -webkit-backdrop-filter: blur(24px) saturate(150%);
+  backdrop-filter: blur(24px) saturate(150%);
+  box-shadow: 0 22px 48px -22px rgba(0, 0, 0, 0.95),
+    inset 0 0 0 1px rgba(148, 190, 255, 0.2);
+}
+.bm-bb { color: var(--e-ui-muted); border-radius: 9px; font-family: var(--e-ui); }
+.bm-bb:hover { background: rgba(255, 255, 255, 0.1); color: #fff; }
+.bm-bb.on { background: var(--e-beam); color: #03121f; }
+.bm-bb-label { color: var(--e-ui-faint); font-family: var(--e-ui); }
+.bm-bb-input {
+  border: 0;
+  border-radius: 10px;
+  background: rgba(2, 8, 23, 0.55);
+  color: var(--e-ui-ink);
+  font-family: var(--e-ui);
+  box-shadow: inset 0 0 0 1px rgba(148, 190, 255, 0.2);
+}
+.bm-bb-input:focus { box-shadow: inset 0 0 0 1px rgba(34, 211, 238, 0.75); }
+
+/* The drag handle lives in the gutter, over the tray rather than the page. */
+.bm-drag { background: transparent; color: var(--e-ui-faint); border-radius: 7px; }
+.bm-drag:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: transparent;
+  color: var(--e-ui-ink);
+}

@@ -248,3 +248,42 @@ should be the actual dashboard".
 
 Noticed in the data, for Rob: **`Top Shelf` and `Top Shelf Import` are duplicate tags** — same 400
 people, same 96% buy rate, same $64,315. Candidates for `tag_merge`.
+
+## 2026-08-19 — Abyssal redesign (left rail, real charts)
+
+Full visual redesign on `feat/abyssal-redesign`. The brief: the top nav had outgrown itself, and
+the admin should be somewhere you want to sit, not a form.
+
+- **The nav moved to a fixed left rail** grouped Dashboard / Audience / Mail / Money / System.
+  It is a floating glass panel, not a flush sidebar, and its open state on narrow screens is a
+  `<input type="checkbox">` + sibling selectors — so the drawer, the scrim, and the
+  hamburger→X morph all work with JavaScript off. The admin still ships zero JS outside the
+  composer and the two charting screens.
+- **The look is "Abyssal"**: deep water at the bottom of the page, sunlight raked through the
+  surface, caustics, grain, and a few drifting motes — all in one fixed `pointer-events:none`
+  layer behind everything, animated only via `transform`. `backdrop-filter` is confined to the
+  rail and the mobile bar; putting it on scrolling content repaints every frame.
+- **Every card is a double bezel** — a lit glass tray with a darker plate inset 6px inside it,
+  built as a `::before` so the existing `.card-h` / `.card-b` markup did not have to change.
+  That is why the redesign is ~one stylesheet plus a shell rewrite: the class vocabulary
+  (`card`, `stat`, `pill`, `btn`, `tabs`, `note`, `empty`) was already good, so it was restyled
+  rather than replaced, and all six admin screens came along for free.
+- **Charts are ApexCharts now**, not hand-rolled SVG. Server-configured, client-rendered: a
+  chart is a `<div data-chart="{...}">` carrying a complete JSON spec, and `/charts.js` turns
+  every one of them into a drawing. The bundle is large (~970KB raw), so `Layout` only links it
+  on the screens that plot something. Every chart is still backed by a real table on the same
+  card.
+- **The ordinal ramp survived the repaint** (`#a5f3fc → #38bdf8 → #6366f1 → #8b5cf6`, light→deep).
+  Donut slices fall toward a *darker version of themselves* rather than toward a shared light:
+  Apex's plain `shadeIntensity` washes every slice toward the same value and flattens exactly the
+  ordering the tiers exist to show.
+- **The composer stays on white paper inside a dark tray.** Mail lands on paper in somebody
+  else's client; composing against a dark canvas would mean writing blind to the contrast people
+  actually read at. The chrome around it — toolbar, slash menu, bubble bar — went dark, because
+  that chrome belongs to the app, not to the mail.
+- **Reveals are a staggered CSS entrance, deliberately not a `view()` scroll timeline.** Tried the
+  timeline first; a card taller than the viewport never finishes its entry range, so the
+  subscribers table sat there permanently half-faded and blurred. A fixed-duration keyframe
+  always completes.
+- Verified against the running app at every step (screenshots at 1440 and 414), and the 33-check
+  editor smoke suite still passes with no JS errors.

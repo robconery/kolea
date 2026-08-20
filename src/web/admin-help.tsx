@@ -13,10 +13,7 @@ export const help = new Hono<{ Bindings: Env }>()
  */
 
 const Code = ({ children }: { children: string }) => (
-  <pre
-    class="mono"
-    style="background:#f6f5f3;padding:14px;border-radius:8px;overflow:auto;font-size:13px;line-height:1.5"
-  >
+  <pre class="mono code">
     {children}
   </pre>
 )
