@@ -46,16 +46,16 @@ Thanks for picking up the course. Over the next few days I'll send you three sho
 
 First: [start here](https://example.com/start). It's about ten minutes.
 
-— Rob`,
+Rob`,
     0,
   ],
   [
     'The part everyone skips',
     `{{first_name}}, most people skip the setup chapter and regret it around day three.
 
-[Read it now](https://example.com/setup) — it's short, I promise.
+[Read it now](https://example.com/setup). It's short, I promise.
 
-— Rob`,
+Rob`,
     2,
   ],
   [
@@ -64,7 +64,7 @@ First: [start here](https://example.com/start). It's about ten minutes.
 
 If you want more like this, the newsletter goes out most weeks. You're already on it.
 
-— Rob`,
+Rob`,
     3,
   ],
 ]
@@ -72,18 +72,18 @@ If you want more like this, the newsletter goes out most weeks. You're already o
 const LAUNCH_STEPS: [string, string, number][] = [
   [
     "Something's coming",
-    `Hi {{first_name}} — I'm opening the doors on the new workshop next week.
+    `Hi {{first_name}}, I'm opening the doors on the new workshop next week.
 
 Nothing to do yet. Just a heads-up.
 
-— Rob`,
+Rob`,
     0,
   ],
   [
     "It's open",
     `{{first_name}}, the workshop is live: [take a look](https://example.com/workshop).
 
-— Rob`,
+Rob`,
     2,
   ],
 ]
@@ -103,7 +103,7 @@ const SHOWCASE_DOC: DocNode = {
     p(
       t('Hi '),
       { type: 'mergeTag', attrs: { field: 'first_name' } },
-      t(' — this paragraph has '),
+      t(', this paragraph has '),
       t('bold', 'bold'),
       t(', '),
       t('italic', 'italic'),
@@ -188,7 +188,7 @@ seed.post('/dev/seed', async (c) => {
 
   const existing = await db.select({ n: count() }).from(subscribers).get()
   if ((existing?.n ?? 0) > 0) {
-    return c.redirect('/?flash=Already seeded — clear the database first.')
+    return c.redirect('/?flash=Already seeded. Clear the database first.')
   }
 
   // Tags
@@ -253,7 +253,7 @@ If you leave a series here, you stay on the list. That's the whole idea.
 
 [The long version is on the blog](https://example.com/post).
 
-— Rob`,
+Rob`,
       segment: {},
       status: 'draft',
       createdAt: new Date(),
@@ -365,7 +365,7 @@ seed.post('/dev/fast-forward', async (c) => {
 
   const msg =
     sent === 0
-      ? 'Clock advanced — no steps were due (every active enrollment may be finished).'
+      ? 'Clock advanced: no steps were due (every active enrollment may be finished).'
       : `Clock advanced: ${sent} step${sent === 1 ? '' : 's'} sent. Check the Outbox.`
   return c.redirect(`/?flash=${encodeURIComponent(msg)}`)
 })

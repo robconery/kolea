@@ -78,7 +78,7 @@ export const MergeTag = Node.create({
         },
         render: () => makeDropdown((item: MergeField) => ({
           title: item.label,
-          subtitle: `{{${item.field}}} — e.g. ${item.sample}`,
+          subtitle: `{{${item.field}}}, e.g. ${item.sample}`,
           icon: '◆',
         })),
       }),

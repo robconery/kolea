@@ -166,6 +166,7 @@ export const Layout: FC<
               {item('/broadcasts', 'bc', 'Broadcasts')}
               {item('/sequences', 'seq', 'Sequences')}
               {item('/campaigns', 'camp', 'Campaigns')}
+              {item('/store', 'store', 'Store')}
               {item('/outbox', 'out', 'Outbox')}
               {item('/consent', 'cons', 'Consent')}
               {item('/settings', 'set', 'Settings')}
@@ -194,6 +195,31 @@ export const AudienceTabs: FC<{ on: 'people' | 'tags' | 'segments' }> = ({ on })
     </a>
     <a href="/segments" class={on === 'segments' ? 'on' : ''}>
       Segments
+    </a>
+  </div>
+)
+
+/**
+ * Sub-navigation for the storefront.
+ *
+ * Its own top-nav slot rather than a fourth audience tab: this is the customer
+ * side of the house — what exists to sell, who bought it, and what to do about
+ * that. It answers questions about *people as customers*, which is a different
+ * job from the list hygiene the audience screens do.
+ */
+export const StoreTabs: FC<{ on: 'overview' | 'offers' | 'customers' | 'ideas' }> = ({ on }) => (
+  <div class="tabs">
+    <a href="/store" class={on === 'overview' ? 'on' : ''}>
+      Overview
+    </a>
+    <a href="/store/offers" class={on === 'offers' ? 'on' : ''}>
+      Offers
+    </a>
+    <a href="/store/customers" class={on === 'customers' ? 'on' : ''}>
+      Customers
+    </a>
+    <a href="/store/ideas" class={on === 'ideas' ? 'on' : ''}>
+      Segment ideas
     </a>
   </div>
 )
@@ -230,7 +256,7 @@ export const CampaignPicker: FC<{ all: Campaign[]; value: number | null; hint?: 
     <div class="field">
       <label>Campaign</label>
       <select name="campaignId">
-        <option value="">— not part of a campaign —</option>
+        <option value="">(not part of a campaign)</option>
         {all.map((c) => (
           <option value={String(c.id)} selected={c.id === value}>
             {c.name}
@@ -303,12 +329,28 @@ export const Flash: FC<{ msg?: string; kind?: string }> = ({ msg, kind }) =>
   msg ? <div class={kind === 'warn' ? 'flash warn' : 'flash'}>{msg}</div> : null
 
 export function fmtDate(d: Date | null | undefined): string {
-  if (!d) return '—'
+  if (!d) return '-'
   return new Date(d).toLocaleString('en-US', {
     month: 'short',
     day: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
+  })
+}
+
+/**
+ * Date with the year, and no clock.
+ *
+ * `fmtDate` above is tuned for things that happened this week — a message, a
+ * send, a click — where the year is noise. Order history reaches back to 2015,
+ * and "Jul 17, 4:32 AM" for a ten-year-old purchase is worse than useless.
+ */
+export function fmtDay(d: Date | null | undefined): string {
+  if (!d) return '-'
+  return new Date(d).toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
   })
 }
 

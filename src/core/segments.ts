@@ -1,9 +1,12 @@
 import { type SQL, and, asc, count, eq, gt, gte, inArray, lte, notInArray, sql } from 'drizzle-orm'
 import type { Db } from '../db/index.ts'
 import {
+  type Offer,
   type SegmentRule,
   type Tag,
   broadcasts,
+  purchaseStats,
+  purchases,
   segments,
   subscriberTags,
   subscribers,
@@ -56,6 +59,109 @@ function ruleFilters(db: Db, rule: SegmentRule): SQL[] {
 
   if (rule.joinedAfter) filters.push(gte(subscribers.createdAt, new Date(rule.joinedAfter)))
   if (rule.joinedBefore) filters.push(lte(subscribers.createdAt, new Date(rule.joinedBefore)))
+
+  filters.push(...purchaseFilters(db, rule))
+
+  return filters
+}
+
+/**
+ * The purchase half of a rule, resolved against the commerce mirror.
+ *
+ * Every clause is `subscribers.email IN (<indexed subquery>)`, never a join:
+ * `purchases` is keyed by email rather than subscriber id (21k people have
+ * bought something, 13.7k are on the list — see the schema comment), and the
+ * spend and recency tests read the pre-aggregated `purchase_stats` rollup so a
+ * segment count never aggregates 31k order rows.
+ *
+ * A buyer with no `purchase_stats` row simply isn't in any of these subqueries,
+ * so "spent at least anything" correctly excludes people who never bought.
+ */
+function purchaseFilters(db: Db, rule: SegmentRule): SQL[] {
+  const filters: SQL[] = []
+
+  // Tested against `purchases` rather than the rollup: the rollup is derived, and
+  // "has this person ever given me money" should not depend on a rebuild having
+  // run. Cheap either way — `purchases_email_idx` covers it.
+  if (typeof rule.hasPurchased === 'boolean') {
+    const buyers = db.select({ email: purchases.email }).from(purchases)
+    filters.push(
+      rule.hasPurchased
+        ? inArray(subscribers.email, buyers)
+        : notInArray(subscribers.email, buyers),
+    )
+  }
+
+  const bought = (rule.boughtOffers ?? []).map((s) => s.trim()).filter(Boolean)
+  if (bought.length) {
+    const buyers = db
+      .select({ email: purchases.email })
+      .from(purchases)
+      .where(inArray(purchases.offerSlug, bought))
+
+    if (rule.offerMatch === 'all' && bought.length > 1) {
+      filters.push(
+        inArray(
+          subscribers.email,
+          buyers
+            .groupBy(purchases.email)
+            .having(sql`count(distinct ${purchases.offerSlug}) = ${bought.length}`),
+        ),
+      )
+    } else {
+      filters.push(inArray(subscribers.email, buyers))
+    }
+  }
+
+  // The "they already own it, stop pitching" filter. Note this excludes on ANY
+  // match, always — "hasn't bought all of these" is not a thing anyone means.
+  const notBought = (rule.notBoughtOffers ?? []).map((s) => s.trim()).filter(Boolean)
+  if (notBought.length) {
+    filters.push(
+      notInArray(
+        subscribers.email,
+        db
+          .select({ email: purchases.email })
+          .from(purchases)
+          .where(inArray(purchases.offerSlug, notBought)),
+      ),
+    )
+  }
+
+  // `confidentPurchasesOnly` swaps which column the money test reads. Both are
+  // maintained by the same rebuild, so they can never disagree about a person.
+  const spendColumn = rule.confidentPurchasesOnly
+    ? purchaseStats.confidentCents
+    : purchaseStats.lifetimeCents
+
+  const statsWhere: SQL[] = []
+  if (typeof rule.spentAtLeastCents === 'number') {
+    statsWhere.push(gte(spendColumn, rule.spentAtLeastCents))
+  }
+  if (typeof rule.spentAtMostCents === 'number') {
+    statsWhere.push(lte(spendColumn, rule.spentAtMostCents))
+  }
+  if (typeof rule.orderCountAtLeast === 'number') {
+    statsWhere.push(gte(purchaseStats.orderCount, rule.orderCountAtLeast))
+  }
+  if (typeof rule.orderCountAtMost === 'number') {
+    statsWhere.push(lte(purchaseStats.orderCount, rule.orderCountAtMost))
+  }
+  if (rule.purchasedAfter) {
+    statsWhere.push(gte(purchaseStats.lastAt, new Date(rule.purchasedAfter)))
+  }
+  if (rule.purchasedBefore) {
+    statsWhere.push(lte(purchaseStats.lastAt, new Date(rule.purchasedBefore)))
+  }
+
+  if (statsWhere.length) {
+    filters.push(
+      inArray(
+        subscribers.email,
+        db.select({ email: purchaseStats.email }).from(purchaseStats).where(and(...statsWhere)),
+      ),
+    )
+  }
 
   return filters
 }
@@ -193,9 +299,19 @@ export async function retagDraftBroadcasts(
   return touched
 }
 
-/** Plain-English rule summary for tables and audience labels. */
-export function describeRule(rule: SegmentRule, tags: Pick<Tag, 'id' | 'name'>[]): string {
+/**
+ * Plain-English rule summary for tables and audience labels.
+ *
+ * `offers` is optional so every existing caller keeps working; pass it and offer
+ * slugs render as the titles Rob knows them by instead of as kebab-case.
+ */
+export function describeRule(
+  rule: SegmentRule,
+  tags: Pick<Tag, 'id' | 'name'>[],
+  offers: Pick<Offer, 'slug' | 'title'>[] = [],
+): string {
   const name = (id: number) => tags.find((t) => t.id === id)?.name ?? `tag ${id}`
+  const offerName = (slug: string) => offers.find((o) => o.slug === slug)?.title ?? slug
   const parts: string[] = []
 
   if (rule.includeTagIds?.length) {
@@ -208,6 +324,45 @@ export function describeRule(rule: SegmentRule, tags: Pick<Tag, 'id' | 'name'>[]
   const day = (ms: number) => new Date(ms).toLocaleDateString('en-US', { dateStyle: 'medium' })
   if (rule.joinedAfter) parts.push(`joined after ${day(rule.joinedAfter)}`)
   if (rule.joinedBefore) parts.push(`joined before ${day(rule.joinedBefore)}`)
+
+  if (rule.hasPurchased === true) parts.push('has bought something')
+  if (rule.hasPurchased === false) parts.push('has never bought anything')
+  if (rule.boughtOffers?.length) {
+    const joiner = rule.offerMatch === 'all' ? ' and ' : ' or '
+    parts.push(`bought ${rule.boughtOffers.map(offerName).join(joiner)}`)
+  }
+  if (rule.notBoughtOffers?.length) {
+    parts.push(`hasn't bought ${rule.notBoughtOffers.map(offerName).join(' or ')}`)
+  }
+
+  const money = (cents: number) => `$${(cents / 100).toLocaleString('en-US')}`
+  const qualifier = rule.confidentPurchasesOnly ? ' (confirmed orders only)' : ''
+  if (typeof rule.spentAtLeastCents === 'number' && typeof rule.spentAtMostCents === 'number') {
+    parts.push(
+      `spent ${money(rule.spentAtLeastCents)}–${money(rule.spentAtMostCents)}${qualifier}`,
+    )
+  } else if (typeof rule.spentAtLeastCents === 'number') {
+    parts.push(`spent ${money(rule.spentAtLeastCents)}+${qualifier}`)
+  } else if (typeof rule.spentAtMostCents === 'number') {
+    parts.push(`spent under ${money(rule.spentAtMostCents)}${qualifier}`)
+  }
+
+  if (rule.orderCountAtLeast === 1 && rule.orderCountAtMost === 1) {
+    parts.push('bought exactly once')
+  } else {
+    if (typeof rule.orderCountAtLeast === 'number') {
+      parts.push(
+        rule.orderCountAtLeast === 2 ? 'bought more than once' : `${rule.orderCountAtLeast}+ orders`,
+      )
+    }
+    if (typeof rule.orderCountAtMost === 'number') {
+      parts.push(
+        rule.orderCountAtMost === 1 ? 'only one order' : `${rule.orderCountAtMost} orders or fewer`,
+      )
+    }
+  }
+  if (rule.purchasedAfter) parts.push(`bought since ${day(rule.purchasedAfter)}`)
+  if (rule.purchasedBefore) parts.push(`nothing since ${day(rule.purchasedBefore)}`)
 
   return parts.length === 0 ? 'Everyone active' : `Active, ${parts.join(', ')}`
 }

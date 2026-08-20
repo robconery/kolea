@@ -182,7 +182,7 @@ campaignsAdmin.get('/campaigns/:id', async (c) => {
             </div>
             <div class="stat">
               <div class="n">
-                {stats.people > 0 ? `${Math.round((stats.orders / stats.people) * 100)}%` : '—'}
+                {stats.people > 0 ? `${Math.round((stats.orders / stats.people) * 100)}%` : '-'}
               </div>
               <div class="l">Converted</div>
             </div>
@@ -212,7 +212,7 @@ campaignsAdmin.get('/campaigns/:id', async (c) => {
               <p>No sales credited to this campaign yet.</p>
               <p class="faint">
                 POST to <span class="mono">/api/sales</span> with{' '}
-                <span class="mono">"campaign": "{campaign.slug}"</span> — or leave it off and the
+                <span class="mono">"campaign": "{campaign.slug}"</span>, or leave it off and the
                 person's last touch decides.
               </p>
             </div>
@@ -233,7 +233,7 @@ campaignsAdmin.get('/campaigns/:id', async (c) => {
                       <a href={`/subscribers/${sale.subscriberId}`}>{subscriberName ?? email}</a>
                       <div class="faint mono">{email}</div>
                     </td>
-                    <td>{sale.product ?? '—'}</td>
+                    <td>{sale.product ?? '-'}</td>
                     <td class="num">
                       {fmtMoney(sale.amountCents, sale.currency)}
                       {sale.status === 'refunded' ? (
@@ -317,7 +317,7 @@ campaignsAdmin.get('/campaigns/:id', async (c) => {
 
           <p class="faint" style="margin-top:20px">
             Deleting a campaign removes the label and its attribution history. Sales and mail keep
-            their rows — they just stop being credited to anything.
+            their rows; they just stop being credited to anything.
           </p>
           <form method="post" action={`/campaigns/${id}/delete`}>
             <button class="btn danger sm">Delete campaign</button>
@@ -418,15 +418,15 @@ campaignsAdmin.get('/forms', async (c) => {
                         sequenceActive ? (
                           <span class="pill ok">{sequenceName}</span>
                         ) : (
-                          <span class="pill warn" title="The sequence is paused — nothing will send">
+                          <span class="pill warn" title="The sequence is paused; nothing will send">
                             {sequenceName} (paused)
                           </span>
                         )
                       ) : (
-                        <span class="faint">—</span>
+                        <span class="faint">-</span>
                       )}
                     </td>
-                    <td>{campaignName ?? <span class="faint">—</span>}</td>
+                    <td>{campaignName ?? <span class="faint">-</span>}</td>
                     <td class="num">
                       {form.submitCount}
                       <div class="faint">{fmtDate(form.lastSubmittedAt)}</div>
@@ -446,7 +446,7 @@ campaignsAdmin.get('/forms', async (c) => {
         <div class="card-b">
           <div class="note">
             <strong>Submitting is one request.</strong> The person is created or updated, tagged,
-            credited to the campaign, and dropped into the sequence — all idempotent, so a
+            credited to the campaign, and dropped into the sequence: all idempotent, so a
             double-click changes nothing the second time.
           </div>
           <FormFields seqs={seqs} allCampaigns={allCampaigns} tagNames="" action="/forms" />
@@ -493,7 +493,7 @@ const FormFields = ({
       <div class="field">
         <label>Start this sequence</label>
         <select name="sequenceId">
-          <option value="">— none —</option>
+          <option value="">(none)</option>
           {seqs.map((s) => (
             <option value={String(s.id)} selected={s.id === form?.sequenceId}>
               {s.name}
@@ -505,7 +505,7 @@ const FormFields = ({
       <div class="field">
         <label>Credit this campaign</label>
         <select name="campaignId">
-          <option value="">— none —</option>
+          <option value="">(none)</option>
           {allCampaigns.map((x) => (
             <option value={String(x.id)} selected={x.id === form?.campaignId}>
               {x.name}
@@ -650,7 +650,7 @@ campaignsAdmin.get('/forms/:id', async (c) => {
 
       {seq && !seq.isActive ? (
         <div class="flash warn">
-          This form starts “{seq.name}”, but that sequence is paused — people will be enrolled and
+          This form starts “{seq.name}”, but that sequence is paused, so people will be enrolled and
           nothing will send until you turn it on.
         </div>
       ) : null}
@@ -670,7 +670,7 @@ campaignsAdmin.get('/forms/:id', async (c) => {
             </div>
             <div class="stat">
               <div class="n" style="font-size:15px;padding-top:6px">
-                {seq?.name ?? '—'}
+                {seq?.name ?? '-'}
               </div>
               <div class="l">Starts</div>
             </div>
@@ -684,7 +684,7 @@ campaignsAdmin.get('/forms/:id', async (c) => {
         </div>
         <div class="card-b">
           <p class="muted">
-            Plain HTML — no JavaScript, no library. It works from a static site, a Ghost theme, or
+            Plain HTML, no JavaScript, no library. It works from a static site, a Ghost theme, or
             anywhere else you can put a <span class="mono">&lt;form&gt;</span>.
           </p>
           <pre class="mono" style="background:#f6f5f3;padding:14px;border-radius:8px;overflow:auto">
@@ -697,7 +697,7 @@ campaignsAdmin.get('/forms/:id', async (c) => {
             {js}
           </pre>
           <p class="faint">
-            The endpoint answers in whatever you spoke — a form post gets a redirect or a page, JSON
+            The endpoint answers in whatever you spoke: a form post gets a redirect or a page, JSON
             gets JSON. CORS is open, because there's nothing here to read back.
           </p>
         </div>
@@ -717,7 +717,7 @@ campaignsAdmin.get('/forms/:id', async (c) => {
           />
 
           <p class="faint" style="margin-top:20px">
-            Deleting a form doesn't touch anyone who came through it — their tags, enrollment and
+            Deleting a form doesn't touch anyone who came through it; their tags, enrollment and
             attribution all stay.
           </p>
           <form method="post" action={`/forms/${id}/delete`}>
@@ -811,7 +811,7 @@ campaignsAdmin.get('/sales', async (c) => {
           <p class="faint">
             Leave <span class="mono">campaign</span> off and the buyer's most recent attribution
             touch takes the credit; the response tells you which rule applied. Re-posting the same{' '}
-            <span class="mono">external_id</span> never double-counts — and re-posting it with{' '}
+            <span class="mono">external_id</span> never double-counts, and re-posting it with{' '}
             <span class="mono">"status":"refunded"</span> flips the original row.
           </p>
         </div>
@@ -839,7 +839,7 @@ campaignsAdmin.get('/sales', async (c) => {
               <div class="field">
                 <label>Campaign</label>
                 <select name="campaign">
-                  <option value="">— use last touch —</option>
+                  <option value="">(use last touch)</option>
                   {allCampaigns.map((x) => (
                     <option value={x.slug}>{x.name}</option>
                   ))}
@@ -880,7 +880,7 @@ campaignsAdmin.get('/sales', async (c) => {
                       <a href={`/subscribers/${sale.subscriberId}`}>{subscriberName ?? email}</a>
                       <div class="faint mono">{email}</div>
                     </td>
-                    <td>{sale.product ?? '—'}</td>
+                    <td>{sale.product ?? '-'}</td>
                     <td>
                       {campaignName ? (
                         <a href={`/campaigns/${sale.campaignId}`}>{campaignName}</a>
@@ -923,6 +923,6 @@ campaignsAdmin.post('/sales', async (c) => {
 
   const where = result.campaignSlug
     ? `credited to ${result.campaignSlug} (${result.attributedBy})`
-    : 'unattributed — no campaign touch on record'
+    : 'unattributed, no campaign touch on record'
   return c.redirect(`/sales?flash=${encodeURIComponent(`Sale recorded, ${where}.`)}`)
 })

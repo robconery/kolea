@@ -81,7 +81,7 @@ export function renderEmail(body: EmailBody, ctx: RenderContext): RenderedEmail 
 
   const html = shell(inner, ctx.showFooter ? footerHtml(ctx, preferenceUrl) : '', pixel)
   const text = ctx.showFooter
-    ? `${plain}\n\n—\n${footerText(ctx)}\n${preferenceUrl}`
+    ? `${plain}\n\n---\n${footerText(ctx)}\n${preferenceUrl}`
     : plain
 
   return { html, text, preferenceUrl, oneClickUnsubscribeUrl }

@@ -62,7 +62,7 @@ prefs.get('/p/:token', async (c) => {
   )
 
   const messages: Record<string, string> = {
-    left: "Done — you've been removed from that series. Everything else is untouched.",
+    left: "Done. You've been removed from that series. Everything else is untouched.",
     rejoined: "You're back on that series.",
     unsub_broadcast: "You're off the newsletter. Any series you joined will keep going.",
     resub_broadcast: "You're back on the newsletter.",
@@ -73,7 +73,7 @@ prefs.get('/p/:token', async (c) => {
     <PublicLayout title="Email preferences">
       <h1>Your email preferences</h1>
       <p class="lede">
-        {sub.email} — choose exactly what you want. Leaving one series doesn't remove you from
+        {sub.email}: choose exactly what you want. Leaving one series doesn't remove you from
         anything else.
       </p>
 

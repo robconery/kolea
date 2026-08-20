@@ -239,7 +239,7 @@ function walkText(node: DocNode, o: DocRenderOptions, out: string[]): void {
     }
     case 'horizontalRule':
       out.push('')
-      out.push('—')
+      out.push('---')
       out.push('')
       return
     case 'image': {

@@ -122,7 +122,7 @@ export async function recordSale(db: Db, input: SaleInput): Promise<SaleResult> 
       explicit = true
     } else {
       // Never lose the sale over a typo — record it, and say loudly what happened.
-      warnings.push(`unknown campaign "${input.campaignSlug}" — falling back to last touch`)
+      warnings.push(`unknown campaign "${input.campaignSlug}", falling back to last touch`)
     }
   }
 

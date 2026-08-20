@@ -99,7 +99,7 @@ const AudiencePicker = ({
     <select name="audience">
       {value === 'keep' ? (
         <option value="keep" selected>
-          Custom — {describeRule(rule ?? {}, choices.allTags)}
+          Custom: {describeRule(rule ?? {}, choices.allTags)}
         </option>
       ) : null}
       <option value="" selected={value === ''}>
@@ -487,7 +487,7 @@ mail.get('/sequences/new', async (c) => {
         <div class="card-b">
           <div class="note">
             The <strong>name</strong> and <strong>description</strong> are shown to subscribers in
-            their preference center — write them so a reader recognizes what they'd be leaving.
+            their preference center, so write them so a reader recognizes what they'd be leaving.
           </div>
           <form method="post" action="/sequences">
             <div class="field">
@@ -510,7 +510,7 @@ mail.get('/sequences/new', async (c) => {
               <div class="field">
                 <label>Trigger tag (for "tag added")</label>
                 <select name="triggerTagId">
-                  <option value="">—</option>
+                  <option value="">(none)</option>
                   {allTags.map((t) => (
                     <option value={String(t.id)}>{t.name}</option>
                   ))}
@@ -623,7 +623,7 @@ mail.get('/sequences/:id', async (c) => {
         <div class="card-b flush">
           {steps.length === 0 ? (
             <div class="empty">
-              <p>No steps yet — add the first one below.</p>
+              <p>No steps yet. Add the first one below.</p>
             </div>
           ) : (
             <table>
@@ -718,7 +718,7 @@ mail.get('/sequences/:id', async (c) => {
                 {enrolled.map((e) => (
                   <tr>
                     <td>
-                      <div>{e.name ?? '—'}</div>
+                      <div>{e.name ?? '-'}</div>
                       <div class="faint mono">{e.email}</div>
                     </td>
                     <td>{statusPill(e.status)}</td>

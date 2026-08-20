@@ -11,7 +11,7 @@
     {
       "binding": "DB",
       "database_name": "big-mailer",
-      "database_id": "local-dev-placeholder",
+      "database_id": "1828a8a7-4b54-48ca-afae-58bd845edc2d",
       "migrations_dir": "migrations"
     }
   ],
@@ -74,7 +74,7 @@
       // zone you control, so leaving the *.workers.dev route enabled would
       // publish an unauthenticated way around it straight to the origin.
       "workers_dev": false,
-      "routes": [{ "pattern": "__HOSTNAME__", "custom_domain": true }],
+      "routes": [{ "pattern": "list.bigmachine.io", "custom_domain": true }],
 
       // ⚠️ Wrangler environments do NOT inherit bindings from the top level —
       // every binding above must be repeated here or production deploys without
@@ -83,7 +83,7 @@
         {
           "binding": "DB",
           "database_name": "big-mailer",
-          "database_id": "local-dev-placeholder",
+          "database_id": "1828a8a7-4b54-48ca-afae-58bd845edc2d",
           "migrations_dir": "migrations"
         }
       ],
@@ -110,21 +110,20 @@
       "triggers": { "crons": ["*/1 * * * *", "17 9 * * *"] },
 
       "vars": {
-        // First deploy renders mail into the Outbox instead of sending, so the
-        // whole stack can be verified live with nothing able to leave. Flip to
-        // "resend" once you've confirmed it works.
-        "EMAIL_PROVIDER": "console",
-        "FROM_EMAIL": "__FROM_EMAIL__",
+        // Live: mail goes out through Resend. Flip back to "console" to render
+        // into the Outbox instead — that's the instant kill switch.
+        "EMAIL_PROVIDER": "resend",
+        "FROM_EMAIL": "rob@bigmachine.io",
         "FROM_NAME": "Rob Conery",
         // Baked into tracking links and image URLs at send time — a wrong value
         // ships permanently broken email. Must match the route above.
-        "PUBLIC_URL": "https://__HOSTNAME__",
+        "PUBLIC_URL": "https://list.bigmachine.io",
         "DEV_AUTH_BYPASS": "false",
 
         // Admin console identity. Both are required: `web/auth.ts` fails closed
         // and refuses everyone if either is missing.
-        "CF_ACCESS_TEAM_DOMAIN": "__TEAM__.cloudflareaccess.com",
-        "CF_ACCESS_AUD": "__AUD__",
+        "CF_ACCESS_TEAM_DOMAIN": "bigmachine.cloudflareaccess.com",
+        "CF_ACCESS_AUD": "c9e5e713caf22211b5575bbf43294596c7677c642821925936954e275fcb9824",
 
         // Off by default: MCP can read and draft everything, but cannot put
         // mail on the wire until this is "true". A var, not a secret.

@@ -2,12 +2,13 @@ import { type SQL, and, asc, desc, eq, inArray, like, or } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { touchesFor } from '../core/campaigns.ts'
 import { preferencesFor } from '../core/consent.ts'
+import { purchasesForEmail, statsForEmail } from '../core/purchases.ts'
 import { salesForSubscriber } from '../core/sales.ts'
 import { addTags, findOrCreateTag, importCsv, removeTag, upsertSubscriber } from '../core/subscribers.ts'
 import { getDb } from '../db/index.ts'
 import { messages, subscriberTags, subscribers, tags } from '../db/schema.ts'
 import type { Env } from '../types.ts'
-import { AudienceTabs, Flash, Layout, fmtDate, fmtMoney, statusPill } from './layout.tsx'
+import { AudienceTabs, Flash, Layout, fmtDate, fmtDay, fmtMoney, statusPill } from './layout.tsx'
 
 export const audience = new Hono<{ Bindings: Env }>()
 
@@ -129,7 +130,7 @@ audience.get('/subscribers', async (c) => {
                         </a>
                       </td>
                       <td>{statusPill(s.status)}</td>
-                      <td class="faint">{s.source ?? '—'}</td>
+                      <td class="faint">{s.source ?? '-'}</td>
                       <td class="faint">{fmtDate(s.createdAt)}</td>
                     </tr>
                   ))}
@@ -259,7 +260,7 @@ audience.get('/subscribers/import', (c) =>
           <div class="note">
             Needs a header row with <span class="mono">email</span>. Optional:{' '}
             <span class="mono">name</span>, <span class="mono">tags</span> (semicolon separated).
-            Existing people are updated, never duplicated — and an unsubscribe is never undone.
+            Existing people are updated, never duplicated, and an unsubscribe is never undone.
           </div>
           <form method="post" action="/subscribers/import">
             <div class="field">
@@ -304,9 +305,13 @@ audience.get('/subscribers/:id', async (c) => {
     .limit(20)
     .all()
 
-  const [touches, purchases] = await Promise.all([
+  const [touches, purchases, storeOrders, storeStats] = await Promise.all([
     touchesFor(db, id),
     salesForSubscriber(db, id),
+    // The storefront mirror is keyed by email, not by subscriber id — see the
+    // `purchases` comment in the schema for why.
+    purchasesForEmail(db, sub.email),
+    statsForEmail(db, sub.email),
   ])
 
   // Net of refunds, per currency — the same arithmetic the campaign pages use:
@@ -462,7 +467,7 @@ audience.get('/subscribers/:id', async (c) => {
                 <tbody>
                   {purchases.map(({ sale, campaignName }) => (
                     <tr style={sale.status === 'refunded' ? 'opacity:.55' : ''}>
-                      <td>{sale.product ?? '—'}</td>
+                      <td>{sale.product ?? '-'}</td>
                       <td>
                         {campaignName ? (
                           <a href={`/campaigns/${sale.campaignId}`}>{campaignName}</a>
@@ -480,6 +485,60 @@ audience.get('/subscribers/:id', async (c) => {
                 </tbody>
               </table>
             ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {storeOrders.length > 0 ? (
+        <div class="card">
+          <div class="card-h">
+            <h2>What they've bought</h2>
+            <div class="actions">
+              {storeStats ? (
+                <span class="pill ok">
+                  {fmtMoney(storeStats.lifetimeCents)} lifetime ·{' '}
+                  {storeStats.orderCount} {storeStats.orderCount === 1 ? 'order' : 'orders'}
+                </span>
+              ) : null}
+            </div>
+          </div>
+          <div class="card-b flush">
+            <div class="note" style="margin:12px 14px 0">
+              From the storefront in Neon, matched on email address. Separate from the
+              campaign-credited revenue above — these two never sum together.
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Offer</th>
+                  <th>Store</th>
+                  <th class="num">Paid</th>
+                  <th>When</th>
+                </tr>
+              </thead>
+              <tbody>
+                {storeOrders.map((p) => (
+                  <tr>
+                    <td>
+                      <div style="font-weight:500">{p.offerTitle ?? p.offerSlug ?? 'Unlinked'}</div>
+                      {p.offerSlug ? <div class="faint mono">{p.offerSlug}</div> : null}
+                    </td>
+                    <td>
+                      <span class="pill">{p.store}</span>
+                      {/* Reconstructed history: say so rather than presenting a
+                          guess with the same confidence as a live Stripe charge. */}
+                      {p.confidence !== 'high' ? (
+                        <span class="pill warn" title="Reconstructed from old records">
+                          {p.confidence === 'none' ? 'unverified' : 'low confidence'}
+                        </span>
+                      ) : null}
+                    </td>
+                    <td class="num">{fmtMoney(p.amountCents, p.currency)}</td>
+                    <td class="faint">{fmtDay(p.occurredAt)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       ) : null}

@@ -17,6 +17,7 @@ import { audience } from './web/admin-audience.tsx'
 import { campaignsAdmin } from './web/admin-campaigns.tsx'
 import { help } from './web/admin-help.tsx'
 import { mail } from './web/admin-mail.tsx'
+import { store } from './web/admin-store.tsx'
 import { tagging } from './web/admin-tags.tsx'
 import { requireOperator } from './web/auth.ts'
 import { prefs } from './web/prefs.tsx'
@@ -51,6 +52,7 @@ app.use('*', requireOperator)
 app.route('/', admin)
 app.route('/', audience)
 app.route('/', tagging)
+app.route('/', store)
 app.route('/', mail)
 app.route('/', campaignsAdmin)
 app.route('/', help)

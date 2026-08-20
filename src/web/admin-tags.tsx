@@ -23,8 +23,17 @@ import {
   setTagRuleActive,
   tagCounts,
 } from '../core/tagging.ts'
+import { listOffers } from '../core/purchases.ts'
 import { getDb } from '../db/index.ts'
-import { type SegmentRule, type Tag, broadcasts, sequences, tagRules, tags } from '../db/schema.ts'
+import {
+  type Offer,
+  type SegmentRule,
+  type Tag,
+  broadcasts,
+  sequences,
+  tagRules,
+  tags,
+} from '../db/schema.ts'
 import type { Env } from '../types.ts'
 import { AudienceTabs, Flash, Layout, fmtDate } from './layout.tsx'
 
@@ -104,7 +113,7 @@ tagging.get('/tags', async (c) => {
                     </td>
                     <td>
                       {all.length < 2 ? (
-                        <span class="faint">—</span>
+                        <span class="faint">-</span>
                       ) : (
                         <form
                           method="post"
@@ -184,7 +193,7 @@ tagging.get('/tags', async (c) => {
                     </td>
                     <td class="num">
                       {rule.appliedCount}
-                      <div class="faint">{rule.lastAppliedAt ? fmtDate(rule.lastAppliedAt) : '—'}</div>
+                      <div class="faint">{rule.lastAppliedAt ? fmtDate(rule.lastAppliedAt) : '-'}</div>
                     </td>
                     <td style="text-align:right;white-space:nowrap">
                       <form method="post" action={`/tag-rules/${rule.id}/toggle`} style="display:inline">
@@ -275,7 +284,7 @@ tagging.post('/tags/:id/merge', async (c) => {
   const result = await mergeTag(db, Number(c.req.param('id')), Number(form.get('into')))
   if (!result.ok) return c.redirect(`/tags?flash=${encodeURIComponent(result.reason!)}&kind=warn`)
   const who = `${result.moved} ${result.moved === 1 ? 'person' : 'people'}`
-  return c.redirect(`/tags?flash=${encodeURIComponent(`Merged — ${who} moved.`)}`)
+  return c.redirect(`/tags?flash=${encodeURIComponent(`Merged: ${who} moved.`)}`)
 })
 
 tagging.post('/tags/:id/delete', async (c) => {
@@ -324,9 +333,10 @@ tagging.post('/tag-rules/:id/delete', async (c) => {
 
 tagging.get('/segments', async (c) => {
   const db = getDb(c.env)
-  const [rows, allTags] = await Promise.all([
+  const [rows, allTags, allOffers] = await Promise.all([
     listSegments(db),
     db.select().from(tags).orderBy(asc(tags.name)).all(),
+    listOffers(db),
   ])
   const sized = await Promise.all(
     rows.map(async (s) => ({ ...s, size: await countSegment(db, s.rule) })),
@@ -374,7 +384,7 @@ tagging.get('/segments', async (c) => {
                         {s.name}
                       </a>
                     </td>
-                    <td class="faint">{describeRule(s.rule, allTags)}</td>
+                    <td class="faint">{describeRule(s.rule, allTags, allOffers)}</td>
                     <td class="num">{s.size}</td>
                     <td style="text-align:right">
                       <form method="post" action={`/segments/${s.id}/delete`}>
@@ -416,21 +426,70 @@ function readRule(form: FormData): SegmentRule {
   const before = day('joinedBefore')
   if (after) rule.joinedAfter = after
   if (before) rule.joinedBefore = before
+
+  // ── purchase predicates
+  const slugs = (key: string) =>
+    form
+      .getAll(key)
+      .map((v) => String(v).trim())
+      .filter(Boolean)
+  // Typed in dollars, stored in cents — the rule never carries a float.
+  const dollars = (key: string) => {
+    const raw = String(form.get(key) ?? '').trim()
+    if (!raw) return undefined
+    const n = Number(raw)
+    return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) : undefined
+  }
+  const whole = (key: string) => {
+    const raw = String(form.get(key) ?? '').trim()
+    if (!raw) return undefined
+    const n = Number(raw)
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined
+  }
+
+  const customer = String(form.get('hasPurchased') ?? '')
+  if (customer === 'yes') rule.hasPurchased = true
+  if (customer === 'no') rule.hasPurchased = false
+
+  const bought = slugs('boughtOffers')
+  const notBought = slugs('notBoughtOffers')
+  if (bought.length) rule.boughtOffers = bought
+  if (notBought.length) rule.notBoughtOffers = notBought
+  if (bought.length > 1 && form.get('offerMatch') === 'all') rule.offerMatch = 'all'
+
+  const min = dollars('spentAtLeast')
+  const max = dollars('spentAtMost')
+  if (min !== undefined) rule.spentAtLeastCents = min
+  if (max !== undefined) rule.spentAtMostCents = max
+  const orders = whole('orderCountAtLeast')
+  if (orders !== undefined) rule.orderCountAtLeast = orders
+  const ordersMax = whole('orderCountAtMost')
+  if (ordersMax !== undefined) rule.orderCountAtMost = ordersMax
+  const boughtAfter = day('purchasedAfter')
+  const boughtBefore = day('purchasedBefore')
+  if (boughtAfter) rule.purchasedAfter = boughtAfter
+  if (boughtBefore) rule.purchasedBefore = boughtBefore
+  if (form.get('confidentPurchasesOnly')) rule.confidentPurchasesOnly = true
+
   return rule
 }
 
 const asDateValue = (ms?: number) => (ms ? new Date(ms).toISOString().slice(0, 10) : '')
+
+const asDollars = (cents?: number) => (typeof cents === 'number' ? String(cents / 100) : '')
 
 const SegmentForm = ({
   action,
   name,
   rule,
   allTags,
+  allOffers,
 }: {
   action: string
   name: string
   rule: SegmentRule
   allTags: Tag[]
+  allOffers: Offer[]
 }) => (
   <form method="post" action={action}>
     <div class="field">
@@ -491,13 +550,166 @@ const SegmentForm = ({
         <input type="date" name="joinedBefore" value={asDateValue(rule.joinedBefore)} />
       </div>
     </div>
-    <button class="btn primary">Save segment</button>
+
+    <h3 style="margin:26px 0 4px">What they've bought</h3>
+    <p class="faint" style="margin:0 0 14px">
+      Matched against the storefront by email address. Only people who are on this list can be
+      in a segment, so these numbers are always smaller than the storefront's own.
+    </p>
+    <div class="field">
+      <label>Customer status</label>
+      <select name="hasPurchased">
+        <option value="" selected={rule.hasPurchased === undefined}>
+          Doesn't matter
+        </option>
+        <option value="yes" selected={rule.hasPurchased === true}>
+          Has bought something
+        </option>
+        <option value="no" selected={rule.hasPurchased === false}>
+          Has never bought anything
+        </option>
+      </select>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label>Bought</label>
+        <select name="boughtOffers" multiple size={Math.min(Math.max(allOffers.length, 3), 10)}>
+          {allOffers.map((o) => (
+            <option value={o.slug} selected={rule.boughtOffers?.includes(o.slug)}>
+              {o.title}
+              {o.active ? '' : ' (retired)'}
+            </option>
+          ))}
+        </select>
+        <p class="faint" style="margin:6px 0 0">
+          <label style="display:inline;font-weight:400">
+            <input
+              type="radio"
+              name="offerMatch"
+              value="any"
+              checked={rule.offerMatch !== 'all'}
+              style="width:auto"
+            />{' '}
+            any of them
+          </label>{' '}
+          <label style="display:inline;font-weight:400;margin-left:10px">
+            <input
+              type="radio"
+              name="offerMatch"
+              value="all"
+              checked={rule.offerMatch === 'all'}
+              style="width:auto"
+            />{' '}
+            all of them
+          </label>
+        </p>
+      </div>
+      <div class="field">
+        <label>But has not bought</label>
+        <select
+          name="notBoughtOffers"
+          multiple
+          size={Math.min(Math.max(allOffers.length, 3), 10)}
+        >
+          {allOffers.map((o) => (
+            <option value={o.slug} selected={rule.notBoughtOffers?.includes(o.slug)}>
+              {o.title}
+              {o.active ? '' : ' (retired)'}
+            </option>
+          ))}
+        </select>
+        <p class="faint" style="margin:6px 0 0">
+          The "they already own it, stop pitching" filter.
+        </p>
+      </div>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label>Spent at least ($)</label>
+        <input
+          type="number"
+          name="spentAtLeast"
+          min="0"
+          step="1"
+          value={asDollars(rule.spentAtLeastCents)}
+        />
+      </div>
+      <div class="field">
+        <label>Spent at most ($)</label>
+        <input
+          type="number"
+          name="spentAtMost"
+          min="0"
+          step="1"
+          value={asDollars(rule.spentAtMostCents)}
+        />
+      </div>
+      <div class="field">
+        <label>At least this many orders</label>
+        <input
+          type="number"
+          name="orderCountAtLeast"
+          min="1"
+          step="1"
+          value={rule.orderCountAtLeast ? String(rule.orderCountAtLeast) : ''}
+        />
+      </div>
+      <div class="field">
+        <label>At most this many orders</label>
+        <input
+          type="number"
+          name="orderCountAtMost"
+          min="1"
+          step="1"
+          value={rule.orderCountAtMost ? String(rule.orderCountAtMost) : ''}
+        />
+      </div>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label>Bought something since</label>
+        <input type="date" name="purchasedAfter" value={asDateValue(rule.purchasedAfter)} />
+      </div>
+      <div class="field">
+        <label>Bought nothing since</label>
+        <input type="date" name="purchasedBefore" value={asDateValue(rule.purchasedBefore)} />
+      </div>
+    </div>
+    <div class="field">
+      <label style="font-weight:400">
+        <input
+          type="checkbox"
+          name="confidentPurchasesOnly"
+          value="1"
+          checked={rule.confidentPurchasesOnly === true}
+          style="width:auto"
+        />{' '}
+        Only count orders we're sure about
+      </label>
+      <p class="faint" style="margin:6px 0 0">
+        Leaves out the 1,237 orders reconstructed from old records that never resolved. Worth
+        ticking before any email that tells somebody what they've spent.
+      </p>
+    </div>
+
+    <button class="btn primary" style="margin-top:18px">Save segment</button>
   </form>
 )
 
 tagging.get('/segments/new', async (c) => {
   const db = getDb(c.env)
-  const allTags = await db.select().from(tags).orderBy(asc(tags.name)).all()
+  const [allTags, allOffers] = await Promise.all([
+    db.select().from(tags).orderBy(asc(tags.name)).all(),
+    listOffers(db),
+  ])
+
+  // `?bought=<slug>` seeds the form from the store page's "Segment" button, so
+  // "who bought this" becomes a rule in one click. Validated against real slugs —
+  // a typo would silently produce a rule matching nobody.
+  const seedSlug = (c.req.query('bought') ?? '').trim()
+  const seed: SegmentRule = allOffers.some((o) => o.slug === seedSlug)
+    ? { boughtOffers: [seedSlug] }
+    : {}
 
   return c.html(
     <Layout title="New segment" nav="subs">
@@ -508,10 +720,10 @@ tagging.get('/segments/new', async (c) => {
       <div class="card">
         <div class="card-b">
           <div class="note">
-            Unsubscribed, bounced and complained people are never in a segment — that's not a rule
+            Unsubscribed, bounced and complained people are never in a segment; that's not a rule
             you get to write.
           </div>
-          <SegmentForm action="/segments" name="" rule={{}} allTags={allTags} />
+          <SegmentForm action="/segments" name="" rule={seed} allTags={allTags} allOffers={allOffers} />
         </div>
       </div>
     </Layout>,
@@ -533,7 +745,10 @@ tagging.get('/segments/:id', async (c) => {
   const seg = await getSegment(db, id)
   if (!seg) return c.notFound()
 
-  const allTags = await db.select().from(tags).orderBy(asc(tags.name)).all()
+  const [allTags, allOffers] = await Promise.all([
+    db.select().from(tags).orderBy(asc(tags.name)).all(),
+    listOffers(db),
+  ])
   const size = await countSegment(db, seg.rule)
   const sample = await resolveSegment(db, seg.rule, 0, 25)
 
@@ -543,7 +758,7 @@ tagging.get('/segments/:id', async (c) => {
         <div>
           <h1>{seg.name}</h1>
           <div class="sub">
-            {describeRule(seg.rule, allTags)} · {size} {size === 1 ? 'person' : 'people'}
+            {describeRule(seg.rule, allTags, allOffers)} · {size} {size === 1 ? 'person' : 'people'}
           </div>
         </div>
       </div>
@@ -556,7 +771,13 @@ tagging.get('/segments/:id', async (c) => {
           <h2>Rule</h2>
         </div>
         <div class="card-b">
-          <SegmentForm action={`/segments/${id}`} name={seg.name} rule={seg.rule} allTags={allTags} />
+          <SegmentForm
+            action={`/segments/${id}`}
+            name={seg.name}
+            rule={seg.rule}
+            allTags={allTags}
+            allOffers={allOffers}
+          />
         </div>
       </div>
 
