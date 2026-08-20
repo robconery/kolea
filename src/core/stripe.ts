@@ -259,7 +259,7 @@ export async function syncStripe(env: Env, db: Db, opts: SyncOptions = {}): Prom
             summary.salesRecorded++
             if (!result.campaignId) {
               summary.unattributed++
-              summary.notes.push(`${charge.id}: recorded but no campaign — ${email} has no touches`)
+              summary.notes.push(`${charge.id}: recorded but no campaign, ${email} has no touches`)
             }
             break
           case 'refunded':

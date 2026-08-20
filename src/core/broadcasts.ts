@@ -132,7 +132,7 @@ export async function cancelBroadcast(
   const b = await getBroadcast(db, id)
   if (!b) return { ok: false, reason: 'no such broadcast' }
   if (b.status !== 'scheduled' && b.status !== 'sending') {
-    return { ok: false, reason: `broadcast is ${b.status} — nothing to cancel` }
+    return { ok: false, reason: `broadcast is ${b.status}, nothing to cancel` }
   }
 
   const sent = await db

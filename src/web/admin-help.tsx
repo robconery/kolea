@@ -37,8 +37,7 @@ help.get('/help', (c) => {
         <strong>The one idea worth holding.</strong> Consent has three scopes and a narrow choice
         never escalates to a wide one. Leaving <em>one series</em> writes a single row and touches
         nothing else. Leaving <em>the newsletter</em> stops broadcasts only. A{' '}
-        <em>suppression</em> stops everything, forever. Kit collapses all three into one button —
-        that's why this exists.
+        <em>suppression</em> stops everything, forever. Kit collapses all three into one button. That's why this exists.
       </div>
 
       {/* ─────────────────────────────── getting people in */}
@@ -55,7 +54,7 @@ help.get('/help', (c) => {
 
           <h3 style="margin:18px 0 6px;font-size:15px">Forms</h3>
           <p class="muted">
-            A form is a named POST endpoint — no embed script, no hosted landing page. Create one at{' '}
+            A form is a named POST endpoint: no embed script, no hosted landing page. Create one at{' '}
             <a href="/forms">Campaigns → Forms</a>, then paste this anywhere you can put HTML:
           </p>
           <Code>{`<form action="${base}/f/YOUR-SLUG" method="post">
@@ -80,8 +79,8 @@ help.get('/help', (c) => {
               <tr>
                 <td style="font-weight:500;width:30%">It answers in kind</td>
                 <td class="muted">
-                  A browser form gets a redirect (or a thank-you page); JSON gets JSON. CORS is open
-                  — there's nothing here to read back.
+                  A browser form gets a redirect (or a thank-you page); JSON gets JSON. CORS is open;
+                  there's nothing here to read back.
                 </td>
               </tr>
               <tr>
@@ -109,7 +108,7 @@ help.get('/help', (c) => {
               <tr>
                 <td style="font-weight:500">Redirects</td>
                 <td class="muted">
-                  only ever use the URL configured on the form — never one posted in the body, which
+                  only ever use the URL configured on the form, never one posted in the body, which
                   would make every form an open redirect.
                 </td>
               </tr>
@@ -139,7 +138,7 @@ help.get('/help', (c) => {
                 <td class="muted">
                   One-off mail to a segment. Compose, pick who gets it, send. A draft is editable;
                   once it's sending it isn't, because that would change who it reaches halfway
-                  through. Big sends materialize across several cron ticks — D1 allows ~1,000 queries
+                  through. Big sends materialize across several cron ticks; D1 allows ~1,000 queries
                   per invocation.
                 </td>
               </tr>
@@ -148,10 +147,10 @@ help.get('/help', (c) => {
                   <a href="/sequences">Sequences</a>
                 </td>
                 <td class="muted">
-                  A drip. Steps fire N days after the previous one — <span class="mono">0</span>{' '}
+                  A drip. Steps fire N days after the previous one; <span class="mono">0</span>{' '}
                   means immediately, which is what a first step usually wants. Triggered by{' '}
                   <em>subscribe</em>, by a <em>tag being added</em>, or manually (which is what a form
-                  uses). A sequence must be <strong>active</strong> or nothing sends — people still
+                  uses). A sequence must be <strong>active</strong> or nothing sends; people still
                   enroll, they just wait.
                 </td>
               </tr>
@@ -193,7 +192,7 @@ help.get('/help', (c) => {
                   <a href="/tags">Tag rules</a>
                 </td>
                 <td class="muted">
-                  The only automation in here. "When this happens, tag them" — one flat row per rule,
+                  The only automation in here. "When this happens, tag them": one flat row per rule,
                   no conditions to nest and no DSL to learn.
                 </td>
               </tr>
@@ -203,7 +202,7 @@ help.get('/help', (c) => {
                 </td>
                 <td class="muted">
                   Saved questions asked of your tags. Nothing is stored per person. Picking a segment
-                  for a broadcast <em>copies</em> its rule — editing the segment next month can't
+                  for a broadcast <em>copies</em> its rule, so editing the segment next month can't
                   rewrite who a sent broadcast went to.
                 </td>
               </tr>
@@ -233,8 +232,8 @@ then  tag them <tag>`}</Code>
               <tr>
                 <td style="font-weight:500;width:26%">Rule name</td>
                 <td class="muted">
-                  For you, in the rules table. Write it as the thing that happened —{' '}
-                  <em>“Clicked the workshop link”</em> — because that's what you'll be reading when
+                  For you, in the rules table. Write it as the thing that happened:{' '}
+                  <em>“Clicked the workshop link”</em>, because that's what you'll be reading when
                   you wonder where a tag came from.
                 </td>
               </tr>
@@ -244,7 +243,7 @@ then  tag them <tag>`}</Code>
                   <span class="mono">click</span> · <span class="mono">open</span> ·{' '}
                   <span class="mono">delivered</span> · <span class="mono">bounce</span> ·{' '}
                   <span class="mono">complaint</span>. One event per rule. A failed send is never
-                  taggable — that's your problem, not something the reader did.
+                  taggable; that's your problem, not something the reader did.
                 </td>
               </tr>
               <tr>
@@ -258,7 +257,7 @@ then  tag them <tag>`}</Code>
               <tr>
                 <td style="font-weight:500">Only if the URL contains</td>
                 <td class="muted">
-                  Case-insensitive substring of the clicked link — <span class="mono">/workshop</span>{' '}
+                  Case-insensitive substring of the clicked link: <span class="mono">/workshop</span>{' '}
                   catches every link to it. Set it on a non-click event and it's dropped on save,
                   because it could only ever match nothing.
                 </td>
@@ -266,7 +265,7 @@ then  tag them <tag>`}</Code>
               <tr>
                 <td style="font-weight:500">Then tag them</td>
                 <td class="muted">
-                  Type a name. An existing tag is reused, a new one is created on the spot — you
+                  Type a name. An existing tag is reused, a new one is created on the spot; you
                   don't have to make the tag first.
                 </td>
               </tr>
@@ -302,14 +301,14 @@ then  tag them <tag>`}</Code>
                 <td style="font-weight:500">It can start a series</td>
                 <td class="muted">
                   Because it tags through the normal path. If an active sequence is triggered by that
-                  tag, they're enrolled. The chain stops there — a rule can't tag its way into
+                  tag, they're enrolled. The chain stops there: a rule can't tag its way into
                   another rule, so there's no cascade to reason about.
                 </td>
               </tr>
               <tr>
                 <td style="font-weight:500">It never breaks the mail</td>
                 <td class="muted">
-                  A rule that throws is swallowed — the event is still recorded, the redirect still
+                  A rule that throws is swallowed; the event is still recorded, the redirect still
                   redirects. Tracking is worth more than tagging.
                 </td>
               </tr>
@@ -346,7 +345,7 @@ then  tag them <tag>`}</Code>
                 <td class="muted">
                   With <span class="mono">EMAIL_PROVIDER=console</span> there's no provider, so{' '}
                   <span class="mono">delivered</span>, <span class="mono">bounce</span> and{' '}
-                  <span class="mono">complaint</span> never arrive. Open and click still work —
+                  <span class="mono">complaint</span> never arrive. Open and click still work;
                   follow the links in the <a href="/outbox">Outbox</a>.
                 </td>
               </tr>
@@ -361,7 +360,7 @@ then  tag them <tag>`}</Code>
               <tr>
                 <td style="font-weight:500">Tags in use are protected</td>
                 <td class="muted">
-                  A tag can't be deleted while a rule or a sequence trigger depends on it — you're
+                  A tag can't be deleted while a rule or a sequence trigger depends on it; you're
                   told what's holding it. <strong>Merging</strong> two tags repoints the rules,
                   triggers and segments at the survivor, so cleaning up{' '}
                   <span class="mono">Customer</span> vs <span class="mono">customers</span> doesn't
@@ -371,7 +370,7 @@ then  tag them <tag>`}</Code>
               <tr>
                 <td style="font-weight:500">Untagging is instant everywhere</td>
                 <td class="muted">
-                  Segments are questions, not stored lists — remove a tag and every segment is
+                  Segments are questions, not stored lists; remove a tag and every segment is
                   already correct on the next send. Nothing needs recalculating.
                 </td>
               </tr>
@@ -411,7 +410,7 @@ then  tag them <tag>`}</Code>
           <p class="muted">
             Rules only ever <strong>add</strong> a tag off the back of a mail event. There's no
             remove-tag action, nothing fires when a tag is <em>removed</em>, and a rule can't read
-            anything about the person — only what they just did. That's a floor, not an oversight:
+            anything about the person, only what they just did. That's a floor, not an oversight:
             one flat table stays readable, and it can't loop.
           </p>
           <table>
@@ -428,7 +427,7 @@ then  tag them <tag>`}</Code>
               <tr>
                 <td style="font-weight:500">Tag from your own app</td>
                 <td class="muted">
-                  Anything you can decide in code — a signup, a plan change, a refund — should tag
+                  Anything you can decide in code (a signup, a plan change, a refund) should tag
                   through the API rather than be inferred from mail behaviour. Tags applied that way
                   start sequences exactly like a rule's do.
                 </td>
@@ -453,7 +452,7 @@ then  tag them <tag>`}</Code>
         </div>
         <div class="card-b">
           <p class="muted">
-            A <a href="/campaigns">campaign</a> is a named push — a launch, a book, a course. It's a
+            A <a href="/campaigns">campaign</a> is a named push: a launch, a book, a course. It's a
             label with a ledger, not a container: broadcasts, sequences and forms opt into one, and
             sales are credited to one. Deleting a campaign drops the label and its history, never the
             mail and never the money.
@@ -461,8 +460,8 @@ then  tag them <tag>`}</Code>
 
           <h3 style="margin:18px 0 6px;font-size:15px">How somebody gets attributed</h3>
           <p class="muted">
-            Every arrival is recorded as a <strong>touch</strong> — one row per person, per campaign,
-            per source — so both first-touch and last-touch are always answerable. You never have to
+            Every arrival is recorded as a <strong>touch</strong>: one row per person, per campaign,
+            per source, so both first-touch and last-touch are always answerable. You never have to
             pick an attribution model up front. A touch is written when:
           </p>
           <table>
@@ -479,7 +478,7 @@ then  tag them <tag>`}</Code>
                 </td>
                 <td class="muted">
                   they <strong>click</strong> a link in mail belonging to a campaign. Opens
-                  deliberately don't count — image proxies and preview panes would hand credit to
+                  deliberately don't count; image proxies and preview panes would hand credit to
                   whoever mailed most recently.
                 </td>
               </tr>
@@ -513,7 +512,7 @@ then  tag them <tag>`}</Code>
                   <span class="mono">amount_cents</span>
                 </td>
                 <td class="muted">
-                  Integer cents — required. <span class="mono">amount</span> (dollars) also works if
+                  Integer cents, required. <span class="mono">amount</span> (dollars) also works if
                   your checkout only speaks that.
                 </td>
               </tr>
@@ -522,7 +521,7 @@ then  tag them <tag>`}</Code>
                   <span class="mono">external_id</span>
                 </td>
                 <td class="muted">
-                  Your charge or order id. Makes the call <strong>idempotent</strong> — replaying it
+                  Your charge or order id. Makes the call <strong>idempotent</strong>: replaying it
                   returns the original sale instead of double-counting revenue. Send it.
                 </td>
               </tr>
@@ -533,7 +532,7 @@ then  tag them <tag>`}</Code>
                 <td class="muted">
                   Optional. Credit resolves <strong>explicit → last touch → nothing</strong>, and the
                   response tells you which rule applied. An unknown slug still records the sale and
-                  returns a warning — a typo never loses money.
+                  returns a warning; a typo never loses money.
                 </td>
               </tr>
               <tr>
@@ -542,7 +541,7 @@ then  tag them <tag>`}</Code>
                 </td>
                 <td class="muted">
                   Applied through the normal path, so a purchase can start a{' '}
-                  <span class="mono">tag_added</span> sequence — bought → tagged → onboarded.
+                  <span class="mono">tag_added</span> sequence: bought → tagged → onboarded.
                 </td>
               </tr>
               <tr>
@@ -550,7 +549,7 @@ then  tag them <tag>`}</Code>
                   <span class="mono">end_sequence</span>
                 </td>
                 <td class="muted">
-                  Cancels their active enrollment — stop selling somebody the thing they just bought.
+                  Cancels their active enrollment: stop selling somebody the thing they just bought.
                   It doesn't record an opt-out; that's their choice to make, not a purchase's.
                 </td>
               </tr>
@@ -559,7 +558,7 @@ then  tag them <tag>`}</Code>
                 <td class="muted">
                   Re-post the same <span class="mono">external_id</span> with{' '}
                   <span class="mono">"status":"refunded"</span> and it flips the original row. A
-                  refunded sale stops counting toward revenue — it doesn't subtract.
+                  refunded sale stops counting toward revenue; it doesn't subtract.
                 </td>
               </tr>
               <tr>
@@ -628,7 +627,7 @@ then  tag them <tag>`}</Code>
                 <td>
                   <span class="pill ok">public</span>
                 </td>
-                <td class="muted">A subscriber's preference center — scoped, per series.</td>
+                <td class="muted">A subscriber's preference center, scoped per series.</td>
               </tr>
               <tr>
                 <td class="mono">GET /t/open/:id.gif · /t/click/:id</td>
@@ -642,7 +641,7 @@ then  tag them <tag>`}</Code>
         </div>
         <div class="card-b">
           <p class="faint">
-            Bearer keys live in the <span class="mono">api_keys</span> table — only the hash is
+            Bearer keys live in the <span class="mono">api_keys</span> table; only the hash is
             stored, so a leaked database can't be used to post as you. ⚠️ There's no key-management
             UI yet.
           </p>
@@ -664,7 +663,7 @@ then  tag them <tag>`}</Code>
                 </td>
                 <td class="muted">
                   With <span class="mono">EMAIL_PROVIDER=console</span> mail is written here and
-                  never sent. Read it exactly as it would arrive — including the footer, whose
+                  never sent. Read it exactly as it would arrive, including the footer, whose
                   unsubscribe link is scoped to whatever the message was sent under.
                 </td>
               </tr>
@@ -683,7 +682,7 @@ then  tag them <tag>`}</Code>
               </tr>
               <tr>
                 <td style="font-weight:500">Seed / reset</td>
-                <td class="muted">Demo data — people, live series, a sent broadcast. Local only.</td>
+                <td class="muted">Demo data: people, live series, a sent broadcast. Local only.</td>
               </tr>
               <tr>
                 <td style="font-weight:500">Cron</td>

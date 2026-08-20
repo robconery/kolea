@@ -331,7 +331,7 @@ export async function deleteSequence(
 ): Promise<{ ok: boolean; reason?: string }> {
   const s = await getSequence(db, id)
   if (!s) return { ok: false, reason: 'no such sequence' }
-  if (s.isActive) return { ok: false, reason: 'sequence is live — deactivate it first' }
+  if (s.isActive) return { ok: false, reason: 'sequence is live, deactivate it first' }
 
   await db.delete(sequences).where(eq(sequences.id, id))
   return { ok: true }

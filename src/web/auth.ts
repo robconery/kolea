@@ -139,7 +139,7 @@ export const requireOperator: MiddlewareHandler<{ Bindings: Env }> = async (c, n
   // Fail closed. A misconfigured deploy must lock the console, never open it —
   // the failure mode of the opposite choice is the whole list walking out.
   if (!teamDomain || !audience) {
-    return c.text('Forbidden — Cloudflare Access is not configured on this Worker', 403)
+    return c.text('Forbidden: Cloudflare Access is not configured on this Worker', 403)
   }
 
   const token =
@@ -147,7 +147,7 @@ export const requireOperator: MiddlewareHandler<{ Bindings: Env }> = async (c, n
     // Browsers carry the cookie; the header is preferred but not guaranteed.
     /(?:^|;\s*)CF_Authorization=([^;]+)/.exec(c.req.header('Cookie') ?? '')?.[1]
 
-  if (!token) return c.text('Forbidden — Cloudflare Access required', 403)
+  if (!token) return c.text('Forbidden: Cloudflare Access required', 403)
 
   let result: AccessResult
   try {
@@ -155,10 +155,10 @@ export const requireOperator: MiddlewareHandler<{ Bindings: Env }> = async (c, n
   } catch {
     // A JWKS fetch failure is our problem, not the caller's — but it still
     // cannot be allowed to admit anyone.
-    return c.text('Forbidden — could not verify Access token', 403)
+    return c.text('Forbidden: could not verify Access token', 403)
   }
 
-  if (!result.ok) return c.text('Forbidden — invalid Access token', 403)
+  if (!result.ok) return c.text('Forbidden: invalid Access token', 403)
 
   c.set('operatorEmail' as never, result.email as never)
   return await next()

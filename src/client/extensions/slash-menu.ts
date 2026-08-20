@@ -101,7 +101,7 @@ export const SLASH_ITEMS: SlashItem[] = [
   {
     title: 'Divider',
     subtitle: 'Horizontal rule',
-    icon: '—',
+    icon: '─',
     keywords: 'divider rule hr separator line',
     run: (e, r) => e.chain().focus().deleteRange(r).setHorizontalRule().run(),
   },
