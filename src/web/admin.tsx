@@ -14,7 +14,11 @@ import {
   suppressions,
 } from '../db/schema.ts'
 import type { Env } from '../types.ts'
-import { Flash, Layout, fmtDate, statusPill } from './layout.tsx'
+import { commerceTotals, listOffers } from '../core/purchases.ts'
+import { customerTiers, headlines, revenueByMonth } from '../core/insights.ts'
+import { StoreHeadline, TierCard, monthColumn } from './admin-store.tsx'
+import { ColumnChart } from './charts.tsx'
+import { Flash, Layout, fmtDate, fmtMoney, statusPill } from './layout.tsx'
 
 export const admin = new Hono<{ Bindings: Env }>()
 
@@ -40,6 +44,18 @@ admin.get('/', async (c) => {
     db.select({ n: count() }).from(broadcasts).where(eq(broadcasts.status, 'draft')).get(),
   ])
 
+  // The commerce half of the dashboard. Loaded alongside the operational counts
+  // rather than on its own page: what the list is worth is the first question,
+  // and how many messages went out is the second.
+  const [totals, months, tiers, head, catalog] = await Promise.all([
+    commerceTotals(db),
+    revenueByMonth(db, 12),
+    customerTiers(db),
+    headlines(db),
+    listOffers(db),
+  ])
+  const liveOffers = catalog.filter((o) => o.active).length
+
   const recent = await db
     .select({
       id: messages.id,
@@ -61,7 +77,7 @@ admin.get('/', async (c) => {
           <h1>Dashboard</h1>
           <div class="sub">
             Provider: <span class="mono">{c.env.EMAIL_PROVIDER}</span>
-            {c.env.EMAIL_PROVIDER === 'console' ? ' — mail goes to the Outbox, not the internet' : ''}
+            {c.env.EMAIL_PROVIDER === 'console' ? ', mail goes to the Outbox, not the internet' : ''}
           </div>
         </div>
         <div class="actions">
@@ -94,7 +110,7 @@ admin.get('/', async (c) => {
       {(subs?.n ?? 0) === 0 ? (
         <div class="note">
           <strong>Empty database.</strong> Hit <em>Seed demo data</em> above for twelve people, two
-          live series, and a sent broadcast — then open the Outbox to read the mail.
+          live series, and a sent broadcast, then open the Outbox to read the mail.
         </div>
       ) : null}
 
@@ -124,6 +140,48 @@ admin.get('/', async (c) => {
           </div>
         </div>
       </div>
+
+      {totals.orders > 0 ? (
+        <>
+          <StoreHeadline
+            totals={totals}
+            head={head}
+            yearCents={months.reduce((n, m) => n + m.cents, 0)}
+            yearOrders={months.reduce((n, m) => n + m.orders, 0)}
+            liveCount={liveOffers}
+            catalogCount={catalog.length}
+          />
+
+          <div class="card">
+            <div class="card-h">
+              <h2>Revenue, last 12 months</h2>
+              <div class="actions">
+                <a class="btn sm" href="/store">
+                  The whole store
+                </a>
+              </div>
+            </div>
+            <div class="card-b">
+              <ColumnChart data={months.map(monthColumn)} />
+              <div class="faint" style="font-size:12px;margin-top:8px;text-align:right">
+                The last column is the current month so far, not a finished one.
+              </div>
+            </div>
+          </div>
+
+          <TierCard
+            tiers={tiers}
+            listSize={tiers.reduce((n, t) => n + t.people, 0)}
+            customers={tiers.reduce((n, t) => n + (t.key === 'none' ? 0 : t.people), 0)}
+          />
+        </>
+      ) : (
+        <div class="note">
+          <strong>No storefront data yet.</strong> Run{' '}
+          <span class="mono">bun scripts/import-neon-purchases.ts</span> to mirror the store, and
+          this dashboard fills in.
+        </div>
+      )}
 
       <div class="card">
         <div class="card-h">
@@ -283,7 +341,7 @@ admin.get('/outbox', async (c) => {
                 />
               </div>
               <p class="faint" style="margin-top:10px">
-                Scroll to the footer — the unsubscribe link is scoped to whatever this message was
+                Scroll to the footer: the unsubscribe link is scoped to whatever this message was
                 sent under.
               </p>
             </div>
@@ -362,7 +420,7 @@ admin.get('/consent', async (c) => {
                 {optouts.map((o) => (
                   <tr>
                     <td>
-                      <div>{o.name ?? '—'}</div>
+                      <div>{o.name ?? '-'}</div>
                       <div class="faint mono">{o.email}</div>
                     </td>
                     <td>{o.sequenceName}</td>
@@ -378,7 +436,7 @@ admin.get('/consent', async (c) => {
 
       <div class="card">
         <div class="card-h">
-          <h2>Suppressed — off everything</h2>
+          <h2>Suppressed: off everything</h2>
           <div class="actions">
             <form method="post" action="/consent/suppress" class="row" style="gap:6px">
               <input type="email" name="email" placeholder="address" required style="min-width:0" />
@@ -492,7 +550,7 @@ admin.get('/settings', async (c) => {
               </tr>
               <tr>
                 <td class="muted">Queue</td>
-                <td class="mono">{c.env.SEND_QUEUE ? 'bound' : 'not bound — sending inline'}</td>
+                <td class="mono">{c.env.SEND_QUEUE ? 'bound' : 'not bound, sending inline'}</td>
               </tr>
               <tr>
                 <td class="muted">Auth</td>

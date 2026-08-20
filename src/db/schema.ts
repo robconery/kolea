@@ -97,6 +97,41 @@ export interface SegmentRule {
   /** Epoch ms, compared against `subscribers.created_at`. */
   joinedAfter?: number
   joinedBefore?: number
+
+  // ── purchase predicates, resolved against the commerce mirror below.
+  // Offer slugs rather than ids: a slug survives a re-sync and reads in a diff,
+  // and it is what Rob actually sells — people buy offers, not products.
+  /**
+   * `true` = has ever bought anything; `false` = has never bought anything.
+   *
+   * The plain "customers" / "not yet customers" split, and the one predicate
+   * that cannot be expressed by listing offers — a rule naming every slug would
+   * still silently miss anyone whose order carries no offer_id.
+   */
+  hasPurchased?: boolean
+  /** Bought any/all of these offers, by slug. */
+  boughtOffers?: string[]
+  /** Bought none of these. The "already owns it, stop pitching" filter. */
+  notBoughtOffers?: string[]
+  /** How `boughtOffers` combine. Independent of `match`, which governs tags. */
+  offerMatch?: 'any' | 'all'
+  /** Lifetime spend bounds, in cents. */
+  spentAtLeastCents?: number
+  spentAtMostCents?: number
+  /** Order count floor — 2 is "bought more than once". */
+  orderCountAtLeast?: number
+  /** Order count ceiling — 1 is "bought exactly once", the classic upsell target. */
+  orderCountAtMost?: number
+  /** Epoch ms, compared against the most recent purchase. Recency, not join date. */
+  purchasedAfter?: number
+  purchasedBefore?: number
+  /**
+   * Ignore reconstructed orders that resolved to nothing when testing spend and
+   * count. Off by default so numbers match the storefront; on when the segment
+   * is about to make a claim ("you've spent over $500 with me") that had better
+   * be true.
+   */
+  confidentPurchasesOnly?: boolean
 }
 
 export const segments = sqliteTable(
@@ -415,6 +450,137 @@ export const sales = sqliteTable(
   ],
 )
 
+// ─────────────────────────────────────────── commerce mirror (from Neon)
+
+/**
+ * A read-only projection of the storefront in Neon. **Nothing here is a source
+ * of truth** — every row is rebuilt from `orders` / `offers` in Postgres by
+ * `scripts/import-neon-purchases.ts`, and a wrong value is fixed there and
+ * re-synced, never edited here.
+ *
+ * Why mirror at all: segment evaluation runs inside the Worker on every
+ * broadcast materialization tick, under D1's 1,000-query-per-invocation cap.
+ * It cannot reach across to Postgres at send time, so the facts it filters on
+ * have to be local, indexed, and already aggregated.
+ *
+ * ⚠️ `purchases` is NOT `sales`. `sales` is revenue attributed to a campaign
+ * this mailer sent — it answers "did that email make money". `purchases` is ten
+ * years of storefront history with no attribution at all, and exists only to
+ * answer "what does this person own, and what have they spent". Never sum them
+ * together.
+ */
+export const offers = sqliteTable(
+  'offers',
+  {
+    // Mirrors `offers.id` in Neon — assigned there, not here. No autoIncrement:
+    // a re-sync must land the same row on the same id or every purchase's
+    // `offer_id` silently repoints at a different product.
+    id: integer('id').primaryKey(),
+    slug: text('slug').notNull(),
+    title: text('title').notNull(),
+    priceCents: integer('price_cents'),
+    active: integer('active', { mode: 'boolean' }).notNull().default(false),
+    sortOrder: integer('sort_order').notNull().default(0),
+    syncedAt: ts('synced_at').notNull(),
+  },
+  (t) => [uniqueIndex('offers_slug_key').on(t.slug), index('offers_active_idx').on(t.active)],
+)
+
+/**
+ * Which products an offer bundles. Two integer columns and ~70 rows, carried
+ * purely so the day "don't pitch the video to someone who already owns it
+ * inside a bundle" comes up, it's a query and not a migration — `imposter-video`
+ * ships inside 11 different offers. Nothing reads this yet by design: offers are
+ * the grain people actually buy, products are the lookup sitting next to them.
+ */
+export const offerProducts = sqliteTable(
+  'offer_products',
+  {
+    offerId: integer('offer_id')
+      .notNull()
+      .references(() => offers.id, { onDelete: 'cascade' }),
+    productSku: text('product_sku').notNull(),
+    productName: text('product_name').notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.offerId, t.productSku] }),
+    index('offer_products_sku_idx').on(t.productSku),
+  ],
+)
+
+/**
+ * One row per storefront order.
+ *
+ * Keyed by **email, not subscriber_id**. 21,403 people have bought something;
+ * 13,766 are on the list. Forcing a NOT NULL `subscriber_id` here would mean
+ * fabricating ~8k subscriber rows for people who never asked to hear from us —
+ * and at `status: 'active'` those people would receive the next broadcast.
+ * Email-keying also means a buyer who subscribes in two years' time arrives
+ * with their history already attached, no backfill needed.
+ */
+export const purchases = sqliteTable(
+  'purchases',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    /** Normalized lowercase. The join key to `subscribers.email`. */
+    email: text('email').notNull(),
+    /** `neon:<orders.uuid>` — makes a re-sync idempotent instead of doubling revenue. */
+    externalId: text('external_id').notNull(),
+    // nullable-fk: a handful of Stripe orders in Neon carry no offer_id.
+    offerId: integer('offer_id').references(() => offers.id, { onDelete: 'set null' }),
+    /** Denormalized so the common segment ("bought X") never joins. */
+    offerSlug: text('offer_slug'),
+    /** Provenance: shopify, thrive, woo, gumroad, stripe, recovered… */
+    store: text('store').notNull(),
+    amountCents: integer('amount_cents').notNull().default(0),
+    currency: text('currency').notNull().default('usd'),
+    /**
+     * How much to trust this row. Orders reconstructed from old records carry
+     * `recovered_orders.confidence` from Neon; everything booked live is 'high'.
+     * 1,237 recovered rows resolved to nothing and land as 'none' — spend
+     * thresholds should be able to leave those out rather than quietly bank them.
+     */
+    confidence: text('confidence', { enum: ['high', 'low', 'none'] })
+      .notNull()
+      .default('high'),
+    occurredAt: ts('occurred_at').notNull(),
+    syncedAt: ts('synced_at').notNull(),
+  },
+  (t) => [
+    uniqueIndex('purchases_external_id_key').on(t.externalId),
+    index('purchases_email_idx').on(t.email),
+    index('purchases_offer_slug_idx').on(t.offerSlug),
+    index('purchases_occurred_idx').on(t.occurredAt),
+  ],
+)
+
+/**
+ * Per-buyer rollup, recomputed at the end of every sync.
+ *
+ * Denormalized on purpose: without it, "spent over $100" aggregates 31k rows on
+ * every segment count and every page of a broadcast send. With it, it's one
+ * indexed lookup. Rebuilt wholesale, never incremented — an incremental counter
+ * that drifts is worse than no counter.
+ */
+export const purchaseStats = sqliteTable(
+  'purchase_stats',
+  {
+    email: text('email').primaryKey(),
+    orderCount: integer('order_count').notNull().default(0),
+    /** Net of nothing — Neon's `orders` has no refund column to net against. */
+    lifetimeCents: integer('lifetime_cents').notNull().default(0),
+    /** Same, excluding rows whose `confidence` is not 'high'. */
+    confidentCents: integer('confident_cents').notNull().default(0),
+    firstAt: ts('first_at'),
+    lastAt: ts('last_at'),
+    computedAt: ts('computed_at').notNull(),
+  },
+  (t) => [
+    index('purchase_stats_lifetime_idx').on(t.lifetimeCents),
+    index('purchase_stats_last_idx').on(t.lastAt),
+  ],
+)
+
 // ─────────────────────────────────────────────────────────── sending
 
 export const messages = sqliteTable(
@@ -653,3 +819,7 @@ export type ApiKey = typeof apiKeys.$inferSelect
 export type McpCall = typeof mcpCalls.$inferSelect
 export type PreflightToken = typeof preflightTokens.$inferSelect
 export type SyncRun = typeof syncRuns.$inferSelect
+export type Offer = typeof offers.$inferSelect
+export type OfferProduct = typeof offerProducts.$inferSelect
+export type Purchase = typeof purchases.$inferSelect
+export type PurchaseStats = typeof purchaseStats.$inferSelect
