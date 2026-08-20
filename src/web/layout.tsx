@@ -45,9 +45,11 @@ export const CSS = `
     rgba(148,190,255,.15) 90%,transparent);
   --rule-faint:linear-gradient(90deg,transparent,rgba(148,190,255,.085) 4%,
     rgba(148,190,255,.085) 96%,transparent);
-  --sans:'Plus Jakarta Sans',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;
-  --display:'Sora',var(--sans);
-  --serif:'Instrument Serif',ui-serif,Georgia,serif;
+  /* One neutral grotesk for everything. Two faces and a display serif read as
+     three opinions; a single family carried by weight, size and tracking reads
+     as one. Inter's tabular figures matter here — most of this UI is numbers. */
+  --sans:'Inter',ui-sans-serif,system-ui,-apple-system,'Segoe UI',Helvetica,sans-serif;
+  --display:var(--sans);
   --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,'SF Mono',Menlo,monospace;
   /* the only easing curves in the building */
   --spring:cubic-bezier(.32,.72,0,1);
@@ -64,10 +66,12 @@ body{margin:0;background:var(--abyss);color:var(--ink);
 a{color:#7dd3fc;text-decoration:none;transition:color .35s var(--glide)}
 a:hover{color:#a5f3fc}
 h1,h2,h3{margin:0;font-weight:600;letter-spacing:-.02em}
-h1{font:400 clamp(32px,3.8vw,46px)/1.05 var(--serif);letter-spacing:-.015em;
-  background:linear-gradient(178deg,#ffffff 8%,#a8c6ee 92%);
+/* Big type earns its presence from weight and tight tracking, not from a
+   different family. Optical sizing: the larger it gets, the tighter it sets. */
+h1{font:700 clamp(28px,2.9vw,38px)/1.08 var(--display);letter-spacing:-.038em;
+  background:linear-gradient(178deg,#ffffff 10%,#b6cff2 92%);
   -webkit-background-clip:text;background-clip:text;color:transparent}
-h2{font:600 17px/1.3 var(--display);letter-spacing:-.015em;color:#e6f0ff}
+h2{font:600 16.5px/1.3 var(--display);letter-spacing:-.02em;color:#e6f0ff}
 h3{font:600 10.5px/1 var(--display);text-transform:uppercase;letter-spacing:.19em;color:var(--faint)}
 p{margin:0 0 12px}
 hr{border:0;height:1px;background:var(--rule);margin:26px 0}
@@ -158,7 +162,7 @@ hr{border:0;height:1px;background:var(--rule);margin:26px 0}
   background:var(--beam);box-shadow:0 8px 24px -8px rgba(34,211,238,.9);
   transition:transform .6s var(--spring)}
 .brand:hover .sigil{transform:rotate(-8deg) scale(1.06)}
-.brand .wm{font:400 20px/1 var(--serif);letter-spacing:.005em}
+.brand .wm{font:700 16.5px/1 var(--display);letter-spacing:-.035em}
 .brand .wm i{font-style:normal;background:var(--beam);-webkit-background-clip:text;
   background-clip:text;color:transparent}
 .brand .wm em{display:block;font:500 8.5px/1 var(--display);font-style:normal;
@@ -401,8 +405,8 @@ input[type=checkbox]:focus-visible,input[type=radio]:focus-visible{outline:2px s
 .stat::before{content:'';position:absolute;left:0;top:2px;bottom:2px;width:1px;
   background:var(--rule-v)}
 .stat:first-child::before{display:none}
-.stat .n{font:600 clamp(26px,2.4vw,34px)/1 var(--display);font-variant-numeric:tabular-nums;
-  letter-spacing:-.04em;color:#f2f8ff;text-shadow:0 0 30px rgba(125,211,252,.25)}
+.stat .n{font:600 clamp(25px,2.2vw,32px)/1 var(--display);font-variant-numeric:tabular-nums;
+  letter-spacing:-.045em;color:#f2f8ff;text-shadow:0 0 30px rgba(125,211,252,.25)}
 .stat .l{font:600 10px/1.3 var(--display);color:var(--faint);margin-top:11px;
   text-transform:uppercase;letter-spacing:.17em}
 .stat .h,.stat .hint{font-size:12.5px;color:var(--muted);margin-top:7px}
@@ -497,7 +501,7 @@ td a .faint{color:var(--faint)}
 /* ────────────────────────────────────────────── public preference page */
 @layer surface {
 .prefs{max-width:640px;margin:0 auto;padding:min(13vh,120px) var(--gut) 100px;position:relative;z-index:2}
-.prefs h1{font-size:clamp(30px,6vw,40px);margin-bottom:14px}
+.prefs h1{font-size:clamp(27px,5.5vw,34px);margin-bottom:14px}
 .prefs .lede{color:var(--muted);margin-bottom:14px;font-size:15.5px}
 .prefs form{position:relative;padding:0;animation:surface-in .9s var(--spring) both;
   animation-delay:.1s}
@@ -570,7 +574,7 @@ const NAV: ({ grp: string } | { href: string; key: string; label: string })[] = 
 ]
 
 const FONTS =
-  'https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Sora:wght@400;500;600;700&display=swap'
+  'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap'
 
 /** The ocean itself: one fixed layer, no pointer events, nothing to click. */
 const Ocean: FC = () => (

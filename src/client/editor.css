@@ -10,7 +10,7 @@
   --e-accent-soft: #e2f6fc;
   /* Chrome (toolbar, menus) belongs to the app and is dark; the page it wraps
      is paper, because that is what the mail will actually look like. */
-  --e-ui: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
+  --e-ui: 'Inter', ui-sans-serif, system-ui, Helvetica, sans-serif;
   --e-ui-ink: #eaf3ff;
   --e-ui-muted: #9db2d4;
   --e-ui-faint: #6d84a8;

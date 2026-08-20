@@ -23,8 +23,8 @@ const RAMP = ['#a5f3fc', '#38bdf8', '#6366f1', '#8b5cf6']
 const INK = '#eaf3ff'
 const FAINT = '#6d84a8'
 const GRID = 'rgba(148,190,255,.10)'
-const SANS = "'Plus Jakarta Sans',ui-sans-serif,system-ui,sans-serif"
-const DISPLAY = "'Sora','Plus Jakarta Sans',ui-sans-serif,sans-serif"
+const SANS = "'Inter',ui-sans-serif,system-ui,Helvetica,sans-serif"
+const DISPLAY = SANS
 
 const nf = new Intl.NumberFormat('en-US')
 const money = (cents: number) => `$${nf.format(Math.round(cents / 100))}`

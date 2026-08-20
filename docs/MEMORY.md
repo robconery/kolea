@@ -314,4 +314,12 @@ onto the screen."* Correct, and worth writing down.
 - Bug worth remembering: `label{display:block}` lives in the `controls` layer, and the hamburger
   and drawer scrim are `<label>` elements declared in the `shell` layer. **Cascade layers beat
   specificity**, so the generic rule silently reset both. `label:not(.burger):not(.scrim)`.
+- **One typeface, not three.** The first cut set headlines in Instrument Serif over Plus Jakarta
+  Sans body and Sora numerals. Rob wanted the cleaner Inter/Helvetica look, and he was right for
+  a second reason: three families read as three opinions. Everything is Inter now, carried by
+  weight, size and tracking — big type earns presence from `-0.038em` and weight 700, not from a
+  different family. Inter's tabular figures matter here; most of this UI is numbers. JetBrains
+  Mono stays for code. Two font families instead of four is also two fewer requests.
+- The composer's *page* keeps a plain system-sans body on purpose — it is a preview of mail, and
+  mail does not render in the admin's typeface.
 
