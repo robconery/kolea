@@ -18,15 +18,30 @@ export interface UpsertInput {
    * whatever their tags trigger, not by "thanks for subscribing!".
    */
   triggerSubscribeSequences?: boolean
+  /**
+   * What status a *newly created* row gets. Defaults to `active`, because the
+   * ordinary way onto this list is a signup.
+   *
+   * Pass `pending` when the address arrives as a side effect of something that
+   * is not a request to be mailed — a purchase, a receipt. `pending` is invisible
+   * to broadcasts (`core/segments.ts` filters on `active`) but still reachable by
+   * sequences and transactional mail, which is exactly the shape a buyer who has
+   * not joined the newsletter should have.
+   */
+  status?: 'pending' | 'active'
 }
 
-export type UpsertOutcome = 'created' | 'updated' | 'invalid'
+/** `promoted` is an `updated` that also flipped `pending` → `active`. */
+export type UpsertOutcome = 'created' | 'updated' | 'promoted' | 'invalid'
 
 /**
  * Create or update a subscriber by address.
  *
  * Never resurrects an `unsubscribed` subscriber to `active` (SPEC 1.2) — an
- * import must not undo somebody's stated preference.
+ * import must not undo somebody's stated preference. The only status change this
+ * function will ever make is `pending` → `active`, and only when the caller is
+ * asking for `active`: that is somebody who was on file as a buyer actually
+ * joining the list. Every other status is left exactly as it was found.
  */
 export async function upsertSubscriber(
   db: Db,
@@ -37,12 +52,34 @@ export async function upsertSubscriber(
 
   const existing = await db.select().from(subscribers).where(eq(subscribers.email, email)).get()
 
+  const wantedStatus = input.status ?? 'active'
+
   if (existing) {
     if (input.name && input.name !== existing.name) {
       await db.update(subscribers).set({ name: input.name }).where(eq(subscribers.id, existing.id))
     }
+
+    // A buyer we only had on file because they paid us has now actually asked to
+    // be here. Promote them, and give them the welcome series they just earned —
+    // creating the row silently was the whole point of `pending`, so this is the
+    // first moment the subscribe sequences are allowed to fire for them.
+    //
+    // Guarded on `pending` alone: `unsubscribed`, `bounced` and `complained`
+    // are never walked back by this path, whatever the caller asks for.
+    const promoting = existing.status === 'pending' && wantedStatus === 'active'
+    if (promoting) {
+      await db
+        .update(subscribers)
+        .set({ status: 'active', source: input.source ?? existing.source })
+        .where(eq(subscribers.id, existing.id))
+    }
+
     if (input.tagIds?.length) await addTags(db, existing.id, input.tagIds)
-    return { outcome: 'updated', id: existing.id }
+    if (promoting && input.triggerSubscribeSequences !== false) {
+      await enrollOnSubscribe(db, existing.id)
+    }
+
+    return { outcome: promoting ? 'promoted' : 'updated', id: existing.id }
   }
 
   const inserted = await db
@@ -50,7 +87,7 @@ export async function upsertSubscriber(
     .values({
       email,
       name: input.name ?? null,
-      status: 'active',
+      status: wantedStatus,
       source: input.source ?? null,
       unsubToken: randomToken(),
       createdAt: new Date(),
@@ -59,7 +96,12 @@ export async function upsertSubscriber(
 
   const id = inserted[0]!.id
   if (input.tagIds?.length) await addTags(db, id, input.tagIds)
-  if (input.triggerSubscribeSequences !== false) await enrollOnSubscribe(db, id)
+  // `pending` means "we have their address, they did not ask for mail" — the
+  // welcome series is not a thing that can be true of them yet. It fires later,
+  // if and when they subscribe for real and the promotion branch above runs.
+  if (wantedStatus === 'active' && input.triggerSubscribeSequences !== false) {
+    await enrollOnSubscribe(db, id)
+  }
 
   return { outcome: 'created', id }
 }
@@ -156,8 +198,8 @@ export async function importCsv(db: Db, csv: string): Promise<ImportReport> {
       tagIds,
     })
     if (outcome === 'created') report.created++
-    else if (outcome === 'updated') report.updated++
-    else report.invalid++
+    else if (outcome === 'invalid') report.invalid++
+    else report.updated++
   }
 
   return report

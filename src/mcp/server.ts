@@ -62,7 +62,7 @@ export async function handleMcp(
         'Content-Type': 'application/json',
         // Tells a client this is bearer auth without advertising an OAuth flow
         // we don't run — the operator pastes a key and that's the whole story.
-        'WWW-Authenticate': 'Bearer realm="big-mailer"',
+        'WWW-Authenticate': 'Bearer realm="kolea"',
       },
     })
   }
@@ -70,7 +70,7 @@ export async function handleMcp(
   const ctx: Ctx = { env, db, executionCtx, apiKeyId: key.id }
 
   const handler = createMcpHandler(() => {
-    const server = new McpServer({ name: 'big-mailer', version: '1.0.0' })
+    const server = new McpServer({ name: 'kolea', version: '1.0.0' })
 
     registerAudience(server, ctx)
     registerTags(server, ctx)

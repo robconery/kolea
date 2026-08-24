@@ -1,7 +1,7 @@
 /**
  * Browser smoke test for the composer.
  *
- * The editor is the one part of big-mailer that can't be verified from the
+ * The editor is the one part of Kōlea that can't be verified from the
  * server side — a bad extension option or a renamed command fails silently in
  * the browser and the field just never saves. This drives a real Chromium
  * against a running dev server.
@@ -151,7 +151,7 @@ check(
 await page.locator('.bm-prose p').first().hover()
 await page.waitForTimeout(400)
 check('drag handle appears on hover', await page.locator('.bm-drag').isVisible())
-check('word count renders', /\d+ words? · \d+ characters/.test((await page.locator('.bm-count').textContent()) ?? ''))
+check('no word count in the composer', (await page.locator('.bm-count').count()) === 0)
 
 // ── image upload through the real endpoint + R2
 const uploaded = await page.evaluate(async () => {

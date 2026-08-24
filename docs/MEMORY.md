@@ -1,4 +1,4 @@
-# 🧠 MEMORY — big-mailer
+# 🧠 MEMORY — Kōlea
 
 Decision log for work done with Claude. Curated by `/document`, appended by every phase command.
 Distinct from the `~/.claude` memory system.

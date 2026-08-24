@@ -1,8 +1,13 @@
 import { eq } from 'drizzle-orm'
-import { Hono } from 'hono'
+import { type Context, Hono } from 'hono'
 import { applyProviderEvent, recordEvent } from '../core/events.ts'
 import { isValidEmail, normalizeEmail } from '../core/ids.ts'
 import { dispatch } from '../core/sending.ts'
+import {
+  type StripeEventEnvelope,
+  handleStripeEvent,
+  verifyStripeSignature,
+} from '../core/stripe-webhook.ts'
 import { upsertSubscriber } from '../core/subscribers.ts'
 import { getDb } from '../db/index.ts'
 import { messages, subscribers } from '../db/schema.ts'
@@ -62,7 +67,9 @@ api.post('/api/send', async (c) => {
       email: to,
       name: payload.name ?? null,
       source: 'transactional',
-      // Somebody receiving a password reset did not join the newsletter.
+      // Somebody receiving a password reset did not join the newsletter, so they
+      // land `pending`: reachable by this send and invisible to every broadcast.
+      status: 'pending',
       triggerSubscribeSequences: false,
     })
     sub = await db.select().from(subscribers).where(eq(subscribers.id, id!)).get()
@@ -98,6 +105,7 @@ api.post('/webhooks/:provider', async (c) => {
   const db = getDb(c.env)
   const name = c.req.param('provider')
 
+  if (name === 'stripe') return await stripeWebhook(c)
   if (name !== 'resend') return c.json({ error: 'unknown provider' }, 404)
   if (!c.env.RESEND_API_KEY) return c.json({ error: 'provider not configured' }, 400)
 
@@ -111,6 +119,57 @@ api.post('/webhooks/:provider', async (c) => {
     return c.json({ error: String(err) }, 401)
   }
 })
+
+/**
+ * `POST /webhooks/stripe` — the live money path.
+ *
+ * Reads the body as raw text and verifies the signature *before* parsing: the
+ * HMAC covers the exact bytes Stripe sent, and JSON that has been through a
+ * parse-and-reserialize no longer matches.
+ *
+ * Status codes are load-bearing here. Stripe retries any non-2xx for up to three
+ * days, so:
+ *   - a bad signature → 401, and it stays rejected however often it is retried
+ *   - a handler that threw → 500, so Stripe redelivers and we get another go
+ *   - anything we understood, including "ignored" → 200, or Stripe hammers the
+ *     endpoint forever over an event we deliberately do not act on
+ */
+async function stripeWebhook(c: Context<{ Bindings: Env }>) {
+  const db = getDb(c.env)
+
+  if (!c.env.STRIPE_WEBHOOK_SECRET) {
+    // Fails closed. An endpoint that accepts unsigned bodies is an endpoint
+    // anybody can post fake revenue to.
+    return c.json({ error: 'STRIPE_WEBHOOK_SECRET is not configured' }, 503)
+  }
+
+  const raw = await c.req.text()
+  const verified = await verifyStripeSignature(
+    raw,
+    c.req.header('stripe-signature') ?? null,
+    c.env.STRIPE_WEBHOOK_SECRET,
+  )
+  if (!verified.ok) return c.json({ error: verified.reason }, 401)
+
+  let event: StripeEventEnvelope
+  try {
+    event = JSON.parse(raw) as StripeEventEnvelope
+  } catch {
+    return c.json({ error: 'body is not JSON' }, 400)
+  }
+  if (!event?.id || !event?.type || !event?.data?.object) {
+    return c.json({ error: 'not a Stripe event envelope' }, 400)
+  }
+
+  try {
+    const result = await handleStripeEvent(c.env, db, event)
+    return c.json(result)
+  } catch (err) {
+    // Already recorded as a failed `stripe_events` row. The 500 is what buys the
+    // retry — swallowing it here would lose the order silently.
+    return c.json({ error: String(err), event: event.id }, 500)
+  }
+}
 
 // ───────────────────────────────────────────────── tracking
 

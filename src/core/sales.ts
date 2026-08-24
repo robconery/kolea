@@ -206,8 +206,20 @@ export async function recordSale(db: Db, input: SaleInput): Promise<SaleResult> 
 }
 
 /**
- * Buying something adds you to the list, but it does not make you a newsletter
- * signup — so `subscribe`-triggered sequences stay out of it. Post-purchase mail
+ * Buying something puts you on file. It does not put you on the newsletter.
+ *
+ * ⭐ The status is `pending`, and that is the whole rule. `core/segments.ts`
+ * filters broadcast recipients on `status = 'active'`, so a buyer created here
+ * cannot appear in any segment and cannot receive any broadcast — while
+ * `canReceiveSequenceIn` ignores status entirely and transactional mail only
+ * consults suppressions, so their receipt, their download links and any
+ * purchase-triggered sequence all still reach them.
+ *
+ * They become a subscriber the day they ask to be one: a signup through a form
+ * runs the same `upsertSubscriber` with the default `active`, which promotes
+ * them and fires the welcome series then, once, deliberately.
+ *
+ * `subscribe`-triggered sequences stay out of it either way — post-purchase mail
  * comes from the tags on the sale, which is the explicit, visible path.
  */
 async function upsertBuyer(db: Db, email: string, name: string | null) {
@@ -215,6 +227,7 @@ async function upsertBuyer(db: Db, email: string, name: string | null) {
     email,
     name,
     source: 'sale',
+    status: 'pending',
     triggerSubscribeSequences: false,
   })
 }

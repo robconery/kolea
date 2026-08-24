@@ -1,4 +1,4 @@
-import type { FC, PropsWithChildren } from 'hono/jsx'
+import type { Child, FC, PropsWithChildren } from 'hono/jsx'
 import { mdToDoc } from '../core/md-to-doc.ts'
 import type { Campaign, DocNode } from '../db/schema.ts'
 
@@ -25,7 +25,7 @@ import type { Campaign, DocNode } from '../db/schema.ts'
  *   · Entrances are a staggered CSS keyframe on load. Zero JavaScript.
  */
 export const CSS = `
-@layer base, ocean, shell, surface, controls, data, motion;
+@layer base, ocean, shell, surface, controls, data, motion, compose;
 
 @layer base {
 :root{
@@ -161,6 +161,7 @@ hr{border:0;height:1px;background:var(--rule);margin:26px 0}
 .brand .sigil{width:32px;height:32px;flex:0 0 auto;border-radius:11px;display:grid;place-items:center;
   background:var(--beam);box-shadow:0 8px 24px -8px rgba(34,211,238,.9);
   transition:transform .6s var(--spring)}
+.brand .sigil img{width:26px;height:25px;object-fit:contain;display:block}
 .brand:hover .sigil{transform:rotate(-8deg) scale(1.06)}
 .brand .wm{font:700 16.5px/1 var(--display);letter-spacing:-.035em}
 .brand .wm i{font-style:normal;background:var(--beam);-webkit-background-clip:text;
@@ -520,6 +521,114 @@ td a .faint{color:var(--faint)}
   letter-spacing:.2em;color:#a5f3fc;margin-bottom:9px}
 .nuke{margin-top:0;padding-top:26px}
 }
+
+/* ───────────────────────────────────────────────────────── the composer
+
+   Writing mail is the one job in here that deserves the whole screen. The rail
+   goes away, the page stops scrolling, and the frame becomes three fixed bands:
+   a slim bar naming what you're writing, the work, and a foot holding the count
+   and the save. The editor between them fills whatever is left and scrolls
+   inside itself, so the paper always reaches the bottom of the display no
+   matter how short the draft is.
+
+   Same hairlines as everywhere else. No panels, no boxes — the sidebar is
+   separated from the paper by one vertical rule and nothing more. */
+@layer compose {
+/* Still water while you write.
+   The ocean's rays, caustics and grain are blend-mode layers animating over the
+   whole viewport, forever. On every other screen that is the point; here the
+   paper covers almost all of it, so the compositor would be blending frames
+   nobody can see while the one thing that must stay responsive is the cursor.
+   The gradient stays, the motion stops. */
+body:has(.compose-stage) .rays,
+body:has(.compose-stage) .rays-b,
+body:has(.compose-stage) .mote{animation:none}
+body:has(.compose-stage) .caustic,
+body:has(.compose-stage) .grain{display:none}
+
+/* The stage keeps its rail offset; only its height changes — the composer owns
+   exactly the screen, and nothing outside it scrolls. The clamp on <body> is
+   what stops the editor's own floating furniture, which lives at the end of the
+   document until it is positioned, from giving the page a stray 38px of
+   scroll. */
+html:has(.compose-stage){overflow:hidden}
+.compose-stage{height:100dvh;overflow:hidden}
+.compose{position:relative;z-index:2;display:flex;flex-direction:column;height:100%;overflow:hidden}
+/* The rail is the way out on a wide screen, so the drawer handle has no job. */
+.compose-top .burger{display:none}
+.compose-top{flex:0 0 auto;position:relative;display:flex;align-items:center;gap:16px;
+  padding:12px clamp(16px,2.2vw,28px)}
+.compose-top::after{content:'';position:absolute;left:0;right:0;bottom:0;height:1px;background:var(--rule)}
+.cx{width:34px;height:34px;flex:0 0 auto;display:grid;place-items:center;border-radius:50%;
+  color:var(--muted);
+  transition:background-color .4s var(--glide),color .4s var(--glide),transform .5s var(--spring)}
+.cx:hover{background:rgba(255,255,255,.08);color:#fff;transform:translateX(-2px)}
+.cx svg{width:18px;height:18px}
+.compose-id{min-width:0}
+.compose-id .t{font:600 15.5px/1.2 var(--display);letter-spacing:-.022em;color:#eef5ff;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.compose-id .s{margin-top:5px;font-size:12.5px;color:var(--faint);
+  display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.compose-acts{margin-left:auto;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.compose-acts form{display:contents}
+
+.compose-body{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 340px}
+@media (max-width:1320px){.compose-body{grid-template-columns:minmax(0,1fr) 296px}}
+@media (max-width:1080px){
+  /* Rail turned into a drawer — the composer's own bar carries the handle. */
+  .compose-top .burger{display:grid}
+}
+.compose-main{position:relative;min-width:0;display:flex;flex-direction:column;overflow-y:auto;
+  overflow-x:hidden}
+/* The subject sets like a headline, because that is what it is. */
+.compose-subject{flex:0 0 auto;padding:26px clamp(22px,5vw,74px) 20px}
+.compose .subj{width:100%;padding:0;border:0;border-radius:0;background:none;box-shadow:none;
+  font:600 clamp(20px,2.2vw,27px)/1.25 var(--display);letter-spacing:-.032em;color:#f2f8ff}
+.compose .subj:hover,.compose .subj:focus{box-shadow:none;outline:0;background:none}
+.compose .subj::placeholder{color:rgba(109,132,168,.55)}
+
+.compose-side{position:relative;overflow-y:auto;padding:28px 28px 70px}
+.compose-side::before{content:'';position:absolute;left:0;top:0;bottom:0;width:1px;
+  background:var(--rule-v)}
+.compose-side .field,.compose-side .row{max-width:none}
+.compose-side .field{margin-bottom:0}
+.side-sec{position:relative;padding:24px 0 0;margin-top:24px}
+.side-sec::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:var(--rule-faint)}
+.side-sec:first-child{margin-top:0;padding-top:0}
+.side-sec:first-child::before{display:none}
+.side-sec>h3{margin-bottom:15px}
+.side-sec>*+.field{margin-top:20px}
+/* A caption the screen reader needs and the design does not. */
+.hide-vis{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;
+  clip-path:inset(50%);white-space:nowrap}
+
+.compose-foot{flex:0 0 auto;position:relative;display:flex;align-items:center;gap:16px;
+  padding:11px clamp(16px,2.2vw,28px)}
+.compose-foot::before{content:'';position:absolute;left:0;right:0;top:0;height:1px;background:var(--rule)}
+/* A refusal in the save bar. Same violet the warning flash uses elsewhere. */
+.foot-warn{font-size:13px;color:#e0bbff}
+/* Autosave's running state. Quiet by design — it is reassurance, not news. */
+.save-state{font-size:12.5px;color:var(--faint);font-variant-numeric:tabular-nums}
+.save-state.bad{color:#ffb3bf}
+
+@media (max-width:980px){
+  /* Nothing to fill on a phone — hand the page back its scroll and keep only
+     the save bar riding along the bottom edge. */
+  html:has(.compose-stage){overflow:visible}
+  .compose-stage{height:auto;overflow:visible}
+  .compose{height:auto;min-height:100dvh;overflow:visible}
+  /* The title bar scrolls away here and the editor's own toolbar takes the top
+     edge — two stacked sticky bars on a phone leaves nothing to write in. */
+  .compose-body{display:block}
+  .compose-main{overflow:visible}
+  .compose-subject{padding:20px 20px 16px}
+  .compose-side{overflow:visible;padding:26px 20px 40px}
+  .compose-side::before{left:0;right:0;top:0;bottom:auto;width:auto;height:1px;background:var(--rule)}
+  .compose-foot{position:sticky;bottom:0;z-index:20;
+    background:linear-gradient(0deg,rgba(5,12,34,.95),rgba(5,12,34,.72));
+    -webkit-backdrop-filter:blur(22px) saturate(150%);backdrop-filter:blur(22px) saturate(150%)}
+}
+}
 `
 
 /**
@@ -597,15 +706,49 @@ const Ocean: FC = () => (
 const Brand: FC = () => (
   <a class="brand" href="/">
     <span class="sigil" aria-hidden="true">
-      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#04121f" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M3 8.5c1.8-2 3.6-2 5.4 0s3.6 2 5.4 0 3.6-2 5.4 0M3 14c1.8-2 3.6-2 5.4 0s3.6 2 5.4 0 3.6-2 5.4 0M3 19.5c1.8-2 3.6-2 5.4 0" />
-      </svg>
+      {/* The bird itself. Served from `public/`, so it needs no build step. */}
+      <img src="/logo_200.png" alt="" width="26" height="25" />
     </span>
     <span class="wm">
-      big<i>·</i>mailer
+      K<i>ō</i>lea
       <em>owned list</em>
     </span>
   </a>
+)
+
+/** The site menu. One copy, worn by both the ordinary pages and the composer. */
+const Rail: FC<{ nav?: string }> = ({ nav }) => (
+  <aside class="rail">
+    <div class="rail-in">
+      <Brand />
+      <nav>
+        {NAV.map((it) =>
+          'grp' in it ? (
+            <div class="grp">{it.grp}</div>
+          ) : (
+            <a href={it.href} class={nav === it.key ? 'on' : ''}>
+              <Icon k={it.key} />
+              {it.label}
+            </a>
+          ),
+        )}
+      </nav>
+      <div class="rail-foot">
+        <span class="pulse" />
+        self-hosted
+      </div>
+    </div>
+  </aside>
+)
+
+/** Opens the rail where it's a drawer rather than a column. */
+const Burger: FC = () => (
+  <label class="burger" for="rail-open" title="Menu">
+    <span>
+      <i />
+      <i />
+    </span>
+  </label>
 )
 
 export const Layout: FC<
@@ -617,7 +760,7 @@ export const Layout: FC<
       <meta name="viewport" content="width=device-width,initial-scale=1" />
       <meta name="color-scheme" content="dark" />
       <meta name="theme-color" content="#050c22" />
-      <title>{title} · big-mailer</title>
+      <title>{title} · Kōlea</title>
       <link rel="icon" href="/favicon.ico" sizes="any" />
       <link rel="icon" href="/favicon.png" type="image/png" />
       <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -638,35 +781,10 @@ export const Layout: FC<
       <input type="checkbox" id="rail-open" class="rail-cb" aria-label="Toggle navigation" />
       <div class="shell">
         <label class="scrim" for="rail-open" aria-hidden="true" />
-        <aside class="rail">
-          <div class="rail-in">
-            <Brand />
-            <nav>
-              {NAV.map((it) =>
-                'grp' in it ? (
-                  <div class="grp">{it.grp}</div>
-                ) : (
-                  <a href={it.href} class={nav === it.key ? 'on' : ''}>
-                    <Icon k={it.key} />
-                    {it.label}
-                  </a>
-                ),
-              )}
-            </nav>
-            <div class="rail-foot">
-              <span class="pulse" />
-              self-hosted
-            </div>
-          </div>
-        </aside>
+        <Rail nav={nav} />
         <div class="stage">
           <div class="mobar">
-            <label class="burger" for="rail-open" title="Menu">
-              <span>
-                <i />
-                <i />
-              </span>
-            </label>
+            <Burger />
             <Brand />
           </div>
           <main class="wrap">{children}</main>
@@ -809,13 +927,18 @@ export const PublicLayout: FC<PropsWithChildren<{ title: string }>> = ({ title, 
  * a `<noscript>` textarea fallback, so the form works either way and the server
  * contract is just "one field of body content".
  */
-export const RichEditor: FC<{ json?: DocNode | null; md?: string }> = ({ json, md }) => {
+export const RichEditor: FC<{
+  json?: DocNode | null
+  md?: string
+  bare?: boolean
+  /** The consent footer, rendered by `footerPreviewHtml`, shown under the paper. */
+  footer?: string
+}> = ({ json, md, bare, footer }) => {
   // Markdown-authored content is converted for editing. Without this the editor
   // would open empty on legacy content and the first save would erase it.
   const doc = json ?? (md ? mdToDoc(md) : null)
-  return (
-    <div class="field">
-      <label>Body</label>
+  const guts = (
+    <>
       <input type="hidden" name="body_json" value={doc ? JSON.stringify(doc) : ''} />
       <div class="bm-editor-host" data-editor data-field="body_json" />
       <noscript>
@@ -823,6 +946,21 @@ export const RichEditor: FC<{ json?: DocNode | null; md?: string }> = ({ json, m
           {md ?? ''}
         </textarea>
       </noscript>
+      {/* Inert: it is the mail's own footer shown for reference, not something
+          to edit. The editor moves it inside the sheet on mount. */}
+      {footer ? (
+        <div class="bm-mailfoot" aria-hidden="true" dangerouslySetInnerHTML={{ __html: footer }} />
+      ) : null}
+    </>
+  )
+  // Inside the composer the editor is the page, so it carries no label, no hint
+  // and no field box — it has to be a bare flex child that can grow to the foot
+  // of the frame.
+  if (bare) return guts
+  return (
+    <div class="field">
+      <label>Body</label>
+      {guts}
       <p class="faint" style="margin:10px 0 0">
         Press <span class="mono">/</span> for blocks · <span class="mono">@</span> to personalize ·
         drag the handle in the left margin to reorder · drop an image anywhere
@@ -830,6 +968,172 @@ export const RichEditor: FC<{ json?: DocNode | null; md?: string }> = ({ json, m
     </div>
   )
 }
+
+/**
+ * A finished piece of mail, read-only.
+ *
+ * Same TipTap document, same paper, same block rhythm as the composer — the
+ * editor bundle mounts a non-editable instance over this host, so a sent
+ * broadcast reads exactly as it read while it was being written, and as it
+ * landed in the reader's inbox. Until (or without) that bundle, the server's
+ * own email HTML stands in: `fallback` is what `previewHtml` produced, which is
+ * literally the markup that went on the wire.
+ */
+export const MailReader: FC<{
+  json?: DocNode | null
+  md?: string
+  /** Email HTML shown before the bundle mounts, and forever if it never does. */
+  fallback: string
+  /** The consent footer, rendered by `footerPreviewHtml`, on the same sheet. */
+  footer?: string
+}> = ({ json, md, fallback, footer }) => {
+  const doc = json ?? (md ? mdToDoc(md) : null)
+  return (
+    <div class="bm-reader">
+      <div class="bm-reader-host" data-reader>
+        <div class="bm-prose bm-reader-fallback" dangerouslySetInnerHTML={{ __html: fallback }} />
+        {doc ? (
+          <script
+            type="application/json"
+            class="bm-reader-doc"
+            // `<` escaped so a "</script>" inside the copy cannot close this tag.
+            dangerouslySetInnerHTML={{ __html: JSON.stringify(doc).replaceAll('<', '\\u003c') }}
+          />
+        ) : null}
+      </div>
+      {footer ? (
+        <div class="bm-mailfoot" aria-hidden="true" dangerouslySetInnerHTML={{ __html: footer }} />
+      ) : null}
+    </div>
+  )
+}
+
+/** The hint that lives under the editor everywhere else. */
+export const EditorHint: FC = () => (
+  <p class="faint" style="margin:0">
+    Press <span class="mono">/</span> for blocks · <span class="mono">@</span> to personalize · drag
+    the handle in the left margin to reorder · drop an image anywhere
+  </p>
+)
+
+/**
+ * Full-height frame for writing one piece of mail.
+ *
+ * The site menu stays where it always is — writing mail is a page like any
+ * other, and there is no reason to strand somebody in a mode they have to find
+ * their way out of. Everything right of the rail becomes the composer: a bar
+ * naming the mail, the work, and a foot holding the count and the save.
+ *
+ * All of it — subject, body and the sidebar settings alike — lives inside one
+ * form, so the Save in the foot is a plain submit with no JavaScript behind it.
+ * Anything that posts somewhere else (sending, deleting) goes in `extra` as its
+ * own hidden form and is reached from a button carrying `form="<id>"`.
+ */
+export const ComposeLayout: FC<
+  PropsWithChildren<{
+    title: string
+    nav?: string
+    action: string
+    /** Endpoint the timed save posts to. Absent means no autosave on this page. */
+    autosave?: string
+    /** Endpoint the preview dialog posts to. */
+    preview?: string
+    /** The row being edited, or null for one that autosave will create. */
+    recordId?: number | null
+    back: string
+    backLabel?: string
+    heading: string
+    sub?: Child
+    actions?: Child
+    side?: Child
+    foot?: Child
+    extra?: Child
+  }>
+> = ({
+  title,
+  nav,
+  action,
+  autosave,
+  preview,
+  recordId,
+  back,
+  backLabel,
+  heading,
+  sub,
+  actions,
+  side,
+  foot,
+  extra,
+  children,
+}) => (
+  <html lang="en">
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width,initial-scale=1" />
+      <meta name="color-scheme" content="dark" />
+      <meta name="theme-color" content="#050c22" />
+      <title>{title} · Kōlea</title>
+      <link rel="icon" href="/favicon.ico" sizes="any" />
+      <link rel="icon" href="/favicon.png" type="image/png" />
+      <link rel="preconnect" href="https://fonts.googleapis.com" />
+      <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="" />
+      <link rel="stylesheet" href={FONTS} />
+      <style dangerouslySetInnerHTML={{ __html: CSS }} />
+      <link rel="stylesheet" href="/editor.css" />
+      <script src="/editor.js" type="module" defer />
+    </head>
+    <body>
+      <Ocean />
+      <input type="checkbox" id="rail-open" class="rail-cb" aria-label="Toggle navigation" />
+      <div class="shell">
+        <label class="scrim" for="rail-open" aria-hidden="true" />
+        <Rail nav={nav} />
+        <div class="stage compose-stage">
+          <form
+        method="post"
+        action={action}
+        class="compose"
+        data-autosave={autosave}
+        data-preview={preview}
+        data-record-id={recordId ? String(recordId) : undefined}
+      >
+        {/* Autosave posts the form as-is, so the row it should write has to be
+            in the form. On a new draft it starts empty and the first save fills
+            it in. */}
+        <input type="hidden" name="id" value={recordId ? String(recordId) : ''} />
+            <header class="compose-top">
+              {/* Where the rail is a drawer, the way to it is here — the
+                  composer has no room for a bar of its own. */}
+              <Burger />
+              <a class="cx" href={back} title={backLabel ?? 'Back'} aria-label={backLabel ?? 'Back'}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M19 12H5m0 0l6-6m-6 6l6 6" />
+                </svg>
+              </a>
+              <div class="compose-id">
+                <div class="t">{heading}</div>
+                {sub ? <div class="s">{sub}</div> : null}
+              </div>
+              <div class="compose-acts">{actions}</div>
+            </header>
+            <div class="compose-body">
+              <main class="compose-main">{children}</main>
+              <aside class="compose-side">{side}</aside>
+            </div>
+            <footer class="compose-foot">
+              {/* Autosave writes its state here: Unsaved / Saving… / Saved 14:22.
+                  It is the only running commentary the composer gives, which is
+                  why it sits next to the button it is reassuring you about. */}
+              <span class="save-state" data-save-state />
+              <div class="compose-acts">{foot}</div>
+            </footer>
+          </form>
+          {extra}
+        </div>
+      </div>
+    </body>
+  </html>
+)
 
 export const Flash: FC<{ msg?: string; kind?: string }> = ({ msg, kind }) =>
   msg ? <div class={kind === 'warn' ? 'flash warn' : 'flash'}>{msg}</div> : null

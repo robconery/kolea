@@ -13,13 +13,12 @@ import {
   updateBroadcast,
 } from '../../core/broadcasts.ts'
 import { canReceiveBroadcastIn, loadConsentSnapshot } from '../../core/consent.ts'
-import { normalizeEmail } from '../../core/ids.ts'
 import { mdToDoc } from '../../core/md-to-doc.ts'
 import { previewHtml, renderEmail } from '../../core/render.ts'
 import { countSegment, describeRule, getSegment, resolveSegment } from '../../core/segments.ts'
-import { dispatch } from '../../core/sending.ts'
+import { sendPreview } from '../../core/sending.ts'
 import type { SegmentRule } from '../../db/schema.ts'
-import { messages, subscribers, tags } from '../../db/schema.ts'
+import { subscribers, tags } from '../../db/schema.ts'
 import { type Ctx, clampLimit, defineTool, fail, failed, ok } from '../kit.ts'
 import { SEND_DISABLED, consumePreflight, digestOf, mintPreflight, sendingAllowed } from '../preflight.ts'
 
@@ -252,38 +251,22 @@ export function registerBroadcasts(server: McpServer, ctx: Ctx): void {
       const b = await getBroadcast(ctx.db, id)
       if (!b) return fail('No such broadcast.')
 
-      const email = normalizeEmail(to)
-      const sub = await ctx.db.select().from(subscribers).where(eq(subscribers.email, email)).get()
-      if (!sub) {
+      // Same single-copy path the composer's "Send a preview" button uses —
+      // one send route, one set of consent checks, one place to get it wrong.
+      const result = await sendPreview(
+        ctx.env,
+        ctx.db,
+        { kind: 'broadcast', broadcastId: b.id, subject: b.subject },
+        to,
+      )
+      if (!result.ok) {
         return fail(
-          `${email} is not a subscriber.`,
+          result.reason,
           'Add them with subscriber_upsert first, or pick an address from subscriber_search.',
         )
       }
 
-      const snapshot = await loadConsentSnapshot(ctx.db, [sub.email])
-      const block = canReceiveBroadcastIn(snapshot, sub)
-      if (block.blocked) return fail(`${email} cannot receive broadcasts: ${block.reason}`)
-
-      const inserted = await ctx.db
-        .insert(messages)
-        .values({
-          subscriberId: sub.id,
-          kind: 'broadcast',
-          broadcastId: b.id,
-          toEmail: sub.email,
-          subject: `[test] ${b.subject}`,
-          status: 'queued',
-          // Distinct per attempt, so re-testing after an edit actually re-sends.
-          idempotencyKey: `test:${b.id}:${sub.id}:${Date.now()}`,
-          createdAt: new Date(),
-        })
-        .returning({ id: messages.id })
-
-      const messageId = inserted[0]!.id
-      ctx.executionCtx.waitUntil(dispatch(ctx.env, ctx.db, [messageId]))
-
-      return ok({ sent: true, messageId, to: sub.email })
+      return ok({ sent: true, messageId: result.messageId, to: result.to })
     },
   )
 

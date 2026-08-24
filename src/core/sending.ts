@@ -13,7 +13,79 @@ import {
   canReceiveTransactionalIn,
   loadConsentSnapshot,
 } from './consent.ts'
-import { type EmailBody, renderEmail } from './render.ts'
+import { normalizeEmail } from './ids.ts'
+import { BROADCAST_SCOPE_LABEL, type EmailBody, renderEmail } from './render.ts'
+
+/**
+ * ⭐ Where a preview goes. Never a form field, never a subscriber the operator
+ * picked from a list — one address, from config, so a "preview" can't quietly
+ * become a send to somebody else. `PREVIEW_EMAIL` overrides it; the from-address
+ * is the sane default, because that mailbox is already yours by definition.
+ */
+export function previewAddress(env: Env): string {
+  return normalizeEmail(env.PREVIEW_EMAIL || env.FROM_EMAIL)
+}
+
+export type PreviewTarget =
+  | { kind: 'broadcast'; broadcastId: number; subject: string }
+  | { kind: 'sequence'; stepId: number; sequenceId: number; subject: string }
+
+export type PreviewResult = { ok: true; messageId: number; to: string } | { ok: false; reason: string }
+
+/**
+ * ⭐ One real copy of one draft, to one address — the operator's own.
+ *
+ * It is a genuine send down the genuine path (same renderer, same provider,
+ * same message row), because a preview that took a shortcut would be testing
+ * the shortcut. The safety comes from the recipient, not from the mechanism:
+ * `to` is `previewAddress(env)` at every call site, the consent rules still
+ * apply to it, and the subject is prefixed so the copy is never mistaken for
+ * the real thing landing in somebody's inbox.
+ */
+export async function sendPreview(
+  env: Env,
+  db: Db,
+  target: PreviewTarget,
+  to: string,
+): Promise<PreviewResult> {
+  const email = normalizeEmail(to)
+  const sub = await db.select().from(subscribers).where(eq(subscribers.email, email)).get()
+  if (!sub) {
+    return { ok: false, reason: `${email} is not a subscriber, so there is nobody to send to.` }
+  }
+
+  const snapshot = await loadConsentSnapshot(
+    db,
+    [sub.email],
+    [sub.id],
+    target.kind === 'sequence' ? [target.sequenceId] : [],
+  )
+  const block =
+    target.kind === 'sequence'
+      ? canReceiveSequenceIn(snapshot, sub, target.sequenceId)
+      : canReceiveBroadcastIn(snapshot, sub)
+  if (block.blocked) return { ok: false, reason: `${email} cannot receive this: ${block.reason}` }
+
+  const inserted = await db
+    .insert(messages)
+    .values({
+      subscriberId: sub.id,
+      kind: target.kind,
+      broadcastId: target.kind === 'broadcast' ? target.broadcastId : null,
+      sequenceStepId: target.kind === 'sequence' ? target.stepId : null,
+      toEmail: sub.email,
+      subject: `[preview] ${target.subject}`,
+      status: 'queued',
+      // Distinct per attempt, so previewing again after an edit really re-sends.
+      idempotencyKey: `preview:${target.kind}:${target.kind === 'broadcast' ? target.broadcastId : target.stepId}:${sub.id}:${Date.now()}`,
+      createdAt: new Date(),
+    })
+    .returning({ id: messages.id })
+
+  const messageId = inserted[0]!.id
+  await dispatch(env, db, [messageId])
+  return { ok: true, messageId, to: sub.email }
+}
 
 /** D1 caps bound parameters at 100 per query. */
 const PARAM_CHUNK = 100
@@ -271,7 +343,7 @@ function resolveSource(
     return {
       body: { json: b.bodyJson, md: b.bodyMd },
       scope: { kind: 'broadcast' },
-      scopeLabel: 'the newsletter',
+      scopeLabel: BROADCAST_SCOPE_LABEL,
     }
   }
 

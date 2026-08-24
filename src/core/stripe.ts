@@ -3,19 +3,28 @@ import type { Db } from '../db/index.ts'
 import { syncRuns } from '../db/schema.ts'
 import type { Env } from '../types.ts'
 import { type SaleResult, recordSale } from './sales.ts'
+import {
+  type StripeCharge,
+  type StripeList,
+  requireStripeKey,
+  stripeGet,
+} from './stripe-client.ts'
 
 /**
- * Stripe → campaign attribution.
+ * Stripe → campaign attribution, as a nightly reconcile.
  *
- * Plain `fetch` against the REST API rather than the SDK: the SDK is large, it
- * assumes Node, and all this needs is two list endpoints. Nothing here decides
- * how a sale is attributed — `recordSale` already resolves the campaign from
+ * ⭐ This is the *safety net*, not the primary path. `core/stripe-webhook.ts`
+ * books a sale within seconds of the charge; this walks the same charges again
+ * on a schedule and catches whatever the webhook missed — a delivery Stripe gave
+ * up retrying, an outage, a secret rotated at the wrong moment. Both paths key
+ * sales on the Stripe charge id and `recordSale` is idempotent on it, so the two
+ * converge instead of double-counting.
+ *
+ * Nothing here decides how a sale is attributed — `recordSale` already resolves the campaign from
  * the buyer's last attribution touch, dedupes on the charge id, and flips an
  * existing sale on a refund. This file's whole job is turning charges into the
  * shape `recordSale` already takes.
  */
-
-const API = 'https://api.stripe.com/v1'
 
 /**
  * Pages per run. Each page is 100 charges and each charge costs a handful of D1
@@ -28,51 +37,6 @@ const MAX_PAGES = 10
 /** How far back a run with no previous cursor reaches. */
 const COLD_START_DAYS = 30
 
-interface StripeCharge {
-  id: string
-  amount: number
-  currency: string
-  created: number
-  refunded: boolean
-  amount_refunded: number
-  status: string
-  paid: boolean
-  description: string | null
-  receipt_email: string | null
-  customer: string | null
-  billing_details?: { email: string | null; name: string | null }
-  metadata?: Record<string, string>
-}
-
-interface StripeList<T> {
-  data: T[]
-  has_more: boolean
-}
-
-async function stripeGet<T>(
-  env: Env,
-  path: string,
-  params: Record<string, string | number | undefined>,
-): Promise<T> {
-  const url = new URL(`${API}${path}`)
-  for (const [k, v] of Object.entries(params)) {
-    if (v !== undefined) url.searchParams.set(k, String(v))
-  }
-
-  const res = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${env.STRIPE_SECRET_KEY}`,
-      'Stripe-Version': '2025-08-27.basil',
-    },
-  })
-
-  if (!res.ok) {
-    const body = await res.text()
-    throw new Error(`Stripe ${res.status} on ${path}: ${body.slice(0, 300)}`)
-  }
-  return (await res.json()) as T
-}
-
 /**
  * The buyer's address, in the order Stripe is most likely to have it right.
  *
@@ -80,7 +44,7 @@ async function stripeGet<T>(
  * guessed at — crediting revenue to the wrong person is worse than not
  * crediting it.
  */
-async function emailFor(env: Env, charge: StripeCharge): Promise<string | null> {
+export async function emailFor(env: Env, charge: StripeCharge): Promise<string | null> {
   const direct = charge.billing_details?.email ?? charge.receipt_email
   if (direct) return direct
 
@@ -153,9 +117,7 @@ export async function lastCursor(db: Db): Promise<number | null> {
  * everything it previewed.
  */
 export async function syncStripe(env: Env, db: Db, opts: SyncOptions = {}): Promise<SyncSummary> {
-  if (!env.STRIPE_SECRET_KEY) {
-    throw new Error('STRIPE_SECRET_KEY is not configured on this Worker')
-  }
+  requireStripeKey(env)
 
   const dryRun = opts.dryRun ?? false
   const until = opts.until ?? Math.floor(Date.now() / 1000)

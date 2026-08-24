@@ -5,7 +5,7 @@ will save you some.
 
 ## What this project is
 
-big-mailer is a **single-operator** mailer. It is not multi-tenant and it is not
+Kōlea is a **single-operator** mailer. It is not multi-tenant and it is not
 going to become multi-tenant: there is no signup, no billing, no orgs, and no
 per-account isolation anywhere in the schema. That is a deliberate scope decision,
 not a missing feature. See [`docs/PROJECT.md`](docs/PROJECT.md).

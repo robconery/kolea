@@ -1,6 +1,6 @@
 import { Editor, type JSONContent } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
-import { CharacterCount, Placeholder, TrailingNode } from '@tiptap/extensions'
+import { Placeholder, TrailingNode } from '@tiptap/extensions'
 import { BubbleMenu } from '@tiptap/extension-bubble-menu'
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
 import { Details, DetailsContent, DetailsSummary } from '@tiptap/extension-details'
@@ -35,6 +35,7 @@ import { EmailButton } from './extensions/email-button.ts'
 import { MergeTag } from './extensions/merge-tag.ts'
 import { SlashMenu, pickAndUploadImage, uploadImage } from './extensions/slash-menu.ts'
 import { buildBubbleMenu } from './bubble-menu.ts'
+import { attachComposer, markDirty } from './composer.ts'
 
 // A curated language set rather than lowlight's `common`, which drags in ~40
 // grammars and roughly doubles the bundle. One line per language to add more.
@@ -80,36 +81,20 @@ function mount(host: HTMLElement): void {
   const editor = new Editor({
     element: editorEl,
     extensions: [
-      StarterKit.configure({
-        // Replaced below with the syntax-highlighting version.
-        codeBlock: false,
-        link: { openOnClick: false, autolink: true, defaultProtocol: 'https' },
-      }),
-      CodeBlockLowlight.configure({ lowlight }),
+      // Nodes and marks first — the same set the read-only view uses.
+      ...docExtensions(),
+      TableKit.configure({ table: { resizable: true } }),
       Placeholder.configure({
         placeholder: ({ node }) =>
           node.type.name === 'heading'
             ? 'Heading'
             : "Write something. Press '/' for blocks, '@' to personalize.",
       }),
-      CharacterCount,
       TrailingNode,
       Typography,
-      Highlight.configure({ multicolor: true }),
-      TextAlign.configure({ types: ['heading', 'paragraph'] }),
-      Image.configure({ inline: false, allowBase64: false }),
-      TaskList,
-      TaskItem.configure({ nested: true }),
-      TableKit.configure({ table: { resizable: true } }),
-      Details.configure({ persist: true }),
-      DetailsSummary,
-      DetailsContent,
-      Youtube.configure({ controls: true, nocookie: true }),
       // Block-style editing: drag to reorder, multi-block selection.
       DragHandle.configure({ render: renderDragHandle }),
       NodeRange,
-      EmailButton,
-      MergeTag,
       SlashMenu,
       BubbleMenu.configure({
         element: toolbar,
@@ -138,27 +123,32 @@ function mount(host: HTMLElement): void {
     },
     onUpdate: ({ editor: e }) => {
       if (hidden) hidden.value = JSON.stringify(e.getJSON())
-      updateCount(e)
+      markDirty()
     },
   })
 
   buildBubbleMenu(toolbar, editor)
   buildToolbar(host, editor)
-  updateCount(editor)
+
+  // The consent footer ships in the page beside the host and moves inside it,
+  // under the editor, so the sheet the writer sees is the whole mail — text and
+  // footer on one piece of paper, exactly as it lands.
+  const mailFoot = host.parentElement?.querySelector<HTMLElement>('.bm-mailfoot')
+  if (mailFoot) host.append(mailFoot)
+
+  // Autosave and the preview dialog live on the form, not the editor; all they
+  // need from here is a way to flush the document into the field they post.
+  if (form) {
+    attachComposer(form, () => {
+      if (hidden) hidden.value = JSON.stringify(editor.getJSON())
+    })
+  }
 
   // Belt and braces: sync on submit too, in case a command mutated the doc
   // without firing onUpdate.
   form?.addEventListener('submit', () => {
     if (hidden) hidden.value = JSON.stringify(editor.getJSON())
   })
-}
-
-function updateCount(editor: Editor): void {
-  const el = document.querySelector('.bm-count')
-  if (!el) return
-  const words = editor.storage.characterCount.words()
-  const chars = editor.storage.characterCount.characters()
-  el.textContent = `${words} word${words === 1 ? '' : 's'} · ${chars} characters`
 }
 
 function renderDragHandle(): HTMLElement {
@@ -200,8 +190,19 @@ function buildToolbar(host: HTMLElement, editor: Editor): void {
   }
 
   const actives: [HTMLElement, () => boolean][] = []
+  /**
+   * Lighting up the active buttons means ~25 `isActive()` queries, each of which
+   * walks the selection. Run at most one sweep per animation frame: a keystroke
+   * that changes nothing about the marks under the cursor then costs nothing,
+   * and typing stays ahead of the fingers.
+   */
+  let queued = 0
   const refresh = () => {
-    for (const [el, is] of actives) el.classList.toggle('on', is())
+    if (queued) return
+    queued = requestAnimationFrame(() => {
+      queued = 0
+      for (const [el, is] of actives) el.classList.toggle('on', is())
+    })
   }
 
   bar.append(
@@ -237,10 +238,6 @@ function buildToolbar(host: HTMLElement, editor: Editor): void {
     ),
   )
 
-  const count = document.createElement('div')
-  count.className = 'bm-count'
-  bar.append(count)
-
   host.prepend(bar)
   editor.on('selectionUpdate', refresh)
   editor.on('transaction', refresh)
@@ -257,4 +254,69 @@ function safeParse(raw: string): JSONContent {
   }
 }
 
+/**
+ * The extensions a *document* needs — everything that gives a node its shape,
+ * and nothing that exists to help you author one. Shared by the editor and the
+ * read-only view below, so a sent broadcast renders through exactly the same
+ * schema it was written in: same nodes, same marks, same paper.
+ */
+function docExtensions() {
+  return [
+    StarterKit.configure({
+      codeBlock: false,
+      link: { openOnClick: false, autolink: true, defaultProtocol: 'https' },
+    }),
+    CodeBlockLowlight.configure({ lowlight }),
+    Highlight.configure({ multicolor: true }),
+    TextAlign.configure({ types: ['heading', 'paragraph'] }),
+    Image.configure({ inline: false, allowBase64: false }),
+    TaskList,
+    TaskItem.configure({ nested: true }),
+    Details.configure({ persist: true }),
+    DetailsSummary,
+    DetailsContent,
+    Youtube.configure({ controls: true, nocookie: true }),
+    EmailButton,
+    MergeTag,
+  ]
+}
+
+/**
+ * Mounts a non-editable TipTap over an already-sent piece of mail.
+ *
+ * Reading a broadcast should show the thing that was sent, not a second
+ * rendering of it — so this is the editor's own view with the authoring tools
+ * taken away: no toolbar, no drag handles, no slash menu, nothing to type into.
+ * The server-rendered email HTML sits in the host until this replaces it, which
+ * keeps the page readable with the bundle still in flight or never arriving.
+ */
+function mountReader(host: HTMLElement): void {
+  const raw = host.querySelector('script.bm-reader-doc')?.textContent?.trim()
+  if (!raw) return
+
+  const el = document.createElement('div')
+  el.className = 'bm-editor'
+  host.append(el)
+
+  new Editor({
+    element: el,
+    editable: false,
+    extensions: [
+      ...docExtensions(),
+      // Read-only, so the table has nothing to resize.
+      TableKit.configure({ table: { resizable: false } }),
+    ],
+    content: safeParse(raw),
+    editorProps: { attributes: { class: 'bm-prose' } },
+  })
+
+  host.querySelector('.bm-reader-fallback')?.remove()
+
+  // Same move the composer makes: the consent footer joins the sheet, so what
+  // you read is the whole mail on one piece of paper.
+  const mailFoot = host.parentElement?.querySelector<HTMLElement>('.bm-mailfoot')
+  if (mailFoot) host.append(mailFoot)
+}
+
 document.querySelectorAll<HTMLElement>('[data-editor]').forEach(mount)
+document.querySelectorAll<HTMLElement>('[data-reader]').forEach(mountReader)

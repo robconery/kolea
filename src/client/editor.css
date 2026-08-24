@@ -1,6 +1,7 @@
-/* big-mailer editor — served as a static asset, so it carries its own tokens
+/* Kōlea editor — served as a static asset, so it carries its own tokens
    rather than depending on the admin stylesheet load order. */
-.bm-editor-host {
+.bm-editor-host,
+.bm-reader-host {
   --e-ink: #22262b;
   --e-muted: #6b7280;
   --e-faint: #9aa0a8;
@@ -63,28 +64,49 @@
   /* Leaves room for the drag handle to sit in the left gutter. */
   position: relative;
 }
-.bm-prose > * + * { margin-top: 0.85em; }
-.bm-prose p { margin: 0; }
-.bm-prose h1 { font: 600 26px/1.25 var(--e-sans); letter-spacing: -0.02em; margin: 1.3em 0 0.35em; }
-.bm-prose h2 { font: 600 21px/1.3 var(--e-sans); letter-spacing: -0.01em; margin: 1.2em 0 0.3em; }
-.bm-prose h3 { font: 600 17px/1.35 var(--e-sans); margin: 1.1em 0 0.25em; }
+/* Block rhythm, copied from render-doc.ts so the gaps you write are the gaps
+   that send. 22px between paragraphs — wide enough that a break reads as a
+   break rather than as one more line. */
+.bm-prose p { margin: 0 0 22px; }
+/* The admin's own h1/h2/h3 are gradient-clipped pale blue on dark water, and
+   they reach in here through the cascade — a heading in the editor came out
+   almost invisible on white paper. Reset the inherited treatment first, then
+   set the email's, so a heading looks like the heading that sends. */
+.bm-prose h1, .bm-prose h2, .bm-prose h3,
+.bm-prose h4, .bm-prose h5, .bm-prose h6 {
+  background: none;
+  -webkit-background-clip: border-box;
+  background-clip: border-box;
+  color: var(--e-ink);
+  -webkit-text-fill-color: currentColor;
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 600;
+}
+.bm-prose h1 { font: 600 26px/1.25 var(--e-sans); letter-spacing: -0.02em; margin: 28px 0 12px; }
+.bm-prose h2 { font: 600 21px/1.3 var(--e-sans); letter-spacing: -0.01em; margin: 26px 0 10px; }
+.bm-prose h3 { font: 600 17px/1.35 var(--e-sans); margin: 22px 0 8px; }
+.bm-prose h4 { font: 600 15px/1.4 var(--e-sans); margin: 20px 0 8px; }
+.bm-prose h5 { font: 600 14px/1.4 var(--e-sans); margin: 18px 0 6px; color: var(--e-muted); }
+.bm-prose h6 { font: 600 13px/1.4 var(--e-sans); margin: 18px 0 6px; color: var(--e-muted); }
 .bm-prose h1:first-child, .bm-prose h2:first-child, .bm-prose h3:first-child { margin-top: 0; }
 .bm-prose a { color: var(--e-accent); text-decoration: underline; text-underline-offset: 2px; }
-.bm-prose ul, .bm-prose ol { padding-left: 26px; }
-.bm-prose li { margin: 0.2em 0; }
+.bm-prose ul, .bm-prose ol { margin: 0 0 22px; padding-left: 24px; }
+.bm-prose li { margin: 0 0 6px; }
 .bm-prose li p { margin: 0; }
 .bm-prose blockquote {
-  margin: 0; padding: 2px 0 2px 18px;
+  margin: 0 0 22px; padding: 2px 0 2px 18px;
   border-left: 3px solid var(--e-line); color: var(--e-muted); font-style: italic;
 }
-.bm-prose hr { border: 0; border-top: 1px solid var(--e-line); margin: 1.8em 0; }
-.bm-prose img { max-width: 100%; height: auto; border-radius: 8px; display: block; }
+.bm-prose hr { border: 0; border-top: 1px solid var(--e-line); margin: 28px 0; }
+.bm-prose img { max-width: 100%; height: auto; margin: 0 0 22px; border-radius: 8px; display: block; }
 .bm-prose img.ProseMirror-selectednode { outline: 2px solid var(--e-accent); outline-offset: 2px; }
 .bm-prose code {
   font: 13px var(--e-mono); background: var(--e-line-2);
   padding: 2px 5px; border-radius: 4px;
 }
 .bm-prose pre {
+  margin: 0 0 22px;
   background: #1c1f24; color: #e6e1d8; padding: 14px 16px; border-radius: 8px;
   font: 13px/1.6 var(--e-mono); overflow-x: auto;
 }
@@ -102,7 +124,7 @@
 .bm-prose pre .hljs-variable, .bm-prose pre .hljs-template-variable { color: #ffcb8b; }
 
 /* tables */
-.bm-prose table { border-collapse: collapse; width: 100%; margin: 0; overflow: hidden; }
+.bm-prose table { border-collapse: collapse; width: 100%; margin: 0 0 20px; overflow: hidden; }
 .bm-prose th, .bm-prose td { border: 1px solid var(--e-line); padding: 8px 11px; vertical-align: top; position: relative; }
 .bm-prose th { background: #f6f5f3; font-weight: 600; text-align: left; }
 .bm-prose .selectedCell::after {
@@ -114,7 +136,7 @@
 }
 
 /* task list */
-.bm-prose ul[data-type='taskList'] { list-style: none; padding-left: 2px; }
+.bm-prose ul[data-type='taskList'] { list-style: none; margin: 0 0 22px; padding-left: 2px; }
 .bm-prose ul[data-type='taskList'] li { display: flex; gap: 9px; align-items: flex-start; }
 .bm-prose ul[data-type='taskList'] li > label { margin-top: 3px; user-select: none; }
 .bm-prose ul[data-type='taskList'] li > div { flex: 1; }
@@ -131,7 +153,7 @@
 .bm-prose [data-type='detailsSummary'] { font-weight: 600; }
 
 /* ── CTA button node */
-.bm-button-wrap { display: flex; margin: 6px 0; align-items: center; gap: 10px; }
+.bm-button-wrap { display: flex; margin: 4px 0 22px; align-items: center; gap: 10px; }
 .bm-button-wrap[data-align='center'] { justify-content: center; }
 .bm-button {
   display: inline-block; padding: 12px 24px; border-radius: 8px;
@@ -314,4 +336,177 @@
   background: rgba(255, 255, 255, 0.08);
   border-color: transparent;
   color: var(--e-ui-ink);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Inside the composer frame: the paper is the email.
+
+   Every number below is copied from `shell()` in src/core/render.ts — the 640px
+   sheet, the #f6f5f3 field it sits on, the 36/40 padding, the border, the
+   radius, the footer's rule and grey. Writing here is writing inside the
+   envelope: what you see is the geometry the reader gets. If the mail template
+   changes, these change with it.
+   ───────────────────────────────────────────────────────────────────────── */
+/* `1 0 auto`, not `1`: it fills the frame when the draft is short, and grows
+   past it when the draft is long. With `flex:1` (shrink allowed) the field
+   stopped at one screen and the sheet scrolled out over the dark water below
+   it — the mail bleeding off its own background. */
+.compose-main .bm-editor-host {
+  flex: 1 0 auto;
+  max-width: none;
+  display: flex;
+  flex-direction: column;
+  border-radius: 0;
+  box-shadow: none;
+  background: #f6f5f3;
+}
+.compose-main .bm-toolbar {
+  position: sticky;
+  top: 0;
+  border-radius: 0;
+  padding: 8px clamp(14px, 3vw, 28px);
+}
+/* Sheet and field are both pinned to the bottom of the frame: the writing area
+   grows to take up whatever is left, so the paper always reaches the save bar
+   and there is never a band of bare background under a short draft. The auto
+   side margins that centre the sheet opt it out of the column's stretch, hence
+   the explicit width. */
+.compose-main .bm-editor {
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+  padding: 32px 16px 0;
+}
+.compose-main .bm-prose {
+  flex: 1 0 auto;
+  width: 100%;
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 36px 40px;
+  min-height: 220px;
+  background: #fff;
+  border: 1px solid #e6e3de;
+  border-bottom: 0;
+  border-radius: 10px 10px 0 0;
+}
+
+/* The consent footer, as sent. Shown, never edited. */
+.bm-mailfoot {
+  /* An explicit width because the auto side margins that centre it also opt it
+     out of the column flex container's stretch. The 32px matches the field's
+     side padding, so it lines up with the sheet above it at every width. */
+  width: calc(100% - 32px);
+  max-width: 640px;
+  /* Flush with the bottom of the frame — the sheet runs under the save bar
+     rather than stopping short of it. */
+  margin: 0 auto;
+  padding: 20px 40px 32px;
+  background: #fff;
+  border: 1px solid #e6e3de;
+  border-top: 1px solid #eeebe6;
+  border-bottom: 0;
+  border-radius: 0;
+  font: 13px/1.6 var(--e-sans);
+  color: #8b9199;
+  pointer-events: none;
+  user-select: none;
+}
+.bm-mailfoot a { color: #5b6470; text-decoration: underline; }
+
+/* The count moved to the footer, so it no longer needs to push itself to the
+   right-hand end of a toolbar. */
+.compose-foot .bm-count {
+  margin-left: 0;
+  padding: 0;
+  font-family: var(--e-ui);
+  color: var(--e-ui-faint);
+}
+
+@media (max-width: 980px) {
+  /* The page scrolls now, not the column — so the paper needs a floor of its
+     own. The toolbar keeps the top edge; the title bar above it scrolls away. */
+  .compose-main .bm-editor { padding: 18px 0 0; }
+  .compose-main .bm-prose { min-height: 52vh; padding: 26px 22px; border-radius: 0; border-left: 0; border-right: 0; }
+  .bm-mailfoot { width: 100%; margin: 0; padding: 18px 22px 26px; border-radius: 0; border-left: 0; border-right: 0; }
+}
+
+/* ── reading a sent mail
+   Not a preview of the document — the document, mounted non-editable. The sheet
+   is the composer's sheet at the composer's width, so the line breaks land in
+   the same places they did while it was being written. */
+.bm-reader { padding: 4px 0 0; }
+.bm-reader-host {
+  display: block;
+  width: 100%;
+  max-width: 640px;
+  margin: 0 auto;
+  background: var(--e-paper);
+  border: 1px solid #e6e3de;
+  border-bottom: 0;
+  border-radius: 10px 10px 0 0;
+}
+/* No floor and no trailing gutter: nothing is going to be typed after the last
+   paragraph, so the paper stops where the words do. */
+.bm-reader-host .bm-prose { min-height: 0; padding: 36px 40px 14px; }
+.bm-reader-host .bm-prose > :last-child { margin-bottom: 0; }
+/* The footer closes the sheet here rather than running under a save bar. */
+.bm-reader .bm-mailfoot {
+  width: 100%;
+  max-width: 640px;
+  border-bottom: 1px solid #e6e3de;
+  border-radius: 0 0 10px 10px;
+}
+
+@media (max-width: 980px) {
+  .bm-reader-host { border-radius: 0; border-left: 0; border-right: 0; }
+  .bm-reader-host .bm-prose { padding: 26px 22px 12px; }
+  .bm-reader .bm-mailfoot { border-radius: 0; border-left: 0; border-right: 0; }
+}
+
+/* ── the preview dialog
+   The one place the composer stops and waits for an answer, because the button
+   behind it puts real mail on the wire. Same deep-water furniture as the slash
+   menu: no frame, heavy shadow, floating over the work. */
+.bm-modal {
+  width: min(420px, calc(100vw - 32px));
+  padding: 0;
+  border: 0;
+  border-radius: 16px;
+  background: rgba(10, 24, 52, 0.97);
+  color: var(--e-ui-ink);
+  box-shadow: 0 40px 90px -30px rgba(0, 0, 0, 0.95);
+}
+.bm-modal::backdrop {
+  background: rgba(3, 6, 15, 0.62);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+}
+.bm-modal-in { padding: 26px 28px 22px; font-family: var(--e-ui); }
+.bm-modal h2 {
+  margin: 0 0 10px;
+  font: 600 17px/1.3 var(--e-ui);
+  letter-spacing: -0.02em;
+  color: #fff;
+}
+.bm-modal p { margin: 0; font: 14px/1.6 var(--e-ui); color: var(--e-ui-muted); }
+.bm-modal.bad h2 { color: #ffc4cd; }
+.bm-modal-foot { display: flex; justify-content: flex-end; margin-top: 22px; }
+.bm-modal-foot [hidden] { display: none; }
+
+/* While the send is out: a bar that moves, so a slow provider doesn't read as
+   a dead page. Transform only — no layout thrash behind the dialog. */
+.bm-modal.busy .bm-modal-in::after {
+  content: '';
+  display: block;
+  height: 2px;
+  margin-top: 22px;
+  border-radius: 2px;
+  background: var(--e-beam);
+  transform-origin: left;
+  animation: bm-wait 1.1s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+@keyframes bm-wait {
+  0% { transform: scaleX(0.05); opacity: 0.5; }
+  50% { transform: scaleX(1); opacity: 1; }
+  100% { transform: scaleX(0.05); opacity: 0.5; }
 }

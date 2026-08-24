@@ -102,6 +102,18 @@ export function previewHtml(json: DocNode | null | undefined, md: string): strin
   return marked.parse(md, { async: false }) as string
 }
 
+/** What a broadcast calls itself in the consent footer. */
+export const BROADCAST_SCOPE_LABEL = 'the newsletter'
+
+/**
+ * The consent footer exactly as the reader will get it, for the composer's
+ * paper preview. Same function the wire uses — one copy of this wording, ever —
+ * with an inert link, because a draft has no message to unsubscribe from yet.
+ */
+export function footerPreviewHtml(scope: Scope, scopeLabel: string): string {
+  return footerHtml({ scope, scopeLabel } as RenderContext, '#')
+}
+
 /** Shared by the markdown path and the rich-document `mergeTag` node. */
 export function mergeFieldValue(field: string, sub: { email: string; name: string | null }): string {
   const first = (sub.name ?? '').trim().split(/\s+/)[0] ?? ''

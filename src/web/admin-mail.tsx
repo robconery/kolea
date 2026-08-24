@@ -14,7 +14,8 @@ import {
   tickSequences,
   updateStep,
 } from '../core/sequences.ts'
-import { previewHtml } from '../core/render.ts'
+import { BROADCAST_SCOPE_LABEL, footerPreviewHtml, previewHtml } from '../core/render.ts'
+import { type PreviewTarget, previewAddress, sendPreview } from '../core/sending.ts'
 import { type Db, getDb } from '../db/index.ts'
 import type { Broadcast, DocNode, Segment, SegmentRule, Tag } from '../db/schema.ts'
 import {
@@ -28,8 +29,11 @@ import {
 import type { Env } from '../types.ts'
 import {
   CampaignPicker,
+  ComposeLayout,
+  EditorHint,
   Flash,
   Layout,
+  MailReader,
   RichEditor,
   fmtDate,
   readCampaignId,
@@ -123,6 +127,9 @@ const AudiencePicker = ({
   </div>
 )
 
+/** Every broadcast carries the same consent footer, so it is computed once. */
+const broadcastFooter = footerPreviewHtml({ kind: 'broadcast' }, BROADCAST_SCOPE_LABEL)
+
 // ───────────────────────────────────────────────── broadcasts
 
 mail.get('/broadcasts', async (c) => {
@@ -192,27 +199,86 @@ mail.get('/broadcasts/new', async (c) => {
   const allCampaigns = await listCampaigns(db)
 
   return c.html(
-    <Layout title="New broadcast" nav="bc" editor>
-      <div class="head">
-        <h1>New broadcast</h1>
-      </div>
-      <div class="card">
-        <div class="card-b">
-          <form method="post" action="/broadcasts">
-            <div class="field">
-              <label>Subject</label>
-              <input type="text" name="subject" required />
-            </div>
-            <RichEditor />
+    <ComposeLayout
+      title="New broadcast"
+      nav="bc"
+      action="/broadcasts"
+      autosave="/broadcasts/autosave"
+      preview="/broadcasts/preview"
+      back="/broadcasts"
+      backLabel="Back to broadcasts"
+      heading="New broadcast"
+      sub={<>{statusPill('draft')} nothing is sent until you say so</>}
+      actions={<button class="btn primary">Save draft</button>}
+      side={
+        <>
+          <div class="side-sec">
             <AudiencePicker choices={choices} value="" />
-            <CampaignPicker all={allCampaigns} value={null} />
-            <button class="btn primary">Save draft</button>
-          </form>
-        </div>
-      </div>
-    </Layout>,
+          </div>
+          {allCampaigns.length > 0 ? (
+            <div class="side-sec">
+              <CampaignPicker all={allCampaigns} value={null} />
+            </div>
+          ) : null}
+          <div class="side-sec">
+            <h3>Writing</h3>
+            <EditorHint />
+          </div>
+        </>
+      }
+      foot={
+        <>
+          <PreviewButton to={previewAddress(c.env)} />
+          <button class="btn primary">Save draft</button>
+        </>
+      }
+    >
+      <Subject />
+      <RichEditor bare footer={broadcastFooter} />
+    </ComposeLayout>,
   )
 })
+
+/**
+ * The result of the last save or preview, alongside the Save button — Kit's
+ * "Saved" tell. A refusal ("not a subscriber") has to look different from a
+ * confirmation, or a preview that never left reads as one that did.
+ */
+const FootNote = ({ msg, kind }: { msg?: string; kind?: string }) =>
+  msg ? <span class={kind === 'warn' ? 'foot-warn' : 'faint'}>{msg}</span> : null
+
+/**
+ * Save the draft, then mail one copy to the operator's own address.
+ *
+ * A submit button inside the composer's form, not a link and not a second form:
+ * that is what makes the preview show the words currently on screen. The address
+ * is printed next to it because "where did that go?" should never be a question
+ * about something that puts mail on the wire.
+ */
+const PreviewButton = ({ to }: { to: string }) => (
+  <button class="btn" name="preview" value="1" data-to={to} title={`Sends one copy to ${to}`}>
+    Send a preview
+  </button>
+)
+
+/** The one field that sets like a headline, because it reads like one. */
+const Subject = ({ value }: { value?: string }) => (
+  <div class="compose-subject">
+    <label class="hide-vis" for="subject">
+      Subject
+    </label>
+    <input
+      class="subj"
+      id="subject"
+      type="text"
+      name="subject"
+      value={value ?? ''}
+      placeholder="Subject line"
+      autocomplete="off"
+      required
+    />
+  </div>
+)
 
 /**
  * Read a body from a form: rich document if the editor posted one, markdown
@@ -230,6 +296,26 @@ function readBody(form: FormData): { bodyJson: DocNode | null; bodyMd: string } 
   }
 }
 
+/**
+ * Did the operator press "Send a preview" rather than "Save"?
+ *
+ * The preview button is a submit inside the composer's own form, so the draft
+ * is written first and the copy that lands is the one on screen — not whatever
+ * was saved last time. A button's value only rides along when it is the button
+ * that was clicked.
+ */
+function wantsPreview(form: FormData): boolean {
+  return String(form.get('preview') ?? '') === '1'
+}
+
+/** Sends the preview and turns the outcome into a redirect query string. */
+async function previewFlash(env: Env, db: Db, target: PreviewTarget): Promise<string> {
+  const result = await sendPreview(env, db, target, previewAddress(env))
+  return result.ok
+    ? `?flash=${encodeURIComponent(`Preview sent to ${result.to}.`)}`
+    : `?flash=${encodeURIComponent(`No preview sent. ${result.reason}`)}&kind=warn`
+}
+
 /** "immediately" / "+1 day" / "+3 days" */
 function formatDelay(days: number): string {
   if (days === 0) return 'immediately'
@@ -245,14 +331,91 @@ mail.post('/broadcasts', async (c) => {
     segmentId: null,
   })
 
+  const subject = String(form.get('subject') ?? 'Untitled')
   const id = await createBroadcast(db, {
-    subject: String(form.get('subject') ?? 'Untitled'),
+    subject,
     ...readBody(form),
     ...audience,
     campaignId: readCampaignId(form),
   })
 
-  return c.redirect(`/broadcasts/${id}`)
+  const q = wantsPreview(form)
+    ? await previewFlash(c.env, db, { kind: 'broadcast', broadcastId: id, subject })
+    : ''
+  return c.redirect(`/broadcasts/${id}${q}`)
+})
+
+/**
+ * ⭐ The timed save. Writes a draft and nothing else.
+ *
+ * It creates the row on the first call for a new broadcast, updates it after
+ * that, and refuses outright the moment a broadcast leaves `draft` — a send in
+ * flight must never have its audience or body moved under it. It cannot send,
+ * schedule or cancel: the only verb here is "write down what is on screen".
+ */
+mail.post('/broadcasts/autosave', async (c) => {
+  const db = getDb(c.env)
+  const form = await c.req.formData()
+  const { segs } = await audienceChoices(db)
+  const subject = String(form.get('subject') ?? '')
+  const rawId = String(form.get('id') ?? '').trim()
+
+  if (!rawId) {
+    const audience = resolveAudience(String(form.get('audience') ?? ''), segs, {
+      segment: {},
+      segmentId: null,
+    })
+    const id = await createBroadcast(db, {
+      subject: subject || 'Untitled',
+      ...readBody(form),
+      ...audience,
+      campaignId: readCampaignId(form),
+    })
+    return c.json({ ok: true, id, url: `/broadcasts/${id}`, action: `/broadcasts/${id}/edit` })
+  }
+
+  const id = Number(rawId)
+  const b = await db.select().from(broadcasts).where(eq(broadcasts.id, id)).get()
+  if (!b) return c.json({ ok: false, reason: 'that broadcast is gone' }, 404)
+  if (b.status !== 'draft') return c.json({ ok: false, reason: 'only drafts can be edited' }, 409)
+
+  const audience = resolveAudience(String(form.get('audience') ?? ''), segs, {
+    segment: b.segment ?? {},
+    segmentId: b.segmentId,
+  })
+  await db
+    .update(broadcasts)
+    .set({
+      subject,
+      ...readBody(form),
+      ...audience,
+      campaignId: readCampaignId(form),
+    })
+    .where(eq(broadcasts.id, id))
+
+  return c.json({ ok: true, id, url: `/broadcasts/${id}`, action: `/broadcasts/${id}/edit` })
+})
+
+/** One copy to the operator's own address, answered in JSON for the dialog. */
+mail.post('/broadcasts/preview', async (c) => {
+  const db = getDb(c.env)
+  const form = await c.req.formData()
+  const b = await db
+    .select()
+    .from(broadcasts)
+    .where(eq(broadcasts.id, Number(form.get('id'))))
+    .get()
+  if (!b) return c.json({ ok: false, reason: 'that broadcast is gone' }, 404)
+
+  const result = await sendPreview(
+    c.env,
+    db,
+    { kind: 'broadcast', broadcastId: b.id, subject: b.subject },
+    previewAddress(c.env),
+  )
+  return result.ok
+    ? c.json({ ok: true, to: result.to })
+    : c.json({ ok: false, reason: result.reason }, 422)
 })
 
 mail.get('/broadcasts/:id', async (c) => {
@@ -269,8 +432,80 @@ mail.get('/broadcasts/:id', async (c) => {
   const segName = choices.segs.find((s) => s.id === b.segmentId)?.name
   const campaign = allCampaigns.find((x) => x.id === b.campaignId)
 
+  // A draft is a thing you write, so it opens in the composer. Anything past
+  // draft is a thing that happened, so it stays a report — numbers, and the
+  // mail exactly as it went out.
+  if (editable) {
+    return c.html(
+      <ComposeLayout
+        title={b.subject}
+        nav="bc"
+        action={`/broadcasts/${id}/edit`}
+        autosave="/broadcasts/autosave"
+        preview="/broadcasts/preview"
+        recordId={id}
+        back="/broadcasts"
+        backLabel="Back to broadcasts"
+        heading={b.subject || 'Untitled'}
+        sub={
+          <>
+            {statusPill(b.status)} {describeRule(b.segment ?? {}, choices.allTags)} · {audienceSize}{' '}
+            {audienceSize === 1 ? 'person' : 'people'}
+          </>
+        }
+        actions={
+          <>
+            <button class="btn accent" form="send-now">
+              Send now
+            </button>
+            <button class="btn primary">Save</button>
+          </>
+        }
+        side={
+          <>
+            <div class="side-sec">
+              <AudiencePicker choices={choices} value={currentChoice(b)} rule={b.segment ?? {}} />
+              {segName ? (
+                <p class="faint" style="margin:8px 0 0">
+                  Copied from segment <a href={`/segments/${b.segmentId}`}>{segName}</a>
+                </p>
+              ) : null}
+            </div>
+            {allCampaigns.length > 0 ? (
+              <div class="side-sec">
+                <CampaignPicker all={allCampaigns} value={b.campaignId} />
+                {campaign ? (
+                  <p class="faint" style="margin:8px 0 0">
+                    <a href={`/campaigns/${campaign.id}`}>Open {campaign.name} →</a>
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+            <div class="side-sec">
+              <h3>Writing</h3>
+              <EditorHint />
+            </div>
+          </>
+        }
+        foot={
+          <>
+            <FootNote msg={c.req.query('flash')} kind={c.req.query('kind')} />
+            <PreviewButton to={previewAddress(c.env)} />
+            <button class="btn primary">Save</button>
+          </>
+        }
+        // Sending posts somewhere else, so it is its own form reached by id —
+        // forms cannot nest.
+        extra={<form id="send-now" method="post" action={`/broadcasts/${id}/send`} hidden />}
+      >
+        <Subject value={b.subject} />
+        <RichEditor json={b.bodyJson} md={b.bodyMd} bare footer={broadcastFooter} />
+      </ComposeLayout>,
+    )
+  }
+
   return c.html(
-    <Layout title={b.subject} nav="bc" editor={editable}>
+    <Layout title={b.subject} nav="bc" editor>
       <div class="head">
         <div>
           <h1>{b.subject}</h1>
@@ -292,20 +527,12 @@ mail.get('/broadcasts/:id', async (c) => {
             ) : null}
           </div>
         </div>
-        <div class="actions">
-          {editable ? (
-            <form method="post" action={`/broadcasts/${id}/send`}>
-              <button class="btn accent">Send now</button>
-            </form>
-          ) : null}
-        </div>
       </div>
 
       <Flash msg={c.req.query('flash')} kind={c.req.query('kind')} />
 
-      {b.status !== 'draft' ? (
-        <div class="card">
-          <div class="card-b flush">
+      <div class="card">
+        <div class="card-b flush">
             <div class="stats">
               <div class="stat">
                 <div class="n">{stats.recipients}</div>
@@ -332,33 +559,20 @@ mail.get('/broadcasts/:id', async (c) => {
                 <div class="l">Failed</div>
               </div>
             </div>
-          </div>
         </div>
-      ) : null}
+      </div>
 
       <div class="card">
         <div class="card-h">
-          <h2>{editable ? 'Edit' : 'Content'}</h2>
+          <h2>Content</h2>
         </div>
         <div class="card-b">
-          {editable ? (
-            <form method="post" action={`/broadcasts/${id}/edit`}>
-              <div class="field">
-                <label>Subject</label>
-                <input type="text" name="subject" value={b.subject} required />
-              </div>
-              <RichEditor json={b.bodyJson} md={b.bodyMd} />
-              <AudiencePicker choices={choices} value={currentChoice(b)} rule={b.segment ?? {}} />
-              <CampaignPicker all={allCampaigns} value={b.campaignId} />
-              <button class="btn primary">Save</button>
-            </form>
-          ) : (
-            <div
-              class="mailview"
-              style="padding:0"
-              dangerouslySetInnerHTML={{ __html: previewHtml(b.bodyJson, b.bodyMd) }}
-            />
-          )}
+          <MailReader
+            json={b.bodyJson}
+            md={b.bodyMd}
+            fallback={previewHtml(b.bodyJson, b.bodyMd)}
+            footer={broadcastFooter}
+          />
         </div>
       </div>
     </Layout>,
@@ -381,15 +595,22 @@ mail.post('/broadcasts/:id/edit', async (c) => {
     segmentId: b.segmentId,
   })
 
+  const subject = String(form.get('subject') ?? '')
   await db
     .update(broadcasts)
     .set({
-      subject: String(form.get('subject') ?? ''),
+      subject,
       ...readBody(form),
       ...audience,
       campaignId: readCampaignId(form),
     })
     .where(eq(broadcasts.id, id))
+
+  if (wantsPreview(form)) {
+    return c.redirect(
+      `/broadcasts/${id}${await previewFlash(c.env, db, { kind: 'broadcast', broadcastId: id, subject })}`,
+    )
+  }
   return c.redirect(`/broadcasts/${id}?flash=Saved.`)
 })
 
@@ -576,7 +797,7 @@ mail.get('/sequences/:id', async (c) => {
     .all()
 
   return c.html(
-    <Layout title={s.name} nav="seq" editor>
+    <Layout title={s.name} nav="seq">
       <div class="head">
         <div>
           <h1>{s.name}</h1>
@@ -619,11 +840,19 @@ mail.get('/sequences/:id', async (c) => {
       <div class="card">
         <div class="card-h">
           <h2>Steps</h2>
+          <div class="actions">
+            <a class="btn sm primary" href={`/sequences/${id}/steps/new`}>
+              Add a step
+            </a>
+          </div>
         </div>
         <div class="card-b flush">
           {steps.length === 0 ? (
             <div class="empty">
-              <p>No steps yet. Add the first one below.</p>
+              <p>No steps yet.</p>
+              <p>
+                <a href={`/sequences/${id}/steps/new`}>Write the first one →</a>
+              </p>
             </div>
           ) : (
             <table>
@@ -653,41 +882,6 @@ mail.get('/sequences/:id', async (c) => {
               </tbody>
             </table>
           )}
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="card-h">
-          <h2>Add a step</h2>
-        </div>
-        <div class="card-b">
-          <form method="post" action={`/sequences/${id}/steps`}>
-            <div class="row">
-              <div class="field">
-                <label>Subject</label>
-                <input type="text" name="subject" required />
-              </div>
-              <div class="field">
-                <label>Delay after previous step (days)</label>
-                {/* First step defaults to 0 — a welcome email should arrive on
-                    signup, not a day later. Everything after it defaults to 1. */}
-                <input
-                  type="number"
-                  name="delay"
-                  value={steps.length === 0 ? '0' : '1'}
-                  min="0"
-                  max="365"
-                />
-                <p class="faint" style="margin:6px 0 0">
-                  {steps.length === 0
-                    ? '0 = sent as soon as someone joins this sequence.'
-                    : '0 = sent immediately after the previous step.'}
-                </p>
-              </div>
-            </div>
-            <RichEditor />
-            <button class="btn primary">Add step</button>
-          </form>
         </div>
       </div>
 
@@ -742,14 +936,162 @@ mail.post('/sequences/:id/steps', async (c) => {
   // The delay default depends on the position, which `addStep` computes — so it
   // takes the raw field and normalizes once it knows where the step landed.
   const raw = form.get('delay')
-  await addStep(db, id, {
-    subject: String(form.get('subject') ?? ''),
+  const subject = String(form.get('subject') ?? '')
+  const added = await addStep(db, id, {
+    subject,
     ...readBody(form),
     ...(raw !== null && String(raw).trim() !== '' ? { delayDays: Number(raw) } : {}),
   })
 
+  // A preview keeps you on the step you just wrote — you are still working on it.
+  if (wantsPreview(form) && added.stepId) {
+    const q = await previewFlash(c.env, db, {
+      kind: 'sequence',
+      stepId: added.stepId,
+      sequenceId: id,
+      subject,
+    })
+    return c.redirect(`/sequences/${id}/steps/${added.stepId}${q}`)
+  }
+
   return c.redirect(`/sequences/${id}?flash=Step added.`)
 })
+
+/**
+ * ⭐ The timed save for a sequence step. Same contract as the broadcast one:
+ * creates on the first call, updates after that, writes nothing but the step.
+ *
+ * A step needs no draft check — a sequence step is never mid-flight the way a
+ * broadcast is, and editing one has never re-sent it to anyone who already got
+ * it. Whether the sequence is live is a separate, deliberate switch.
+ */
+mail.post('/sequences/:id/steps/autosave', async (c) => {
+  const db = getDb(c.env)
+  const id = Number(c.req.param('id'))
+  const form = await c.req.formData()
+  const subject = String(form.get('subject') ?? '')
+  const raw = form.get('delay')
+  const delay = raw !== null && String(raw).trim() !== '' ? { delayDays: Number(raw) } : {}
+  const rawId = String(form.get('id') ?? '').trim()
+
+  if (!rawId) {
+    const added = await addStep(db, id, { subject, ...readBody(form), ...delay })
+    if (!added.ok || !added.stepId) {
+      return c.json({ ok: false, reason: added.reason ?? 'could not add the step' }, 422)
+    }
+    return c.json({
+      ok: true,
+      id: added.stepId,
+      url: `/sequences/${id}/steps/${added.stepId}`,
+      action: `/sequences/${id}/steps/${added.stepId}`,
+    })
+  }
+
+  const stepId = Number(rawId)
+  const result = await updateStep(db, stepId, { subject, ...readBody(form), ...delay })
+  if (!result.ok) return c.json({ ok: false, reason: 'that step is gone' }, 404)
+
+  return c.json({
+    ok: true,
+    id: stepId,
+    url: `/sequences/${id}/steps/${stepId}`,
+    action: `/sequences/${id}/steps/${stepId}`,
+  })
+})
+
+/** One copy of a step to the operator's own address, answered for the dialog. */
+mail.post('/sequences/:id/steps/preview', async (c) => {
+  const db = getDb(c.env)
+  const id = Number(c.req.param('id'))
+  const form = await c.req.formData()
+  const stepId = Number(form.get('id'))
+
+  const step = await db.select().from(sequenceSteps).where(eq(sequenceSteps.id, stepId)).get()
+  if (!step || step.sequenceId !== id) return c.json({ ok: false, reason: 'that step is gone' }, 404)
+
+  const result = await sendPreview(
+    c.env,
+    db,
+    { kind: 'sequence', stepId, sequenceId: id, subject: step.subject },
+    previewAddress(c.env),
+  )
+  return result.ok
+    ? c.json({ ok: true, to: result.to })
+    : c.json({ ok: false, reason: result.reason }, 422)
+})
+
+/**
+ * Writing a new step gets the same full-screen composer a broadcast does.
+ * Registered ahead of `/:stepId` so "new" isn't read as an id.
+ */
+mail.get('/sequences/:id/steps/new', async (c) => {
+  const db = getDb(c.env)
+  const id = Number(c.req.param('id'))
+  const seq = await db.select().from(sequences).where(eq(sequences.id, id)).get()
+  if (!seq) return c.notFound()
+
+  const count = await db
+    .select({ id: sequenceSteps.id })
+    .from(sequenceSteps)
+    .where(eq(sequenceSteps.sequenceId, id))
+    .all()
+  const first = count.length === 0
+
+  return c.html(
+    <ComposeLayout
+      title={`New step · ${seq.name}`}
+      nav="seq"
+      action={`/sequences/${id}/steps`}
+      autosave={`/sequences/${id}/steps/autosave`}
+      preview={`/sequences/${id}/steps/preview`}
+      back={`/sequences/${id}`}
+      backLabel="Back to sequence"
+      heading={`Step ${count.length + 1} · ${seq.name}`}
+      sub={
+        <>
+          {seq.isActive ? statusPill('active') : statusPill('draft')} nothing goes out until you
+          save
+        </>
+      }
+      actions={<button class="btn primary">Add step</button>}
+      side={
+        <>
+          <div class="side-sec">
+            <StepDelay value={first ? '0' : '1'} first={first} />
+          </div>
+          <div class="side-sec">
+            <h3>Writing</h3>
+            <EditorHint />
+          </div>
+        </>
+      }
+      foot={
+        <>
+          <PreviewButton to={previewAddress(c.env)} />
+          <button class="btn primary">Add step</button>
+        </>
+      }
+    >
+      <Subject />
+      <RichEditor bare footer={footerPreviewHtml({ kind: 'sequence', sequenceId: id }, seq.name)} />
+    </ComposeLayout>,
+  )
+})
+
+/** How long after the previous step this one waits. */
+const StepDelay = ({ value, first }: { value: string; first: boolean }) => (
+  <div class="field">
+    <label>Delay after previous step (days)</label>
+    {/* The first step defaults to 0 — a welcome email should arrive on signup,
+        not a day later. Everything after it defaults to 1. */}
+    <input type="number" name="delay" value={value} min="0" max="365" />
+    <p class="faint" style="margin:8px 0 0">
+      {first
+        ? '0 = sent as soon as someone joins this sequence.'
+        : '0 = sent immediately after the previous step.'}
+    </p>
+  </div>
+)
 
 mail.get('/sequences/:id/steps/:stepId', async (c) => {
   const db = getDb(c.env)
@@ -761,63 +1103,57 @@ mail.get('/sequences/:id/steps/:stepId', async (c) => {
   const seq = await db.select().from(sequences).where(eq(sequences.id, id)).get()
 
   return c.html(
-    <Layout title={`Step ${step.position}`} nav="seq" editor>
-      <div class="head">
-        <div>
-          <h1>
-            Step {step.position} · {seq?.name}
-          </h1>
-          <div class="sub">
-            Editing a step never re-sends it to anyone who already received it.
+    <ComposeLayout
+      title={`Step ${step.position} · ${seq?.name ?? 'Sequence'}`}
+      nav="seq"
+      action={`/sequences/${id}/steps/${stepId}`}
+      autosave={`/sequences/${id}/steps/autosave`}
+      preview={`/sequences/${id}/steps/preview`}
+      recordId={stepId}
+      back={`/sequences/${id}`}
+      backLabel="Back to sequence"
+      heading={`Step ${step.position} · ${seq?.name ?? ''}`}
+      sub={<>Editing never re-sends this to anyone who already received it.</>}
+      actions={<button class="btn primary">Save step</button>}
+      side={
+        <>
+          <div class="side-sec">
+            <StepDelay value={String(step.delayDays)} first={step.position === 1} />
           </div>
-        </div>
-        <div class="actions">
-          <a class="btn" href={`/sequences/${id}`}>
-            Back to sequence
-          </a>
-        </div>
-      </div>
-
-      <Flash msg={c.req.query('flash')} />
-
-      <div class="card">
-        <div class="card-b">
-          <form method="post" action={`/sequences/${id}/steps/${stepId}`}>
-            <div class="row">
-              <div class="field">
-                <label>Subject</label>
-                <input type="text" name="subject" value={step.subject} required />
-              </div>
-              <div class="field">
-                <label>Delay after previous step (days)</label>
-                <input type="number" name="delay" value={String(step.delayDays)} min="0" max="365" />
-                <p class="faint" style="margin:6px 0 0">
-                  {step.position === 1
-                    ? '0 = sent as soon as someone joins this sequence.'
-                    : '0 = sent immediately after the previous step.'}
-                </p>
-              </div>
-            </div>
-            <RichEditor json={step.bodyJson} md={step.bodyMd} />
-            <button class="btn primary">Save step</button>
-          </form>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="card-h">
-          <h2>Danger zone</h2>
-        </div>
-        <div class="card-b">
-          <form method="post" action={`/sequences/${id}/steps/${stepId}/delete`}>
-            <button class="btn danger">Delete this step</button>
-            <span class="faint" style="margin-left:10px">
+          <div class="side-sec">
+            <h3>Writing</h3>
+            <EditorHint />
+          </div>
+          <div class="side-sec">
+            <h3>Danger zone</h3>
+            <button class="btn danger" form="delete-step">
+              Delete this step
+            </button>
+            <p class="faint" style="margin:10px 0 0">
               Enrollments pointing at it advance to the next step.
-            </span>
-          </form>
-        </div>
-      </div>
-    </Layout>,
+            </p>
+          </div>
+        </>
+      }
+      foot={
+        <>
+          <FootNote msg={c.req.query('flash')} kind={c.req.query('kind')} />
+          <PreviewButton to={previewAddress(c.env)} />
+          <button class="btn primary">Save step</button>
+        </>
+      }
+      extra={
+        <form id="delete-step" method="post" action={`/sequences/${id}/steps/${stepId}/delete`} hidden />
+      }
+    >
+      <Subject value={step.subject} />
+      <RichEditor
+        json={step.bodyJson}
+        md={step.bodyMd}
+        bare
+        footer={footerPreviewHtml({ kind: 'sequence', sequenceId: id }, seq?.name ?? '')}
+      />
+    </ComposeLayout>,
   )
 })
 
@@ -830,12 +1166,23 @@ mail.post('/sequences/:id/steps/:stepId', async (c) => {
   // `updateStep` reads the stored position to pick the fallback delay when the
   // field arrives empty, so an empty field is simply not sent.
   const raw = form.get('delay')
+  const subject = String(form.get('subject') ?? '')
   const result = await updateStep(db, stepId, {
-    subject: String(form.get('subject') ?? ''),
+    subject,
     ...readBody(form),
     ...(raw !== null && String(raw).trim() !== '' ? { delayDays: Number(raw) } : {}),
   })
   if (!result.ok) return c.notFound()
+
+  if (wantsPreview(form)) {
+    const q = await previewFlash(c.env, db, {
+      kind: 'sequence',
+      stepId,
+      sequenceId: id,
+      subject,
+    })
+    return c.redirect(`/sequences/${id}/steps/${stepId}${q}`)
+  }
 
   return c.redirect(`/sequences/${id}/steps/${stepId}?flash=Saved.`)
 })

@@ -741,8 +741,8 @@ export const syncRuns = sqliteTable(
   'sync_runs',
   {
     id: integer('id').primaryKey({ autoIncrement: true }),
-    kind: text('kind', { enum: ['stripe'] }).notNull(),
-    trigger: text('trigger', { enum: ['cron', 'mcp', 'preview'] }).notNull(),
+    kind: text('kind', { enum: ['stripe', 'stripe_catalog'] }).notNull(),
+    trigger: text('trigger', { enum: ['cron', 'mcp', 'preview', 'webhook'] }).notNull(),
     status: text('status', { enum: ['running', 'ok', 'partial', 'failed'] })
       .notNull()
       .default('running'),
@@ -823,3 +823,159 @@ export type Offer = typeof offers.$inferSelect
 export type OfferProduct = typeof offerProducts.$inferSelect
 export type Purchase = typeof purchases.$inferSelect
 export type PurchaseStats = typeof purchaseStats.$inferSelect
+
+// ──────────────────────────────────────────── stripe: events & catalog
+
+/**
+ * Every webhook Stripe has handed us, one row per event id.
+ *
+ * Two jobs, and both of them matter more than they look. Stripe delivers
+ * at-least-once and retries a failing endpoint for three days, so the primary
+ * key *is* the idempotency guard — a redelivered `evt_…` is recognised and
+ * dropped before it can touch money. And Workers logs are gone in a week, so
+ * this table is the only place a 3am webhook that failed to parse will still
+ * exist tomorrow (CLAUDE.md: anything observable is a row, not a log line).
+ *
+ * `status: 'ignored'` is a first-class outcome, not a failure — we subscribe to
+ * more event types than we act on, and a silently discarded event is
+ * indistinguishable from a lost one.
+ */
+export const stripeEvents = sqliteTable(
+  'stripe_events',
+  {
+    /** Stripe's `evt_…`. Natural key on purpose — this is the dedupe. */
+    id: text('id').primaryKey(),
+    type: text('type').notNull(),
+    status: text('status', { enum: ['received', 'processed', 'ignored', 'failed'] })
+      .notNull()
+      .default('received'),
+    /** What we did with it, in a sentence. Read by a human, not by code. */
+    note: text('note'),
+    /** The object the event carried, e.g. `ch_…` — makes tracing one order easy. */
+    objectId: text('object_id'),
+    /** nullable-fk: set once an event actually became money. */
+    saleId: integer('sale_id').references(() => sales.id, { onDelete: 'set null' }),
+    receivedAt: ts('received_at').notNull(),
+    processedAt: ts('processed_at'),
+  },
+  (t) => [
+    index('stripe_events_type_idx').on(t.type, t.receivedAt),
+    index('stripe_events_status_idx').on(t.status),
+    index('stripe_events_object_idx').on(t.objectId),
+  ],
+)
+
+/**
+ * A mirror of the Stripe product catalog.
+ *
+ * ⚠️ Deliberately NOT `offers`. That table mirrors Neon and is owned by the
+ * storefront import; pointing a second sync at it would give one table two
+ * owners and no way to tell which one was last right. These are Stripe's own
+ * products, keyed by Stripe's own ids, and the two catalogs are allowed to
+ * disagree — reconciling them is a question for a human, not a UNIQUE index.
+ *
+ * `metadata` is stored whole rather than picked apart into columns: it is where
+ * the download file locations live, the keys are Rob's to change in the Stripe
+ * dashboard, and a schema migration is a bad reason not to rename a metadata key.
+ */
+export const stripeProducts = sqliteTable(
+  'stripe_products',
+  {
+    /** Stripe's `prod_…`. */
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    description: text('description'),
+    active: integer('active', { mode: 'boolean' }).notNull().default(true),
+    /** `prod.default_price`, if one is set. Not an FK — Stripe may report a
+        price we have not synced yet, and a dangling reference is better than a
+        failed catalog sync. */
+    defaultPriceId: text('default_price_id'),
+    /** Stripe's product metadata, verbatim. Download URLs live in here. */
+    metadata: text('metadata', { mode: 'json' })
+      .notNull()
+      .$type<Record<string, string>>()
+      .default({}),
+    /** Stripe `updated` (epoch seconds), so a sync can skip untouched rows. */
+    stripeUpdated: integer('stripe_updated'),
+    syncedAt: ts('synced_at').notNull(),
+  },
+  (t) => [index('stripe_products_active_idx').on(t.active)],
+)
+
+/** Prices attached to a product. One product, many prices — one-off and recurring. */
+export const stripePrices = sqliteTable(
+  'stripe_prices',
+  {
+    /** Stripe's `price_…`. */
+    id: text('id').primaryKey(),
+    productId: text('product_id')
+      .notNull()
+      .references(() => stripeProducts.id, { onDelete: 'cascade' }),
+    nickname: text('nickname'),
+    /** Null for tiered or metered prices, which have no single amount. */
+    unitAmount: integer('unit_amount'),
+    currency: text('currency').notNull().default('usd'),
+    /** 'one_time', or the billing interval for a recurring price. */
+    interval: text('interval', { enum: ['one_time', 'day', 'week', 'month', 'year'] })
+      .notNull()
+      .default('one_time'),
+    intervalCount: integer('interval_count').notNull().default(1),
+    active: integer('active', { mode: 'boolean' }).notNull().default(true),
+    metadata: text('metadata', { mode: 'json' })
+      .notNull()
+      .$type<Record<string, string>>()
+      .default({}),
+    syncedAt: ts('synced_at').notNull(),
+  },
+  (t) => [
+    index('stripe_prices_product_idx').on(t.productId),
+    index('stripe_prices_active_idx').on(t.active),
+  ],
+)
+
+/**
+ * What was actually in an order.
+ *
+ * `sales` records that money moved; this records what it moved *for*. Split out
+ * rather than widening `sales` because one charge can carry several products —
+ * a bundle, or a subscription invoice with a proration line — and "which
+ * products does this person own" is the question the thank-you mail needs
+ * answered.
+ *
+ * The product id is a plain column, not an FK: a line item can name a product
+ * the catalog sync has not reached yet, and a webhook that fails because the
+ * catalog is stale would be a webhook that loses an order.
+ */
+export const saleItems = sqliteTable(
+  'sale_items',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    saleId: integer('sale_id')
+      .notNull()
+      .references(() => sales.id, { onDelete: 'cascade' }),
+    /** Stripe `prod_…`, when the line item resolved to one. */
+    stripeProductId: text('stripe_product_id'),
+    /** Stripe `price_…`, when the line item resolved to one. */
+    stripePriceId: text('stripe_price_id'),
+    /** Whatever Stripe called it at the time. Frozen — renaming the product in
+        Stripe must not rewrite what last year's receipt said. */
+    description: text('description').notNull(),
+    quantity: integer('quantity').notNull().default(1),
+    amountCents: integer('amount_cents').notNull().default(0),
+    createdAt: ts('created_at').notNull(),
+  },
+  (t) => [
+    // One line per price per sale. Makes re-processing a redelivered checkout
+    // session idempotent without having to diff the whole basket.
+    uniqueIndex('sale_items_sale_price_key')
+      .on(t.saleId, t.stripePriceId)
+      .where(sql`stripe_price_id is not null`),
+    index('sale_items_sale_idx').on(t.saleId),
+    index('sale_items_product_idx').on(t.stripeProductId),
+  ],
+)
+
+export type StripeEvent = typeof stripeEvents.$inferSelect
+export type StripeProduct = typeof stripeProducts.$inferSelect
+export type StripePrice = typeof stripePrices.$inferSelect
+export type SaleItem = typeof saleItems.$inferSelect

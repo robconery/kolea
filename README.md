@@ -1,19 +1,43 @@
-# big-mailer 📬
+<div align="center">
+
+<img src="public/logo.png" alt="Kōlea" width="180">
+
+# Kōlea
 
 **Broadcasts, drip sequences, and transactional email in one Cloudflare Worker.**
-A self-hosted replacement for a paid ESP, where the list, the sending, and the
-engagement data stay yours.
 
-[![CI](https://github.com/robconery/big-mailer/actions/workflows/ci.yml/badge.svg)](https://github.com/robconery/big-mailer/actions/workflows/ci.yml)
+*A self-hosted replacement for a paid ESP, where the list, the sending,*
+*and the engagement data stay yours.*
+
+[![CI](https://github.com/robconery/kolea/actions/workflows/ci.yml/badge.svg)](https://github.com/robconery/kolea/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6.svg)](tsconfig.json)
 [![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers%20%C2%B7%20D1%20%C2%B7%20Queues%20%C2%B7%20R2-F38020.svg)](https://workers.cloudflare.com/)
 
-> **Status:** feature-complete and runnable locally, not yet deployed. It is built for a
-> **single operator** and is not multi-tenant, by design rather than by omission.
-> See [Before deploying](#before-deploying) for the honest list of what's left.
+[Install](docs/INSTALL.md) · [Architecture](docs/ARCHITECTURE.md) · [Spec](docs/SPEC.md) · [Contributing](CONTRIBUTING.md)
 
-![The big-mailer dashboard, showing consent broken out by scope](docs/screenshot.jpg)
+</div>
+
+---
+
+## 🐦 Why Kōlea
+
+The **kōlea** *(koh-LEH-ah)* — the Pacific golden plover — flies from Alaska to
+Hawaiʻi every autumn. Three thousand miles of open ocean, nonstop, no land to
+rest on. Then it lands in the same yard it left, and does it again the next year,
+and the year after that.
+
+Delivery, and the same address, every time. There isn't a better name for a
+mailer.
+
+---
+
+> **Status:** feature-complete and runnable locally, and built for a **single
+> operator** — not multi-tenant, by design rather than by omission.
+> [`docs/INSTALL.md`](docs/INSTALL.md) is the honest list of what stands between
+> a clone and a live send.
+
+![The Kōlea dashboard, showing consent broken out by scope](docs/screenshot.jpg)
 
 <sub>The dashboard after seeding demo data. **Consent, by scope** is the panel that
 matters: two people left an individual series and are still on the list. On a normal
@@ -21,38 +45,57 @@ ESP those two numbers are the same number.</sub>
 
 ---
 
-## The idea 💡
+## 💡 The idea
 
-Every ESP treats unsubscribe as one switch. Someone finishes your onboarding series,
-clicks "unsubscribe" to stop *that*, and quietly leaves your newsletter forever. You
-never find out. The number just goes down.
+Every ESP treats unsubscribe as one switch. Someone finishes your onboarding
+series, clicks "unsubscribe" to stop *that*, and quietly leaves your newsletter
+forever. You never find out. The number just goes down.
 
-**Here, consent is scoped.** Leaving one sequence takes you off that sequence. Leaving
-the newsletter doesn't cancel a series you deliberately opted into. Only an explicit
-"unsubscribe from everything", a hard bounce, or a spam complaint removes someone
-outright.
+**Here, consent is scoped.** Leaving one sequence takes you off that sequence.
+Leaving the newsletter doesn't cancel a series you deliberately opted into. Only
+an explicit "unsubscribe from everything", a hard bounce, or a spam complaint
+removes someone outright.
 
 That asymmetry is the reason this exists, and everything else in the codebase is
 arranged so it can't be broken by accident.
 
 ---
 
-## Run it 🚀
+## 🚀 Install
+
+Three commands, and it mails nobody.
 
 ```bash
+git clone https://github.com/robconery/kolea.git
+cd kolea
 bun install
 bun run db:migrate     # applies migrations to the local D1 database
-bun run dev            # http://localhost:8787
+bun run dev            # → http://localhost:8787
 ```
 
 Open <http://localhost:8787> and click **Seed demo data**: twelve people, two live
 series, a sent broadcast. Then open the **Outbox** to read the mail that "went out."
 
-Nothing leaves your machine. `EMAIL_PROVIDER=console` is the local default and writes
-fully rendered mail to the in-app Outbox instead of sending it. No API key needed, and
-no way to accidentally mail a real person while you poke at it.
+> ### 🔒 Nothing leaves your machine
+>
+> `EMAIL_PROVIDER=console` is the local default. It writes fully rendered mail —
+> footer, merge tags, tracking links and all — to the in-app Outbox instead of
+> sending it. No API key needed, and no way to accidentally mail a real person
+> while you poke at it.
 
-## Try the thing it's for 🎯
+**You need:** [Bun](https://bun.sh) 1.1+. That's the whole list for local. No
+database to install, no Redis, no server — `wrangler dev` emulates D1, R2 and
+Queues locally.
+
+**Going live?** → **[`docs/INSTALL.md`](docs/INSTALL.md)** walks the full
+deploy: D1, R2, queues, DNS and DMARC, the Cloudflare Access apps, secrets, and
+a pre-flight checklist to work through *before* you trust it with a list. It
+takes about an hour, most of it waiting for DNS, and there are two steps that
+are painful to undo.
+
+---
+
+## 🎯 Try the thing it's for
 
 1. **Subscribers** → pick someone → **Open their preference center**
 2. Add `?scope=sequence:2` to that URL. This is what a link inside a sequence email
@@ -73,28 +116,29 @@ who left that series.
 
 ---
 
-## What's in here 🗂
+## 🗂 What's in here
 
 ```
 src/
-  worker.tsx      fetch + scheduled + queue handlers — the whole entry point, 151 lines
+  worker.tsx      fetch + scheduled + queue handlers — the whole entry point, 166 lines
   core/           domain logic: consent, sending, sequences, segments, rendering
-  db/             Drizzle schema (24 tables) and the D1 client
+  db/             Drizzle schema (32 tables) and the D1 client
   web/            server-rendered admin console (Hono + JSX, no frontend framework)
   api/            transactional send API, signup forms, media upload, bearer-key auth
-  mcp/            MCP server — 93 tools, 4 resources, 4 prompts
+  mcp/            MCP server — 96 tools, 4 resources, 4 prompts
   providers/      EmailProvider port + console and Resend adapters
   client/         the only browser JS in the project: the TipTap editor bundle
 migrations/       drizzle-kit generated, applied by wrangler
-docs/             problem brief, architecture, spec, and a decision log
+scripts/          list importers and the browser smoke test
+docs/             install guide, architecture, spec, and a decision log
 ```
 
-Roughly 16k lines of TypeScript. `bun run typecheck` covers the Worker and the browser
-bundle separately and is clean.
+Roughly 23k lines of TypeScript. `bun run typecheck` covers the Worker, the
+browser bundle, and the scripts separately, and is clean.
 
 ---
 
-## Architecture at a glance 🧱
+## 🧱 Architecture at a glance
 
 Cloudflare Workers · D1 (SQLite) via Drizzle · Queues for send fan-out · Cron Triggers
 for scheduling · R2 for media · Hono + JSX server-rendered admin · Cloudflare Access for
@@ -140,12 +184,13 @@ fail.
 (Gmail strips `<style>`) and emits nested tables for buttons (Outlook ignores padding
 on `<a>`), which generic HTML serialization wouldn't do.
 
-The full decision log, including the alternatives that were rejected and why, is in
-[`docs/MEMORY.md`](docs/MEMORY.md).
+📖 The full picture, written to be read by a person *or* an agent, is in
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). The decision log — including the
+alternatives that were rejected and why — is in [`docs/MEMORY.md`](docs/MEMORY.md).
 
 ---
 
-## Consent model 🔐
+## 🔐 Consent model
 
 Three independent scopes. A narrow choice never escalates to a wide one.
 
@@ -166,7 +211,7 @@ and an unsubscribed customer still needs their download.
 
 ---
 
-## The editor ✍️
+## ✍️ The editor
 
 Block-style rich text, TipTap v3, vanilla (no React). Open the seeded draft
 **"Draft: everything the editor can do"** to see the lot.
@@ -198,9 +243,9 @@ just never saves. Nothing server-side can catch that.
 
 ---
 
-## Drive it from Claude Code 🤖
+## 🤖 Drive it from Claude Code
 
-The Worker serves an MCP server at `POST /mcp/<secret>`: **93 tools** covering the
+The Worker serves an MCP server at `POST /mcp/<secret>`: **96 tools** covering the
 whole mailer, so an agent can cut segments, draft and send broadcasts, build sequences,
 read campaign performance, and reconcile Stripe.
 
@@ -208,12 +253,12 @@ read campaign performance, and reconcile Stripe.
 # 1. a path secret (this is what makes the endpoint exist at all)
 openssl rand -hex 24                      # → put in .dev.vars as MCP_PATH_SECRET
 
-# 2. an admin-scoped key — POST /seed prints one, or use apikey_create
+# 2. an admin-scoped key — POST /dev/seed prints one, or use apikey_create
 
 # 3. point Claude Code at it
 claude mcp add --transport http --scope local \
-  --header "Authorization: Bearer $BIG_MAILER_KEY" \
-  big-mailer "http://localhost:8787/mcp/$MCP_PATH_SECRET"
+  --header "Authorization: Bearer $KOLEA_KEY" \
+  kolea "http://localhost:8787/mcp/$MCP_PATH_SECRET"
 ```
 
 **Three gates, cheapest first.** An unguessable path secret compared in constant time
@@ -227,18 +272,24 @@ content or the audience. Same for `sequence_activate`. On top of that, `MCP_ALLO
 is `"false"` in production, so MCP can read and draft everything but cannot put mail on
 the wire until you deliberately flip it. Flipping it back is the instant off-switch.
 
-Agents should read `bigmailer://conventions` before touching consent. Scoped
-unsubscribe is not the shape anything trained on normal ESPs expects, and getting it
-wrong is exactly the failure this project was built to avoid.
+Agents should read `kolea://conventions` before touching consent. Scoped unsubscribe is
+not the shape anything trained on normal ESPs expects, and getting it wrong is exactly
+the failure this project was built to avoid.
+
+📖 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) is written as an agent's reference —
+the invariants, the code map, the traps, and where to add things.
 
 ---
 
-## Stripe → campaign attribution 💳
+## 💳 Stripe → campaign attribution
 
-Set `STRIPE_SECRET_KEY` (restricted, read-only on charges/refunds/customers). A daily
-cron at 09:17 UTC pulls new charges and credits each to the buyer's last attribution
-touch, or to `metadata.campaign` when the charge carries one. Idempotent on the Stripe
-charge id, so re-runs and overlapping backfills are harmless.
+Set `STRIPE_SECRET_KEY` (restricted, read-only on charges/refunds/customers) and
+`STRIPE_WEBHOOK_SECRET`, then point a Stripe webhook at `/webhooks/stripe`. A charge
+becomes an attributed sale within seconds, credited to the buyer's last attribution
+touch or to `metadata.campaign` when the charge carries one.
+
+A daily cron at 09:17 UTC walks the same charges again as a safety net. Everything is
+idempotent on the Stripe charge id, so re-runs and overlapping backfills are harmless.
 
 `stripe_sync_preview` dry-runs it, `sales_unattributed` is the worklist of what the
 heuristic couldn't place, and `sync_runs_list` proves the nightly job is actually
@@ -246,7 +297,77 @@ running.
 
 ---
 
-## Commands ▶️
+## 🔧 Make it yours
+
+**Swapping the mail provider is one file.** Resend is the first adapter, not a
+dependency — nothing in `core/` names a vendor, anywhere. That's deliberate:
+deliverability is the risk most likely to sink a self-hosted mailer, so the
+escape hatch had to be cheap. If Resend's reputation goes sideways, or you'd
+rather be on SES because you're already in AWS, the diff is one adapter.
+
+The whole port is four members:
+
+```ts
+export interface EmailProvider {
+  readonly name: string
+  send(email: OutgoingEmail): Promise<SendResult>
+  /** Providers rate-limit on API *requests* — this is the difference between a
+      15,000-email broadcast taking 25 minutes and taking seconds. */
+  sendBatch(emails: OutgoingEmail[]): Promise<SendResult[]>
+  /** Verify + parse a provider webhook. Returns [] if it isn't ours to handle. */
+  parseWebhook(request: Request, secret?: string): Promise<ProviderEvent[]>
+}
+```
+
+Three steps to add **Amazon SES**, **Mailgun**, **Postmark**, **Cloudflare Email
+Service**, or anything else with an HTTP API:
+
+1. Write `src/providers/ses.ts` implementing the interface above. Copy
+   `resend.ts` — it's 191 lines and it's the reference.
+2. Add a branch to `providerFor()` in `src/core/sending.ts` (it's three lines).
+3. Set `EMAIL_PROVIDER=ses` and push whatever key it needs with
+   `wrangler secret put`.
+
+That's it. Broadcasts, sequences, transactional sends, consent, suppression and
+tracking all keep working untouched, because none of them know a provider exists.
+
+> ### 🤖 Or just ask Claude Code to write it
+>
+> The port is small enough, and `resend.ts` is a close enough template, that this
+> is genuinely a single prompt:
+>
+> > *Read `src/providers/types.ts` and `src/providers/resend.ts`, then write*
+> > *`src/providers/ses.ts` implementing `EmailProvider` against the Amazon SES*
+> > *v2 API. Wire it into `providerFor()` in `src/core/sending.ts` and add the*
+> > *env vars to `src/types.ts`. Map SES bounce and complaint notifications onto*
+> > *`ProviderEvent`.*
+>
+> Then check it with `bun run typecheck`, run it with `EMAIL_PROVIDER=console`
+> first, and read the Outbox before you point it at a real key.
+
+⚠️ **Don't skip `parseWebhook`.** It's what turns hard bounces and spam
+complaints into `suppressions` rows. An adapter that only sends will happily
+keep mailing dead addresses and people who reported you, and your sending
+reputation degrades silently — the slow way to lose deliverability for your
+whole domain. Soft bounces must *not* suppress; that's what `hardBounce` on
+`ProviderEvent` is for.
+
+### Other things worth changing
+
+| Want to change | Look at |
+|---|---|
+| The look | `src/web/layout.tsx` — the whole "Abyssal" design system is one file of CSS tokens |
+| What an email looks like on the wire | `src/core/render-doc.ts` — the hand-written TipTap → email-HTML walker |
+| Editor blocks | `src/client/extensions/` for the node, **and** a matching branch in `render-doc.ts`, or it renders as nothing in email |
+| Who a segment can target | `SegmentRule` in `src/db/schema.ts`, resolved in `src/core/segments.ts` |
+| What agents can do | `src/mcp/tools/*.ts` — thin wrappers, so add the rule to `core/` first |
+
+📖 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) has a full "where to add things"
+table, plus the invariants you must not break while doing it.
+
+---
+
+## ▶️ Commands
 
 | | |
 |---|---|
@@ -256,68 +377,31 @@ running.
 | `bun run db:migrate` | Apply migrations to local D1 |
 | `bun run db:generate` | Generate a migration after editing `src/db/schema.ts` |
 | `bun run db:studio` | Drizzle Studio against the local database |
-| `bun run typecheck` | Typechecks the Worker and the browser bundle separately |
-| `bun run deploy` | Build, then `wrangler deploy --env production`. Read the section below first |
+| `bun run typecheck` | Worker, browser bundle and scripts, separately |
+| `bun run deploy` | Build, then `wrangler deploy --env production`. Read [INSTALL](docs/INSTALL.md) first |
 
 ---
 
-## Sending for real 📮
-
-Copy `.dev.vars.example` to `.dev.vars`, add a Resend key, and set
-`EMAIL_PROVIDER=resend`. Point Resend's webhook at `/webhooks/resend` so bounces and
-complaints suppress properly. Without that webhook, bad addresses never get suppressed
-and your sending reputation degrades silently, which is the slow way to lose
-deliverability for the whole domain.
-
-Secrets go in `.dev.vars` (gitignored) or `wrangler secret put`. Never in
-`wrangler.jsonc`, and never in `.dev.vars.example`.
-
-<a id="before-deploying"></a>
-
-## ⚠️ Before deploying
-
-Not deployed yet, and there is real setup between here and live:
-
-- **`DEV_AUTH_BYPASS=true`** sits in the top-level `wrangler.jsonc` vars so the app is
-  runnable locally. `--env production` sets it false. **A bare `wrangler deploy`
-  publishes an unauthenticated admin console**, which is why `bun run deploy` hard-codes
-  `--env production`. Don't work around it.
-- **`database_id` is a placeholder.** Create a real D1 database with
-  `wrangler d1 create`.
-- **Create the R2 bucket** (`big-mailer-media`) and the two queues
-  (`big-mailer-send`, `big-mailer-dlq`). Queues need the $5/mo Workers paid plan.
-- **Set `PUBLIC_URL` to the real host.** It's baked into tracking links and image URLs
-  *at send time*, so a wrong value ships permanently broken email to mail that's
-  already delivered. It cannot be fixed after the fact.
-- **`MCP_PATH_SECRET` must be a real secret** (`wrangler secret put`), not a var. Unset
-  means the MCP endpoint 404s, which is the safe default. Turn it on deliberately.
-- **Cloudflare Access needs one Allow app and several Bypass apps.** Protecting the
-  whole hostname with a single Allow policy also protects the tracking pixel, signup
-  forms, preference center, webhooks, and MCP, which means every tracking pixel in
-  every email you send redirects to a login screen, permanently, for mail already
-  delivered. Access matches the most specific path first, so `/t`, `/f`, `/p`,
-  `/api`, `/webhooks` and `/mcp` each need their own Bypass app. Each of those carries
-  its own auth or is public by design.
-- **No server-side test suite.** `bun run smoke` covers the editor.
-  [`docs/SPEC.md`](docs/SPEC.md) is written as numbered, testable requirements, shaped
-  to be made executable.
-
----
-
-## Docs 📚
+## 📚 Docs
 
 | | |
 |---|---|
-| [`docs/PROJECT.md`](docs/PROJECT.md) | The problem, who it's for, and what's explicitly out of scope |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System design, data model, and the send pipeline |
-| [`docs/SPEC.md`](docs/SPEC.md) | Numbered behavioral requirements. The reference for intended behavior |
-| [`docs/MEMORY.md`](docs/MEMORY.md) | Decision log: what was chosen, what was rejected, and why |
+| [`docs/INSTALL.md`](docs/INSTALL.md) | 🛠 Local setup, full production deploy, integrations, troubleshooting |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 🏗 System design, invariants, code map. **Written for an LLM to read before changing anything** |
+| [`docs/SPEC.md`](docs/SPEC.md) | 📐 Numbered behavioral requirements. The reference for intended behavior |
+| [`docs/PROJECT.md`](docs/PROJECT.md) | 🎯 The problem, who it's for, and what's explicitly out of scope |
+| [`docs/MEMORY.md`](docs/MEMORY.md) | 🧠 Decision log: what was chosen, what was rejected, and why |
+| [`docs/PLAN.md`](docs/PLAN.md) · [`docs/STORIES.md`](docs/STORIES.md) | ✅ Build status and the (thin) backlog |
 
 ---
 
-## Contributing 🤝
+## 🤝 Contributing
 
 Bug reports, correctness fixes, and email-client rendering fixes are very welcome.
+The highest-value contribution available is **making [`docs/SPEC.md`](docs/SPEC.md)
+executable** — it's written as numbered, testable requirements precisely so it can
+become a test suite.
+
 Multi-tenancy, a drag-and-drop builder, and self-run SMTP are out of scope on purpose.
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) before opening a PR, and
 [`SECURITY.md`](SECURITY.md) if you've found a vulnerability (please report it
@@ -326,6 +410,10 @@ privately, not as an issue).
 Forking is genuinely encouraged. This is small enough to read end to end and make your
 own. Participation is covered by the [Code of Conduct](CODE_OF_CONDUCT.md).
 
-## License 📄
+---
+
+## 📄 License
 
 [MIT](LICENSE) © Rob Conery
+
+<div align="center"><sub>🐦 <b>Kōlea</b> — three thousand miles, same yard, every year.</sub></div>

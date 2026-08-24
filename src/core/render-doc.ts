@@ -21,7 +21,16 @@ const MUTED = '#6b7280'
 const LINE = '#e6e3de'
 const ACCENT = '#1f6f5c'
 
-const P = `margin:0 0 16px;font:16px/1.65 ${FONT};color:${INK}`
+/**
+ * The gap between blocks — paragraphs, lists, quotes, code.
+ *
+ * Deliberately wider than a line: at 16px/1.65 a 16px gap reads as one long
+ * column of text, and the reader loses the shape of the argument. This is the
+ * number the editor's `.bm-prose` mirrors, so what you write is what lands.
+ */
+const BLOCK_GAP = '22px'
+
+const P = `margin:0 0 ${BLOCK_GAP};font:16px/1.65 ${FONT};color:${INK}`
 
 const HEADING: Record<number, string> = {
   1: `margin:28px 0 12px;font:600 26px/1.25 ${FONT};color:${INK};letter-spacing:-.02em`,
@@ -67,12 +76,12 @@ function renderNode(node: DocNode, o: DocRenderOptions): string {
     }
 
     case 'bulletList':
-      return `<ul style="margin:0 0 16px;padding-left:24px;font:16px/1.65 ${FONT};color:${INK}">${children(node, o)}</ul>`
+      return `<ul style="margin:0 0 ${BLOCK_GAP};padding-left:24px;font:16px/1.65 ${FONT};color:${INK}">${children(node, o)}</ul>`
 
     case 'orderedList': {
       const start = Number(node.attrs?.start ?? 1)
       const startAttr = start > 1 ? ` start="${start}"` : ''
-      return `<ol${startAttr} style="margin:0 0 16px;padding-left:24px;font:16px/1.65 ${FONT};color:${INK}">${children(node, o)}</ol>`
+      return `<ol${startAttr} style="margin:0 0 ${BLOCK_GAP};padding-left:24px;font:16px/1.65 ${FONT};color:${INK}">${children(node, o)}</ol>`
     }
 
     case 'listItem':
@@ -80,7 +89,7 @@ function renderNode(node: DocNode, o: DocRenderOptions): string {
 
     // Checkboxes can't be interactive in mail, so they render as glyphs.
     case 'taskList':
-      return `<ul style="margin:0 0 16px;padding:0;list-style:none;font:16px/1.65 ${FONT};color:${INK}">${children(node, o)}</ul>`
+      return `<ul style="margin:0 0 ${BLOCK_GAP};padding:0;list-style:none;font:16px/1.65 ${FONT};color:${INK}">${children(node, o)}</ul>`
 
     case 'taskItem': {
       const done = node.attrs?.checked === true
@@ -90,12 +99,12 @@ function renderNode(node: DocNode, o: DocRenderOptions): string {
     }
 
     case 'blockquote':
-      return `<blockquote style="margin:0 0 16px;padding:2px 0 2px 18px;border-left:3px solid ${LINE};color:${MUTED};font:italic 16px/1.65 ${FONT}">${children(node, o)}</blockquote>`
+      return `<blockquote style="margin:0 0 ${BLOCK_GAP};padding:2px 0 2px 18px;border-left:3px solid ${LINE};color:${MUTED};font:italic 16px/1.65 ${FONT}">${children(node, o)}</blockquote>`
 
     case 'codeBlock':
       // Syntax highlighting is intentionally dropped: the <span> soup that
       // lowlight produces is fragile across clients, and a mono block reads fine.
-      return `<pre style="margin:0 0 16px;padding:14px 16px;background:#f6f5f3;border:1px solid ${LINE};border-radius:8px;overflow-x:auto"><code style="font:13px/1.6 ${MONO};color:${INK};white-space:pre">${escapeHtml(textOf(node))}</code></pre>`
+      return `<pre style="margin:0 0 ${BLOCK_GAP};padding:14px 16px;background:#f6f5f3;border:1px solid ${LINE};border-radius:8px;overflow-x:auto"><code style="font:13px/1.6 ${MONO};color:${INK};white-space:pre">${escapeHtml(textOf(node))}</code></pre>`
 
     case 'horizontalRule':
       return `<hr style="border:0;border-top:1px solid ${LINE};margin:28px 0" />`

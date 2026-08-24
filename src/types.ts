@@ -13,6 +13,12 @@ export interface Env {
   FROM_NAME: string
   PUBLIC_URL: string
 
+  /**
+   * Where "send a preview" goes, and the only address it may ever go to.
+   * Defaults to `FROM_EMAIL`, which is your own mailbox by definition.
+   */
+  PREVIEW_EMAIL?: string
+
   /** Local only. Bypasses the Cloudflare Access identity check. */
   DEV_AUTH_BYPASS?: string
 
@@ -32,6 +38,12 @@ export interface Env {
   /** "true" lets MCP tools put mail on the wire. Anything else is a kill switch. */
   MCP_ALLOW_SEND?: string
 
-  /** Restricted read key: charges, refunds, customers. */
+  /** Restricted read key: charges, refunds, customers, products, prices. */
   STRIPE_SECRET_KEY?: string
+  /**
+   * `whsec_…` from the Stripe dashboard endpoint. Without it `/webhooks/stripe`
+   * fails closed with a 503 — an endpoint that accepts unsigned bodies is an
+   * endpoint anybody can post fake revenue to.
+   */
+  STRIPE_WEBHOOK_SECRET?: string
 }

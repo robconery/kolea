@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        **Before you write this up:** big-mailer is deliberately single-operator and
+        **Before you write this up:** Kōlea is deliberately single-operator and
         deliberately small. Multi-tenancy, a drag-and-drop builder, self-run SMTP, and
         swapping out Cloudflare are all out of scope by design, not by omission — see
         `CONTRIBUTING.md` and `docs/PROJECT.md`.

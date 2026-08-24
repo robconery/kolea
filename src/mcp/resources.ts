@@ -9,7 +9,7 @@ import type { Ctx } from './kit.ts'
  * onboarding because they left the newsletter. Stating the asymmetry plainly is
  * cheaper than catching it in every tool description.
  */
-const CONVENTIONS = `# big-mailer conventions
+const CONVENTIONS = `# Kōlea conventions
 
 ## Consent is scoped, and that is the whole point
 
@@ -95,9 +95,9 @@ output before sending, every time.
 export function registerResources(server: McpServer, ctx: Ctx): void {
   server.registerResource(
     'conventions',
-    'bigmailer://conventions',
+    'kolea://conventions',
     {
-      title: 'big-mailer conventions',
+      title: 'Kōlea conventions',
       description:
         'How consent, money, attribution and sending actually work here. Read this before changing anything.',
       mimeType: 'text/markdown',
@@ -107,7 +107,7 @@ export function registerResources(server: McpServer, ctx: Ctx): void {
 
   server.registerResource(
     'merge-tags',
-    'bigmailer://merge-tags',
+    'kolea://merge-tags',
     {
       title: 'Merge tags',
       description: 'Which {{tags}} the email renderer understands.',
@@ -118,7 +118,7 @@ export function registerResources(server: McpServer, ctx: Ctx): void {
 
   server.registerResource(
     'schema',
-    'bigmailer://schema',
+    'kolea://schema',
     {
       title: 'Database schema',
       description: 'Live SQLite DDL for every table. Read this before writing a db_query.',
@@ -145,7 +145,7 @@ export function registerResources(server: McpServer, ctx: Ctx): void {
 
   server.registerResource(
     'stats',
-    'bigmailer://stats/overview',
+    'kolea://stats/overview',
     {
       title: 'Live overview',
       description: 'Current list size, 30-day sends and engagement, revenue.',

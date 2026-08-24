@@ -1,4 +1,4 @@
-# 📖 STORIES — big-mailer
+# 📖 STORIES — Kōlea
 
 > Owner: `/plan`. Do not edit from other phases.
 

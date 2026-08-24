@@ -104,7 +104,7 @@ export function registerOps(server: McpServer, ctx: Ctx): void {
     'db_query',
     {
       description:
-        `Run a read-only SQL query against the mailer's SQLite (Cloudflare D1) database. SELECT and WITH only; one statement; capped at ${MAX_ROWS} rows. Read the bigmailer://schema resource first for table and column names. Use this for any analytics question the other tools do not answer directly.`,
+        `Run a read-only SQL query against the mailer's SQLite (Cloudflare D1) database. SELECT and WITH only; one statement; capped at ${MAX_ROWS} rows. Read the kolea://schema resource first for table and column names. Use this for any analytics question the other tools do not answer directly.`,
       inputSchema: z.object({
         sql: z.string().min(1),
       }),

@@ -1,4 +1,4 @@
-# ✅ PLAN — big-mailer
+# ✅ PLAN — Kōlea
 
 > Owner: `/plan`. This file was filled in by the build on 2026-08-07 rather than by `/plan`,
 > so it records what actually got built instead of a forecast. Re-run `/plan` to slice the

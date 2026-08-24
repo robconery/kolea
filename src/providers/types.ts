@@ -32,7 +32,7 @@ export interface ProviderEvent {
 /**
  * The seam that protects us from the project's #1 risk.
  *
- * Deliverability is the thing most likely to sink big-mailer, so swapping the
+ * Deliverability is the thing most likely to sink Kōlea, so swapping the
  * sending provider must cost one file. Nothing outside `providers/` may name a
  * vendor, and nothing here may know about broadcasts, sequences, or consent.
  */

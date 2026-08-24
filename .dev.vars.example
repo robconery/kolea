@@ -1,12 +1,26 @@
+# Kōlea — local secrets.
+#
 # Copy to `.dev.vars`. Everything here is a secret — `.dev.vars` is gitignored,
 # this example file is not, so never paste a real value below.
+#
+# All of it is optional. With no `.dev.vars` at all, Kōlea runs in console mode
+# with MCP and Stripe switched off, and mails nobody.
+#
+# In production these go in Cloudflare, not here:
+#   bunx wrangler secret put NAME --env production
 
 # ── Mail ────────────────────────────────────────────────────────────────────
 # Leave EMAIL_PROVIDER=console (the default in wrangler.jsonc) to keep everything
 # in the in-app Outbox instead of sending for real.
 EMAIL_PROVIDER=resend
 RESEND_API_KEY=re_xxxxxxxxxxxxxxxxxxxxxxxx
+# Point Resend's webhook at /webhooks/resend. Without it, bounces and complaints
+# never suppress, and your sending reputation degrades silently.
 RESEND_WEBHOOK_SECRET=whsec_xxxxxxxxxxxx
+
+# The one address a "send preview" may ever reach. Defaults to FROM_EMAIL,
+# which is your own mailbox by definition.
+PREVIEW_EMAIL=you@example.com
 
 # ── MCP ─────────────────────────────────────────────────────────────────────
 # The unguessable path segment the MCP server answers on: POST /mcp/<secret>.
@@ -15,6 +29,10 @@ RESEND_WEBHOOK_SECRET=whsec_xxxxxxxxxxxx
 MCP_PATH_SECRET=set-me-to-something-random
 
 # ── Stripe ──────────────────────────────────────────────────────────────────
-# Restricted key, read-only on charges / refunds / customers. Used by the daily
-# reconciliation cron and the stripe_* MCP tools.
+# Restricted key, read-only on charges / refunds / customers / products / prices.
+# Used by the daily reconciliation cron and the stripe_* MCP tools.
 STRIPE_SECRET_KEY=rk_test_xxxxxxxxxxxx
+# From the Stripe dashboard endpoint pointed at /webhooks/stripe. Without it that
+# endpoint fails closed with a 503 — an endpoint that accepts unsigned bodies is
+# an endpoint anybody can post fake revenue to.
+STRIPE_WEBHOOK_SECRET=whsec_xxxxxxxxxxxx

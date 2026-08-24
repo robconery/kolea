@@ -24,7 +24,7 @@ export function registerPrompts(server: McpServer): void {
     ({ days }) =>
       user(
         [
-          `Give me a review of the last ${days ?? 7} days of big-mailer.`,
+          `Give me a review of the last ${days ?? 7} days of Kōlea.`,
           '',
           'Work through these, then write the summary:',
           '1. `stats_overview` for the window — list growth, sends, open and click rates, revenue.',
@@ -55,7 +55,7 @@ export function registerPrompts(server: McpServer): void {
         [
           `Set up a campaign for: ${name}.${goal ? ` Revenue goal: ${goal}.` : ''}`,
           '',
-          'Read `bigmailer://conventions` first if you have not this session.',
+          'Read `kolea://conventions` first if you have not this session.',
           '',
           'Then propose — do not create yet — a plan covering:',
           '- the campaign itself (`campaign_create`)',
@@ -114,7 +114,7 @@ export function registerPrompts(server: McpServer): void {
           audience ? `Audience: ${audience}.` : 'Ask me who it should go to before you build the audience.',
           '',
           'Write it in my voice — use the `rob-writing` skill if it is available.',
-          'Check `bigmailer://merge-tags` before using any {{tag}}.',
+          'Check `kolea://merge-tags` before using any {{tag}}.',
           '',
           'Then:',
           '- `tag_list` and `segment_list` to see what exists',

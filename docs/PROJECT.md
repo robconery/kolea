@@ -1,4 +1,4 @@
-# 🎯 PROJECT — big-mailer
+# 🎯 PROJECT — Kōlea
 
 > Owner: `/explore`. Do not edit from other phases.
 
@@ -9,7 +9,7 @@ whatever the apps do themselves (transactional). The list, the sending, and the
 engagement data live in someone else's system, and the ESP bill scales with
 subscriber count rather than with use.
 
-**big-mailer is one self-hosted service that handles both broadcast campaigns and
+**Kōlea is one self-hosted service that handles both broadcast campaigns and
 app-triggered transactional email**, with the subscriber list and analytics owned
 outright.
 
@@ -31,7 +31,7 @@ transactional sending as a separate scattered concern.
 
 ## Success
 
-Primary: **the paid ESP gets cancelled** and all real sending runs through big-mailer.
+Primary: **the paid ESP gets cancelled** and all real sending runs through Kōlea.
 
 Supporting signals:
 - Deliverability holds — mail lands in inboxes, bounce/complaint rates stay low
@@ -77,7 +77,7 @@ Supporting signals:
 - ❓ **List size and monthly send volume?** Drives cost model and scale requirements — TODO
 - ✅ ~~Which sending provider relays the mail?~~ → Resend first, behind a swappable port (`/design`)
 - ✅ ~~What does "transactional API" mean for Big Admin?~~ → `POST /api/send` with a bearer
-   key; big-mailer owns templates, suppression, and logging (`/design`)
+   key; Kōlea owns templates, suppression, and logging (`/design`)
 - ❓ Does engagement tracking need per-subscriber history, or aggregate per-campaign only? — TODO
 - ❓ Is there a compliance floor to hit (CAN-SPAM / GDPR: consent records, unsubscribe SLA)? — TODO
 - ✅ ~~Stack details~~ → Cloudflare Workers + D1 + Queues, Hono/JSX, Cloudflare Access (`/design`)

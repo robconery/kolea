@@ -1,5 +1,13 @@
 import type { McpServer } from '@modelcontextprotocol/server'
 import * as z from 'zod/v4'
+import { desc, eq } from 'drizzle-orm'
+import { stripeEvents } from '../../db/schema.ts'
+import {
+  downloadUrlFrom,
+  listStripeProducts,
+  pricesForProducts,
+  syncStripeCatalog,
+} from '../../core/stripe-catalog.ts'
 import { lastCursor, listSyncRuns, syncStripe } from '../../core/stripe.ts'
 import { type Ctx, clampLimit, defineTool, fail, money, ok } from '../kit.ts'
 
@@ -126,10 +134,97 @@ export function registerStripe(server: McpServer, ctx: Ctx): void {
   defineTool(
     server,
     ctx,
+    'stripe_catalog_sync',
+    {
+      description:
+        'Pull the Stripe product catalog (products and their prices) into the local mirror. Upsert only — an archived product is marked inactive, never removed, because people who bought it still own it. Run this after editing products in Stripe if you do not want to wait for the nightly sync.',
+      inputSchema: z.object({}),
+    },
+    async () => {
+      const gate = configured()
+      if (gate) return gate
+      return ok(await syncStripeCatalog(ctx.env, ctx.db, { trigger: 'mcp' }))
+    },
+  )
+
+  defineTool(
+    server,
+    ctx,
+    'stripe_catalog_list',
+    {
+      description:
+        'The locally mirrored Stripe catalog: products, their active prices, and the download location found in each product’s Stripe metadata. Use this to check that a product carries a usable download link before writing a thank-you mail around it.',
+      inputSchema: z.object({
+        active_only: z.boolean().optional().describe('Hide archived products. Defaults to false.'),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    async ({ active_only }) => {
+      const products = await listStripeProducts(ctx.db, active_only ?? false)
+      const prices = await pricesForProducts(
+        ctx.db,
+        products.map((p) => p.id),
+      )
+
+      return ok({
+        products: products.map((p) => ({
+          id: p.id,
+          name: p.name,
+          active: p.active,
+          downloadUrl: downloadUrlFrom(p.metadata),
+          metadataKeys: Object.keys(p.metadata),
+          prices: prices
+            .filter((pr) => pr.productId === p.id)
+            .map((pr) => ({
+              id: pr.id,
+              amount: pr.unitAmount === null ? null : money(pr.unitAmount, pr.currency),
+              interval: pr.interval,
+            })),
+        })),
+        withoutDownload: products.filter((p) => !downloadUrlFrom(p.metadata)).map((p) => p.id),
+      })
+    },
+  )
+
+  defineTool(
+    server,
+    ctx,
+    'stripe_events_list',
+    {
+      description:
+        'Recent Stripe webhooks and what was done with each one. This is where to look when a sale did not appear: `failed` means the handler threw and Stripe will retry, `ignored` means we deliberately did nothing, `processed` means it landed.',
+      inputSchema: z.object({
+        limit: z.number().int().optional(),
+        status: z
+          .enum(['received', 'processed', 'ignored', 'failed'])
+          .optional()
+          .describe('Filter to one outcome. Omit for everything.'),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    async ({ limit, status }) => {
+      const rows = await ctx.db
+        .select()
+        .from(stripeEvents)
+        .where(status ? eq(stripeEvents.status, status) : undefined)
+        .orderBy(desc(stripeEvents.receivedAt))
+        .limit(clampLimit(limit, 25, 100))
+        .all()
+
+      return ok({
+        configured: Boolean(ctx.env.STRIPE_WEBHOOK_SECRET),
+        events: rows,
+      })
+    },
+  )
+
+  defineTool(
+    server,
+    ctx,
     'sync_runs_list',
     {
       description:
-        'History of Stripe sync runs with counts and any notes. Check here to confirm the nightly job is actually running and what it did.',
+        'History of Stripe sync runs — both the charge reconcile (kind "stripe") and the catalog pull (kind "stripe_catalog") — with counts and any notes. Check here to confirm the nightly jobs are actually running and what they did.',
       inputSchema: z.object({ limit: z.number().int().optional() }),
       annotations: { readOnlyHint: true },
     },

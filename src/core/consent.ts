@@ -13,7 +13,7 @@ import { normalizeEmail } from './ids.ts'
 /**
  * ⭐ Scoped consent.
  *
- * The reason big-mailer exists. On Kit, leaving one sequence removes you from
+ * The reason Kōlea exists. On Kit, leaving one sequence removes you from
  * everything, forever. Here there are three independent scopes and a narrow
  * action never escalates to a wider one:
  *

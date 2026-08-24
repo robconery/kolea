@@ -1,4 +1,4 @@
-# 📐 SPEC — big-mailer
+# 📐 SPEC — Kōlea
 
 > Owner: `/design`. Do not edit from other phases.
 > Behavioral requirements — observable, testable. `/plan` slices these into stories.

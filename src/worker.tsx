@@ -7,6 +7,7 @@ import { salesApi } from './api/sales.ts'
 import { sendBroadcastNow } from './core/broadcasts.ts'
 import { sendMessages } from './core/sending.ts'
 import { tickSequences } from './core/sequences.ts'
+import { syncStripeCatalog } from './core/stripe-catalog.ts'
 import { syncStripe } from './core/stripe.ts'
 import { getDb } from './db/index.ts'
 import { broadcasts, messages } from './db/schema.ts'
@@ -73,11 +74,23 @@ export default {
       ctx.waitUntil(
         (async () => {
           if (!env.STRIPE_SECRET_KEY) return
-          // A thrown sync must not take the invocation down — `syncStripe`
+          const db = getDb(env)
+
+          // A thrown sync must not take the invocation down — both of these
           // already recorded the failure as a `sync_runs` row, which is where
-          // anyone would look for it.
+          // anyone would look for it. Independently caught, so a catalog outage
+          // cannot stop the reconcile that books money.
           try {
-            await syncStripe(env, getDb(env), { trigger: 'cron' })
+            await syncStripe(env, db, { trigger: 'cron' })
+          } catch {
+            /* recorded in sync_runs */
+          }
+
+          // The catalog is small and changes rarely, but a thank-you mail cannot
+          // find a download link for a product the mirror has never seen. The
+          // `product.*` webhooks keep it current in between.
+          try {
+            await syncStripeCatalog(env, db, { trigger: 'cron' })
           } catch {
             /* recorded in sync_runs */
           }
