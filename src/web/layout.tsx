@@ -422,6 +422,96 @@ input[type=checkbox]:focus-visible,input[type=radio]:focus-visible{outline:2px s
   .stat:nth-child(odd)::before{display:none}
 }
 
+/* ── Signal: the hero score. Colour carries meaning here, which it does nowhere
+   else in this interface — so every band is also named in words beside it, and
+   nothing is legible by hue alone. */
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
+  clip:rect(0 0 0 0);white-space:nowrap;border:0}
+.sig-card .card-b{padding-bottom:46px}
+.sig-top{display:flex;flex-direction:column;gap:2px;margin-bottom:26px}
+.sig-subject{font:600 clamp(17px,1.5vw,21px)/1.3 var(--display);color:var(--ink);
+  letter-spacing:-.02em;text-decoration:none;max-width:60ch}
+.sig-subject:hover{color:#fff;text-decoration:underline;text-underline-offset:4px}
+
+.sig-grid{display:grid;grid-template-columns:minmax(190px,auto) 1fr;gap:clamp(28px,4vw,64px);
+  align-items:start}
+.sig-score{display:flex;flex-direction:column}
+.sig-n{font:600 clamp(66px,8.5vw,116px)/.86 var(--display);font-variant-numeric:tabular-nums;
+  letter-spacing:-.055em;-webkit-background-clip:text;background-clip:text;color:transparent}
+.sig-n.strong{background-image:linear-gradient(120deg,#5eead4,#22d3ee 60%,#60a5fa);
+  filter:drop-shadow(0 0 26px rgba(34,211,238,.38))}
+.sig-n.good{background-image:linear-gradient(120deg,#60a5fa,#818cf8 60%,#a855f7);
+  filter:drop-shadow(0 0 26px rgba(99,102,241,.34))}
+.sig-n.fair{background-image:linear-gradient(120deg,#fcd34d,#fbbf24 60%,#f59e0b);
+  filter:drop-shadow(0 0 26px rgba(251,191,36,.28))}
+.sig-n.weak{background-image:linear-gradient(120deg,#fda4af,#fb7185 60%,#f43f5e);
+  filter:drop-shadow(0 0 26px rgba(251,113,133,.3))}
+.sig-den{display:flex;flex-direction:column;gap:5px;margin-top:16px}
+.sig-band{font:600 11px/1 var(--display);text-transform:uppercase;letter-spacing:.19em;
+  color:var(--ink)}
+.sig-outof{font:500 12px/1 var(--display);color:var(--faint);letter-spacing:.02em}
+.sig-vs{margin-top:15px;font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+
+.sig-read{min-width:0}
+.sig-verdict{font:600 clamp(22px,2.5vw,34px)/1.22 var(--display);letter-spacing:-.032em;
+  margin:0;color:#f2f8ff;max-width:24ch;text-wrap:balance}
+.sig-ev{margin:16px 0 0;color:var(--muted);font-size:14.5px;line-height:1.65;max-width:56ch;
+  font-variant-numeric:tabular-nums}
+.sig-empty{font:600 clamp(20px,2vw,27px)/1.25 var(--display);letter-spacing:-.028em;margin:0}
+
+/* History: one column per send, oldest left. A gap means "not measured", which
+   is a different fact from a low score and must not look like one. */
+.sig-hist{margin-top:26px}
+.sig-hist-bars{display:flex;align-items:flex-end;gap:5px;height:64px}
+.sig-col{flex:1 1 0;min-width:5px;max-width:26px;height:100%;display:flex;align-items:flex-end;
+  border-radius:3px;background:rgba(148,190,255,.05)}
+.sig-col-fill{width:100%;border-radius:3px;opacity:.85;transition:opacity .3s var(--glide);
+  background:linear-gradient(180deg,rgba(148,190,255,.42),rgba(148,190,255,.2))}
+.sig-col:hover .sig-col-fill{opacity:1}
+.sig-col.now .sig-col-fill{opacity:1}
+.sig-col-fill.strong{background:linear-gradient(180deg,#22d3ee,#0ea5e9)}
+.sig-col-fill.good{background:linear-gradient(180deg,#818cf8,#4f46e5)}
+.sig-col-fill.fair{background:linear-gradient(180deg,#fbbf24,#d97706)}
+.sig-col-fill.weak{background:linear-gradient(180deg,#fb7185,#e11d48)}
+.sig-hist-l{margin-top:11px;font:500 10px/1.3 var(--display);color:var(--faint);
+  text-transform:uppercase;letter-spacing:.16em}
+
+/* The three components. Same hairline division as .stats, so the hero reads as
+   part of the same page rather than a widget dropped onto it. */
+.sig-parts{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:26px 0;
+  margin-top:42px;padding-top:32px;position:relative}
+.sig-parts::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;
+  background:var(--rule-faint)}
+.sig-part{position:relative;padding:0 26px}
+.sig-part:first-child{padding-left:0}
+.sig-part::before{content:'';position:absolute;left:0;top:0;bottom:0;width:1px;
+  background:var(--rule-v)}
+.sig-part:first-child::before{display:none}
+.sig-part-h{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.sig-part-l{font:600 10px/1.3 var(--display);color:var(--faint);text-transform:uppercase;
+  letter-spacing:.17em}
+.sig-part-n{font:600 19px/1 var(--display);font-variant-numeric:tabular-nums;
+  letter-spacing:-.03em;color:#f2f8ff}
+.sig-track{height:4px;border-radius:3px;background:rgba(148,190,255,.08);margin:12px 0 11px;
+  overflow:hidden}
+.sig-fill{height:100%;border-radius:3px;transition:width .8s var(--spring)}
+.sig-fill.strong{background:linear-gradient(90deg,#5eead4,#22d3ee)}
+.sig-fill.good{background:linear-gradient(90deg,#60a5fa,#818cf8)}
+.sig-fill.fair{background:linear-gradient(90deg,#fcd34d,#f59e0b)}
+.sig-fill.weak{background:linear-gradient(90deg,#fda4af,#fb7185)}
+.sig-part-d{font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+.sig-part-w{margin-top:5px;font-size:11px;color:var(--faint);font-variant-numeric:tabular-nums}
+
+@media (max-width:820px){
+  .sig-grid{grid-template-columns:1fr;gap:22px}
+  .sig-part{padding:0 16px}
+  .sig-part:nth-child(odd){padding-left:0}
+  .sig-part:nth-child(odd)::before{display:none}
+}
+@media (prefers-reduced-motion:reduce){
+  .sig-fill{transition:none}
+}
+
 /* Tables run to the full width of the band and align on its left edge. */
 table{width:100%;border-collapse:collapse;font-size:13.5px}
 th{position:relative;text-align:left;font:600 9.5px/1 var(--display);text-transform:uppercase;
@@ -629,6 +719,138 @@ html:has(.compose-stage){overflow:hidden}
     -webkit-backdrop-filter:blur(22px) saturate(150%);backdrop-filter:blur(22px) saturate(150%)}
 }
 }
+
+/* ── Analytics ──────────────────────────────────────────────────────────────
+   Measurement surfaces. Everything here is CSS-only: these screens are read,
+   scanned, and left, and a reader must never wait for a chart runtime to boot
+   before the number they came for exists on the page. The heavy plots (mix over
+   time, cadence) still go through ApexCharts — but nothing load-bearing does. */
+@layer analytics {
+/* The ring. A conic gradient with a hole punched in it, so one number can carry
+   its own magnitude without a chart, a canvas, or a millisecond of JavaScript. */
+.dial{position:relative;flex:0 0 auto;display:grid;place-items:center;border-radius:50%;
+  width:var(--d,132px);height:var(--d,132px);
+  background:conic-gradient(var(--arc) calc(var(--p,0) * 1%),rgba(148,190,255,.09) 0);
+  -webkit-mask:radial-gradient(circle,transparent calc(var(--d,132px) / 2 - 11px),#000 calc(var(--d,132px) / 2 - 10px));
+  mask:radial-gradient(circle,transparent calc(var(--d,132px) / 2 - 11px),#000 calc(var(--d,132px) / 2 - 10px))}
+.dial-w{position:relative;display:grid;place-items:center;flex:0 0 auto}
+.dial-n{position:absolute;inset:0;display:grid;place-items:center;
+  font:600 clamp(29px,3vw,40px)/1 var(--display);font-variant-numeric:tabular-nums;
+  letter-spacing:-.04em;color:#fff}
+.dial-n small{display:block;text-align:center;font:600 9.5px/1.4 var(--display);
+  letter-spacing:.19em;text-transform:uppercase;color:var(--faint);margin-top:7px}
+.dial.strong{--arc:#22d3ee}.dial.good{--arc:#818cf8}
+.dial.fair{--arc:#fbbf24}.dial.weak{--arc:#fb7185}.dial.none{--arc:rgba(148,190,255,.28)}
+
+/* The band chip. Four states, never colour alone — the word is always there. */
+.score{display:inline-flex;flex:0 0 auto;align-items:center;gap:7px;padding:3px 10px;border-radius:99px;
+  font:600 11px/1 var(--display);letter-spacing:.04em;font-variant-numeric:tabular-nums;
+  background:rgba(148,190,255,.09);color:var(--ink)}
+.score i{width:7px;height:7px;border-radius:2px;flex:0 0 auto;background:rgba(148,190,255,.4)}
+.score.strong{background:rgba(34,211,238,.14);color:#9beef8}.score.strong i{background:#22d3ee}
+.score.good{background:rgba(129,140,248,.15);color:#c7cbff}.score.good i{background:#818cf8}
+.score.fair{background:rgba(251,191,36,.13);color:#fcd98b}.score.fair i{background:#fbbf24}
+.score.weak{background:rgba(251,113,133,.14);color:#ffb3bf}.score.weak i{background:#fb7185}
+
+/* The step waterfall. One row per mail in a sequence: how many got it, and how
+   much of that was opened and clicked. The bar is the population; the fills are
+   what happened to it — so the decline down the page is the shape of the story. */
+.wf{display:flex;flex-direction:column;gap:2px}
+.wf-row{display:grid;grid-template-columns:34px minmax(0,1fr) auto;gap:16px;align-items:center;
+  padding:13px 0;position:relative}
+.wf-row+.wf-row::before{content:'';position:absolute;left:0;right:0;top:0;height:1px;
+  background:rgba(148,190,255,.08)}
+.wf-i{font:600 11px/1 var(--display);color:var(--faint);font-variant-numeric:tabular-nums;
+  letter-spacing:.1em}
+.wf-b{min-width:0}
+.wf-s{display:block;font-size:13.5px;color:#dbe9ff;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis}
+.wf-track{position:relative;height:24px;border-radius:6px;margin-top:9px;overflow:hidden;
+  background:rgba(148,190,255,.07)}
+.wf-track>i{position:absolute;left:0;top:0;bottom:0;border-radius:6px;
+  transition:width .9s var(--spring)}
+.wf-sent{background:rgba(99,102,241,.28)}
+.wf-open{background:rgba(56,189,248,.42)}
+.wf-click{background:linear-gradient(90deg,#22d3ee,#38bdf8);box-shadow:0 0 16px rgba(34,211,238,.4)}
+.wf-n{text-align:right;font-variant-numeric:tabular-nums;font-size:12.5px;color:var(--muted);
+  white-space:nowrap}
+.wf-n b{display:block;font:600 17px/1.1 var(--display);color:#fff}
+.wf-drop{margin-top:7px;font-size:12px;color:#ffb3bf}
+@media (max-width:720px){.wf-row{grid-template-columns:26px minmax(0,1fr);row-gap:6px}
+  .wf-n{grid-column:2;text-align:left}.wf-n b{display:inline;font-size:14px;margin-right:6px}}
+
+/* Part-to-whole as one rule rather than a donut: four channels, ordered, and
+   the eye compares lengths far better than it compares wedges. */
+.split{display:flex;height:14px;border-radius:99px;overflow:hidden;gap:2px;
+  background:rgba(148,190,255,.07)}
+.split>i{display:block;transition:width .9s var(--spring)}
+/* A channel that earned nothing draws nothing. A 2px sliver for zero is a lie
+   the eye believes before the legend can correct it. */
+.split>i[hidden]{display:none}
+.split>i:nth-child(1){background:#22d3ee}
+.split>i:nth-child(2){background:#6366f1}
+.split>i:nth-child(3){background:#a855f7}
+.split>i:nth-child(4){background:rgba(148,190,255,.22)}
+.lg{display:flex;flex-wrap:wrap;gap:8px 22px;margin-top:16px}
+.lg-i{display:flex;align-items:baseline;gap:9px;font-size:13px;color:var(--muted)}
+.lg-i i{width:9px;height:9px;border-radius:3px;flex:0 0 auto;transform:translateY(-1px)}
+.lg-i b{color:#fff;font-weight:600;font-variant-numeric:tabular-nums}
+
+/* A metric row on the health screen: name, number, bar, and the sentence that
+   says what to do about it. The sentence is the point — a bar nobody can act on
+   is decoration. */
+.hm{display:grid;grid-template-columns:minmax(120px,1fr) minmax(0,2fr);gap:8px 28px;
+  padding:18px 0;position:relative;align-items:baseline}
+.hm+.hm::before{content:'';position:absolute;left:0;right:0;top:0;height:1px;
+  background:rgba(148,190,255,.08)}
+.hm-l{font:600 10px/1.3 var(--display);text-transform:uppercase;letter-spacing:.19em;
+  color:var(--faint)}
+.hm-v{font:600 clamp(22px,2vw,29px)/1 var(--display);font-variant-numeric:tabular-nums;
+  letter-spacing:-.03em;color:#fff;margin-top:8px}
+.hm-d{font-size:12.5px;color:var(--muted);margin-top:7px}
+.hm-note{margin-top:9px;font-size:13px;color:#ffd9a0;line-height:1.55}
+@media (max-width:720px){.hm{grid-template-columns:1fr}}
+
+/* Sortable column headers. A link that looks like a header, because that is
+   exactly what it is. */
+th a{color:inherit}
+th a:hover{color:#7dd3fc}
+th a.on{color:#7dd3fc}
+
+/* The dense comparison rail under a leaderboard row — two or three rates with
+   their own hairline meters, sized to sit inside a table cell. */
+.rt{display:flex;align-items:center;gap:9px;font-variant-numeric:tabular-nums}
+.rt-b{flex:1 1 auto;min-width:34px;height:4px;border-radius:99px;overflow:hidden;
+  background:rgba(148,190,255,.1)}
+.rt-b>i{display:block;height:100%;border-radius:99px;background:var(--beam)}
+.rt-b.warm>i{background:linear-gradient(90deg,#fbbf24,#fb7185)}
+
+/* The analytics heroes put a dial (or two) beside the reading. An inline
+   grid-template would beat the responsive rule underneath it, so it lives here
+   as a class and collapses on a phone like everything else. */
+.sig-grid.lead{grid-template-columns:auto minmax(0,1fr)}
+.dials{display:flex;gap:clamp(20px,3vw,40px);align-items:center;flex-wrap:nowrap}
+@media (max-width:980px){
+  .sig-grid.lead{grid-template-columns:1fr}
+  .dials{flex-wrap:wrap;gap:22px}
+}
+
+/* Wide tables scroll inside their own card rather than taking the page with
+   them. Analytics carries the widest tables in the app — seven columns of
+   numbers do not fit a phone, and shrinking them to fit makes them unreadable
+   instead of unfitting. */
+.tscroll{overflow-x:auto;overscroll-behavior-x:contain}
+.tscroll>table{min-width:620px}
+
+/* The one-line "what should I do about this" that closes every analytics card. */
+.take{display:flex;gap:13px;align-items:flex-start;padding:16px 0 0;margin-top:18px;
+  position:relative;font-size:14px;line-height:1.6;color:var(--ink)}
+.take::before{content:'';position:absolute;left:0;right:0;top:0;height:1px;background:var(--rule)}
+.take b{color:#fff}
+.take>em{font-style:normal;color:var(--faint);font:600 10px/1.5 var(--display);
+  letter-spacing:.19em;text-transform:uppercase;flex:0 0 auto;padding-top:3px}
+}
+
 `
 
 /**
@@ -644,7 +866,27 @@ const ICONS: Record<string, string> = {
   out: 'M4 13.6h4.2l1.3 2.5h5l1.3-2.5H20M6.5 4.8h11l2.5 8.8v5.6H4v-5.6l2.5-8.8Z',
   camp: 'M12 3.6a8.4 8.4 0 1 0 0 16.8 8.4 8.4 0 0 0 0-16.8Zm0 4.6a3.8 3.8 0 1 0 0 7.6 3.8 3.8 0 0 0 0-7.6Zm0 3.3a.5.5 0 1 0 0 1 .5.5 0 0 0 0-1Z',
   store: 'M5.6 8.2h12.8l1 11.4H4.6l1-11.4Zm3.4 0V6.4a3 3 0 0 1 6 0v1.8',
+  /* A target with an arrow in it. */
+  goals: 'M12 20.4a8.4 8.4 0 1 0 0-16.8 8.4 8.4 0 0 0 0 16.8Zm0-4.2a4.2 4.2 0 1 0 0-8.4 4.2 4.2 0 0 0 0 8.4Zm0-3a1.2 1.2 0 1 0 0-2.4 1.2 1.2 0 0 0 0 2.4Z',
+  /* A funnel narrowing to a drop — sent, opened, clicked, bought. */
+  conv: 'M3.8 5.2h16.4l-6.3 7.4v6.1l-3.8 1.9v-8L3.8 5.2Z',
+  /* A price tag: the thing that exists to be sold. */
+  offers: 'M4.6 11.2V4.8h6.4l8.4 8.4-6.4 6.4-8.4-8.4Zm3.1-3.5a.9.9 0 1 0 0 1.8.9.9 0 0 0 0-1.8Z',
+  /* Two figures with a coin — people, as customers. */
+  cust: 'M9 11.2a3.1 3.1 0 1 0 0-6.2 3.1 3.1 0 0 0 0 6.2ZM3.4 19.4c.4-3 2.7-4.9 5.6-4.9 1.4 0 2.7.5 3.7 1.3M17.4 19.4a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4Zm0-4.4v2.4',
+  /* A spark over a rule: a suggestion drawn from what's underneath. */
+  ideas: 'M12 3.6v2M5.8 6.2l1.4 1.4M18.2 6.2l-1.4 1.4M9.4 13.4a3.4 3.4 0 1 1 5.2 0c-.6.7-.9 1.3-.9 2.1h-3.4c0-.8-.3-1.4-.9-2.1ZM10.3 18.2h3.4M10.8 20.4h2.4',
   cons: 'M12 3.6 5.6 6.2v5.4c0 4 2.6 7.2 6.4 8.8 3.8-1.6 6.4-4.8 6.4-8.8V6.2L12 3.6Zm-2.7 8.5 2 2 3.5-4.1',
+  /* Bars against a baseline: measurement, plainly. */
+  an: 'M4.4 19.6h15.2M7.8 16.4V9.2M12 16.4V5.4M16.2 16.4V11',
+  /* Rules getting shorter — the drop-off a sequence lives or dies by. */
+  anseq: 'M4.6 6.4h11M4.6 11h8.4M4.6 15.6h5.6M4.6 20.2h3',
+  /* One send's arc: a peak and what came after it. */
+  anbc: 'M4 15.4l4.4-4.8 3.4 3.4 4-6.8 4.2 4.6',
+  /* A wedge out of a whole: which slice of the result was mine. */
+  ancon: 'M12 3.9a8.1 8.1 0 1 0 8.1 8.1H12V3.9Z',
+  /* A pulse. The list either has one or it doesn't. */
+  anhl: 'M3.8 12.4h3.1l2-4.6 2.7 9 2.5-6.3 1.6 1.9h4.5',
   set: 'M4.4 8h9.2M17.6 8h2M4.4 16h2.2M10.6 16h9M15.4 5.6v4.8M8.2 13.6v4.8',
   help: 'M12 3.8a8.2 8.2 0 1 0 0 16.4 8.2 8.2 0 0 0 0-16.4Zm-2.4 5.5a2.5 2.5 0 1 1 3.3 2.4c-.6.2-.9.8-.9 1.4v.6m0 2.5v.1',
 }
@@ -669,13 +911,29 @@ const NAV: ({ grp: string } | { href: string; key: string; label: string })[] = 
   { href: '/', key: 'home', label: 'Dashboard' },
   { grp: 'Audience' },
   { href: '/subscribers', key: 'subs', label: 'Subscribers' },
+  // ⭐ Analytics sits directly under the audience, before the mail: you read
+  // what happened before you decide what to send next. Five slots rather than
+  // one-with-tabs because each is a different question, and burying four of
+  // them behind a tab strip is how a measurement tool goes unread.
+  { grp: 'Analytics' },
+  { href: '/analytics', key: 'an', label: 'Overview' },
+  { href: '/analytics/sequences', key: 'anseq', label: 'Sequences' },
+  { href: '/analytics/broadcasts', key: 'anbc', label: 'Broadcasts' },
+  { href: '/analytics/contribution', key: 'ancon', label: 'Contribution' },
+  { href: '/analytics/health', key: 'anhl', label: 'List health' },
   { grp: 'Mail' },
   { href: '/broadcasts', key: 'bc', label: 'Broadcasts' },
   { href: '/sequences', key: 'seq', label: 'Sequences' },
   { href: '/outbox', key: 'out', label: 'Outbox' },
   { grp: 'Money' },
   { href: '/campaigns', key: 'camp', label: 'Campaigns' },
-  { href: '/store', key: 'store', label: 'Store' },
+  // ⭐ Target first, then the events measured against it, then the catalogue
+  // they were sold from: the funnel reads top to bottom in the rail too.
+  { href: '/goals', key: 'goals', label: 'Goals' },
+  { href: '/conversions', key: 'conv', label: 'Conversions' },
+  { href: '/store/offers', key: 'offers', label: 'Offers' },
+  { href: '/store/customers', key: 'cust', label: 'Customers' },
+  { href: '/store/ideas', key: 'ideas', label: 'Segment ideas' },
   { grp: 'System' },
   { href: '/consent', key: 'cons', label: 'Consent' },
   { href: '/settings', key: 'set', label: 'Settings' },
@@ -809,31 +1067,6 @@ export const AudienceTabs: FC<{ on: 'people' | 'tags' | 'segments' }> = ({ on })
     </a>
     <a href="/segments" class={on === 'segments' ? 'on' : ''}>
       Segments
-    </a>
-  </div>
-)
-
-/**
- * Sub-navigation for the storefront.
- *
- * Its own rail slot rather than a fourth audience tab: this is the customer
- * side of the house — what exists to sell, who bought it, and what to do about
- * that. It answers questions about *people as customers*, which is a different
- * job from the list hygiene the audience screens do.
- */
-export const StoreTabs: FC<{ on: 'overview' | 'offers' | 'customers' | 'ideas' }> = ({ on }) => (
-  <div class="tabs">
-    <a href="/store" class={on === 'overview' ? 'on' : ''}>
-      Overview
-    </a>
-    <a href="/store/offers" class={on === 'offers' ? 'on' : ''}>
-      Offers
-    </a>
-    <a href="/store/customers" class={on === 'customers' ? 'on' : ''}>
-      Customers
-    </a>
-    <a href="/store/ideas" class={on === 'ideas' ? 'on' : ''}>
-      Segment ideas
     </a>
   </div>
 )

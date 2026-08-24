@@ -116,14 +116,54 @@ who left that series.
 
 ---
 
+## 📊 Measurement
+
+An ESP will happily show you an open rate and let you draw your own conclusions. The
+five screens under **Analytics** exist because a mailing list is the one asset here you
+cannot inspect by looking at it: you can read every broadcast you ever wrote and still
+have no idea whether the list is healthy, and no amount of staring at a sequence tells
+you which mail in it loses people.
+
+![A sequence's step-by-step waterfall: how many got each mail, how many opened it, how many clicked, and where the drop-off is](docs/analytics.jpg)
+
+<sub>The step waterfall for one sequence. Retention is measured against **step one**, never
+against the previous step — chained ratios hide a slow bleed across six mails behind six
+unremarkable-looking numbers. The line at the bottom names the biggest drop and what it
+usually means.</sub>
+
+| Screen | The question |
+|---|---|
+| **Overview** | Two dials — the health of the list, and the median score of the writing. A healthy list carrying weak sends and a weak list carrying great sends look identical on any single number, and they want opposite responses. |
+| **Sequences** | Every series ranked, with the two things a rate can't tell you: who finishes, and what it earned. Flags series switched off with people still inside them. |
+| **Broadcasts** | Every send scored against **your own median**, which is the only benchmark that survives contact with reality. |
+| **Contribution** | Which mail actually moved a goal — by channel, and by the individual broadcast or sequence that earned the credit. |
+| **List health** | Growth, engagement, churn, delivery and money, each with the sentence saying what to do about it. |
+
+Every figure on these screens carries the two integers underneath it, because a rate
+with no denominator is how dashboards mislead people who trust them. **Nothing here
+writes** — no forms, no POST routes, by construction. An analytics page that can send
+mail is one misclick from mailing the whole list.
+
+```bash
+bun scripts/seed-analytics-demo.ts     # local only, and there is no --remote flag
+```
+
+That seeds a world worth looking at: demo people spread over a year, two live sequences
+with real message and event history, imported broadcasts, conversions and a couple of
+goals. `--clean` removes every row of it again.
+
+---
+
 ## 🗂 What's in here
 
 ```
 src/
-  worker.tsx      fetch + scheduled + queue handlers — the whole entry point, 166 lines
-  core/           domain logic: consent, sending, sequences, segments, rendering
+  worker.tsx      fetch + scheduled + queue handlers — the whole entry point, 177 lines
+  core/           domain logic: consent, sending, sequences, segments, rendering,
+                  scoring (signal.ts) and measurement (analytics.ts)
   db/             Drizzle schema (32 tables) and the D1 client
-  web/            server-rendered admin console (Hono + JSX, no frontend framework)
+  web/            server-rendered admin console (Hono + JSX, no frontend framework),
+                  including the five read-only analytics screens
   api/            transactional send API, signup forms, media upload, bearer-key auth
   mcp/            MCP server — 96 tools, 4 resources, 4 prompts
   providers/      EmailProvider port + console and Resend adapters
@@ -133,7 +173,7 @@ scripts/          list importers and the browser smoke test
 docs/             install guide, architecture, spec, and a decision log
 ```
 
-Roughly 23k lines of TypeScript. `bun run typecheck` covers the Worker, the
+Roughly 30k lines of TypeScript. `bun run typecheck` covers the Worker, the
 browser bundle, and the scripts separately, and is clean.
 
 ---
@@ -177,6 +217,27 @@ team's live JWKS (cached per isolate, with a forced refetch on an unknown key id
 proves nothing and is never treated as proof. Misconfigure it and the middleware
 **fails closed** and locks everyone out, including you. That's the correct direction to
 fail.
+
+**One scorer, two subjects.** A broadcast and a sequence are graded by the same
+instrument (`core/signal.ts`), so a sequence's 62 and a broadcast's 62 are the same 62
+and "is this series better than my newsletter?" is a question with an answer. Every rate
+in the system divides by **people reached** — recipients minus bounces — and never by
+delivered: provider `delivered` webhooks cover a fraction of what goes out, and dividing
+by them reports open rates above 100%.
+
+**A number that could never have been measured is `null`, not `0`.** Mail imported from
+a previous ESP has no per-recipient history here and never will, so no click could be
+recorded and no conversion could ever attach to it. Those rows drop the MONEY component
+and renormalize the rest, rather than scoring a decade of good work as a zero on
+something that was never measurable. Same reflex everywhere: a sequence under 30 people
+reached is *unscored*, because a 100% click rate across eight people is noise wearing a
+suit.
+
+**Attribution is last-*click*, inside a per-source window.** An open is never a touch —
+Apple's Mail Privacy Protection fires opens from proxies, so crediting them hands
+revenue to whoever mailed most recently. Anything with no click in the window is
+`direct`, which is the honest answer for most sales on most lists and is drawn as an
+ordinary result rather than a hole in the data.
 
 **The email HTML renderer is hand-written** (`core/render-doc.ts`) rather than using
 `@tiptap/html`, whose server entry point needs `happy-dom` and doesn't run inside
@@ -361,6 +422,8 @@ whole domain. Soft bounces must *not* suppress; that's what `hardBounce` on
 | Editor blocks | `src/client/extensions/` for the node, **and** a matching branch in `render-doc.ts`, or it renders as nothing in email |
 | Who a segment can target | `SegmentRule` in `src/db/schema.ts`, resolved in `src/core/segments.ts` |
 | What agents can do | `src/mcp/tools/*.ts` — thin wrappers, so add the rule to `core/` first |
+| How a send is scored | `ANCHORS` and `WEIGHTS` in `src/core/signal.ts` — the anchors are what a good rate looks like *on your list* |
+| What the analytics screens measure | `src/core/analytics.ts` — the pages are dumb and just draw what it returns |
 
 📖 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) has a full "where to add things"
 table, plus the invariants you must not break while doing it.
@@ -374,6 +437,7 @@ table, plus the invariants you must not break while doing it.
 | `bun run dev` | Build the client bundle, then serve on :8787 |
 | `bun run watch:client` | Rebuild the editor bundle on change (alongside `dev`) |
 | `bun run smoke` | Browser smoke test of the editor. Needs `dev` running |
+| `bun scripts/seed-analytics-demo.ts` | Fill the analytics screens with local demo data (`--clean` to undo) |
 | `bun run db:migrate` | Apply migrations to local D1 |
 | `bun run db:generate` | Generate a migration after editing `src/db/schema.ts` |
 | `bun run db:studio` | Drizzle Studio against the local database |

@@ -11,6 +11,7 @@ import {
   unsubscribeAll,
   unsubscribeBroadcasts,
 } from '../core/consent.ts'
+import { recordUnsubscribeAttribution } from '../core/events.ts'
 import { normalizeEmail } from '../core/ids.ts'
 import type { Env } from '../types.ts'
 import { PublicLayout } from './layout.tsx'
@@ -48,6 +49,8 @@ prefs.get('/p/:token', async (c) => {
   if (!sub) return c.html(<NotFound />, 404)
 
   const scope = parseScope(c.req.query('scope'))
+  // The message this link came from, so an unsubscribe can be charged to it.
+  const fromMessage = c.req.query('m') ?? ''
   const done = c.req.query('done')
   const rows = await preferencesFor(db, sub.id)
   const globallyOff = await db
@@ -86,6 +89,8 @@ prefs.get('/p/:token', async (c) => {
       ) : null}
 
       <form method="post" action={`/p/${sub.unsubToken}`}>
+        <input type="hidden" name="m" value={fromMessage} />
+        <input type="hidden" name="scope" value={c.req.query('scope') ?? ''} />
         {ordered.length > 0 ? (
           <>
             <h3 style="margin-bottom:6px">Series</h3>
@@ -170,6 +175,8 @@ prefs.post('/p/:token', async (c) => {
 
   const form = await c.req.formData()
   const action = String(form.get('action') ?? '')
+  const fromMessage = Number(form.get('m')) || null
+  const scopeParam = String(form.get('scope') ?? '')
   let done = ''
 
   const leave = /^leave:(\d+)$/.exec(action)
@@ -177,22 +184,30 @@ prefs.post('/p/:token', async (c) => {
 
   if (leave) {
     done = (await leaveSequence(db, sub.id, Number(leave[1]))) ? 'left' : ''
+    if (done) await recordUnsubscribeAttribution(db, sub.id, fromMessage, 'sequence')
   } else if (rejoin) {
     await rejoinSequence(db, sub.id, Number(rejoin[1]))
     done = 'rejoined'
   } else if (action === 'unsub_broadcast') {
     await unsubscribeBroadcasts(db, sub.id)
     done = 'unsub_broadcast'
+    await recordUnsubscribeAttribution(db, sub.id, fromMessage, 'broadcast')
   } else if (action === 'resub_broadcast') {
     await resubscribeBroadcasts(db, sub.id)
     done = 'resub_broadcast'
   } else if (action === 'unsub_all') {
     await unsubscribeAll(db, sub.id, sub.email)
     done = 'all'
+    await recordUnsubscribeAttribution(db, sub.id, fromMessage, 'all')
   }
 
-  // POST-redirect-GET keeps it idempotent on refresh (SPEC 2a.5).
-  return c.redirect(`/p/${token}?done=${done}`, 303)
+  // POST-redirect-GET keeps it idempotent on refresh (SPEC 2a.5). Scope and the
+  // originating message ride along so the page the reader lands back on still
+  // highlights where they came from, and a second action still attributes.
+  const carry = new URLSearchParams({ done })
+  if (scopeParam) carry.set('scope', scopeParam)
+  if (fromMessage) carry.set('m', String(fromMessage))
+  return c.redirect(`/p/${token}?${carry}`, 303)
 })
 
 /**
@@ -206,10 +221,13 @@ prefs.all('/p/:token/one-click', async (c) => {
   if (!sub) return c.html(<NotFound />, 404)
 
   const scope = parseScope(c.req.query('scope'))
+  const fromMessage = Number(c.req.query('m')) || null
   if (scope?.kind === 'sequence') {
     await leaveSequence(db, sub.id, scope.sequenceId)
+    await recordUnsubscribeAttribution(db, sub.id, fromMessage, 'sequence')
     return c.redirect(`/p/${token}?done=left`, 303)
   }
   await unsubscribeBroadcasts(db, sub.id)
+  await recordUnsubscribeAttribution(db, sub.id, fromMessage, 'broadcast')
   return c.redirect(`/p/${token}?done=unsub_broadcast`, 303)
 })

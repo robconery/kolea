@@ -15,7 +15,7 @@ import { getDb } from '../db/index.ts'
 import { type SegmentRule, purchaseStats, purchases, subscribers } from '../db/schema.ts'
 import type { Env } from '../types.ts'
 import { BarRow, ColumnChart, Donut, RAMP, Sparkline, Swatch } from './charts.tsx'
-import { Flash, Layout, StoreTabs, fmtDay, fmtMoney } from './layout.tsx'
+import { Flash, Layout, fmtDay, fmtMoney } from './layout.tsx'
 
 /**
  * The storefront: what sells, who buys it, and what to do about that.
@@ -295,7 +295,7 @@ store.get('/store', async (c) => {
   const maxChannel = Math.max(1, ...channels.map((ch) => ch.cents))
 
   return c.html(
-    <Layout title="Store" nav="store" charts>
+    <Layout title="Store overview" charts>
       <div class="head">
         <div>
           <h1>Store</h1>
@@ -306,7 +306,6 @@ store.get('/store', async (c) => {
         </div>
       </div>
 
-      <StoreTabs on="overview" />
       <Flash msg={c.req.query('flash')} kind={c.req.query('kind')} />
 
       <StoreHeadline
@@ -528,7 +527,7 @@ store.get('/store/offers', async (c) => {
   const maxCents = Math.max(1, ...byOffer.map((o) => o.cents))
 
   return c.html(
-    <Layout title="Offers" nav="store" charts>
+    <Layout title="Offers" nav="offers" charts>
       <div class="head">
         <div>
           <h1>Offers</h1>
@@ -536,7 +535,6 @@ store.get('/store/offers', async (c) => {
         </div>
       </div>
 
-      <StoreTabs on="offers" />
 
       <div class="card">
         <div class="card-b flush">
@@ -627,7 +625,7 @@ store.get('/store/customers', async (c) => {
   const top = rows[0]?.lifetimeCents ?? 1
 
   return c.html(
-    <Layout title="Customers" nav="store" charts>
+    <Layout title="Customers" nav="cust" charts>
       <div class="head">
         <div>
           <h1>Customers</h1>
@@ -637,7 +635,6 @@ store.get('/store/customers', async (c) => {
         </div>
       </div>
 
-      <StoreTabs on="customers" />
 
       <div class="card">
         <div class="card-b">
@@ -728,7 +725,7 @@ store.get('/store/ideas', async (c) => {
   const ideas = await suggestSegments(db)
 
   return c.html(
-    <Layout title="Segment ideas" nav="store" charts>
+    <Layout title="Segment ideas" nav="ideas" charts>
       <div class="head">
         <div>
           <h1>Segment ideas</h1>
@@ -739,7 +736,6 @@ store.get('/store/ideas', async (c) => {
         </div>
       </div>
 
-      <StoreTabs on="ideas" />
       <Flash msg={c.req.query('flash')} kind={c.req.query('kind')} />
 
       {GROUPS.map((g) => {

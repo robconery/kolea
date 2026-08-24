@@ -44,10 +44,16 @@ export interface EmailBody {
 export function renderEmail(body: EmailBody, ctx: RenderContext): RenderedEmail {
   const scopeParam = encodeURIComponent(formatScope(ctx.scope))
 
-  const preferenceUrl = `${ctx.publicUrl}/p/${ctx.unsubToken}?scope=${scopeParam}`
+  // `m` is the message that carried this link, so an unsubscribe can be charged
+  // to the mail that caused it. It is a hint, not an authority — the preference
+  // centre checks the message actually belongs to the token holder before
+  // recording anything against it.
+  const from = `scope=${scopeParam}&m=${ctx.messageId}`
+
+  const preferenceUrl = `${ctx.publicUrl}/p/${ctx.unsubToken}?${from}`
   // One-click (List-Unsubscribe-Post) must act on the NARROW scope, not globally.
   // A mail client's "unsubscribe" button on a sequence email leaves that sequence.
-  const oneClickUnsubscribeUrl = `${ctx.publicUrl}/p/${ctx.unsubToken}/one-click?scope=${scopeParam}`
+  const oneClickUnsubscribeUrl = `${ctx.publicUrl}/p/${ctx.unsubToken}/one-click?${from}`
 
   // Never track the unsubscribe link itself — a click on "leave this series"
   // must not be routed through a redirect that could fail.

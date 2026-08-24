@@ -74,3 +74,46 @@ export async function applyProviderEvent(db: Db, ev: ProviderEvent): Promise<voi
       .where(eq(subscribers.id, msg.subscriberId))
   }
 }
+
+/**
+ * Charge an unsubscribe to the mail that caused it.
+ *
+ * Deliberately not routed through `recordEvent()`: that path runs tag rules and
+ * campaign attribution, which are for things a *provider* told us. This is the
+ * reader acting on our own preference centre, and the only thing it should do is
+ * leave a countable mark.
+ *
+ * `messageId` arrives from a URL, so it is verified against the subscriber before
+ * anything is written — otherwise anyone with a preference link could hand an
+ * arbitrary broadcast a fake unsubscribe. An unattributable action is simply not
+ * recorded; the consent change itself has already happened either way, and is
+ * never contingent on this.
+ *
+ * The dedupe key makes a refresh or a double-tap idempotent (SPEC 2a.5).
+ */
+export async function recordUnsubscribeAttribution(
+  db: Db,
+  subscriberId: number,
+  messageId: number | null,
+  action: 'broadcast' | 'sequence' | 'all',
+): Promise<void> {
+  if (!messageId || !Number.isInteger(messageId)) return
+
+  const msg = await db
+    .select({ id: messages.id, subscriberId: messages.subscriberId })
+    .from(messages)
+    .where(eq(messages.id, messageId))
+    .get()
+  if (!msg || msg.subscriberId !== subscriberId) return
+
+  await db
+    .insert(events)
+    .values({
+      messageId: msg.id,
+      type: 'unsubscribe',
+      occurredAt: new Date(),
+      meta: { action },
+      dedupeKey: `unsub:${msg.id}:${action}`,
+    })
+    .onConflictDoNothing()
+}

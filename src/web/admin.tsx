@@ -16,6 +16,10 @@ import {
 import type { Env } from '../types.ts'
 import { commerceTotals, listOffers } from '../core/purchases.ts'
 import { customerTiers, headlines, revenueByMonth } from '../core/insights.ts'
+import { signalTrend } from '../core/signal.ts'
+import { SignalHero } from './admin-signal.tsx'
+import { activeGoals } from '../core/goals.ts'
+import { GoalBar } from './admin-goals.tsx'
 import { StoreHeadline, TierCard, monthColumn } from './admin-store.tsx'
 import { ColumnChart } from './charts.tsx'
 import { Flash, Layout, fmtDate, fmtMoney, statusPill } from './layout.tsx'
@@ -47,14 +51,22 @@ admin.get('/', async (c) => {
   // The commerce half of the dashboard. Loaded alongside the operational counts
   // rather than on its own page: what the list is worth is the first question,
   // and how many messages went out is the second.
-  const [totals, months, tiers, head, catalog] = await Promise.all([
+  const [totals, months, tiers, head, catalog, trend] = await Promise.all([
     commerceTotals(db),
     revenueByMonth(db, 12),
     customerTiers(db),
     headlines(db),
     listOffers(db),
+    // The hero. Loaded first among equals: "was the last one any good?" is the
+    // question this screen exists to answer, and everything else is context for it.
+    signalTrend(db, 14),
   ])
   const liveOffers = catalog.filter((o) => o.active).length
+
+  // ⭐ Goals sit under the money because they are the question the money can't
+  // answer on its own: revenue says how much came in, a goal says whether that
+  // was the number you were aiming at.
+  const goals = await activeGoals(db, 4)
 
   const recent = await db
     .select({
@@ -115,6 +127,8 @@ admin.get('/', async (c) => {
         </div>
       ) : null}
 
+      <SignalHero trend={trend} />
+
       <div class="card">
         <div class="card-b flush">
           <div class="stats">
@@ -168,8 +182,32 @@ admin.get('/', async (c) => {
         </div>
       )}
 
-      {/* Money on the left, conscience on the right — the two things worth
-          looking at every morning, side by side rather than stacked. */}
+      {/* ⭐ Goals — directly under the money, because they are what the money is
+          being measured against. A conversion is an event; this is the target. */}
+      <div class="card">
+        <div class="card-h">
+          <h2>Goals</h2>
+          <div class="actions">
+            <a class="btn sm" href="/goals">
+              {goals.length ? 'All goals' : 'Set one'}
+            </a>
+          </div>
+        </div>
+        <div class="card-b">
+          {goals.length === 0 ? (
+            <div class="empty">
+              <p>No goals set.</p>
+              <p class="faint">
+                A goal is a target over a named period — "30 yearly subscriptions in Q3". Set one
+                and this fills in as conversions land.
+              </p>
+            </div>
+          ) : (
+            goals.map((g) => <GoalBar g={g} />)
+          )}
+        </div>
+      </div>
+
       <div class="bento">
         {totals.orders > 0 ? (
           <div class="card col-7">

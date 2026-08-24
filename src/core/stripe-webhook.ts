@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm'
 import type { Db } from '../db/index.ts'
 import { saleItems, stripePrices, stripeProducts, stripeEvents } from '../db/schema.ts'
 import type { Env } from '../types.ts'
+import { recordConversion } from './conversions.ts'
 import { type SaleResult, recordSale } from './sales.ts'
 import { upsertPrice, upsertProduct } from './stripe-catalog.ts'
 import {
@@ -300,6 +301,12 @@ async function onCharge(
     },
   })
 
+  // A refund does NOT undo the conversion — a sale is a sale, and the refund is
+  // already on `sales.status` for accounting. The charge event carries no line
+  // items, so the kind falls back to the synced catalog; `checkout.session.
+  // completed` will have attached the basket already if it got here first.
+  if (result.saleId) await recordConversion(db, result.saleId)
+
   return saleOutcome(result, refundEvent ? 'refund' : 'charge')
 }
 
@@ -357,10 +364,13 @@ async function onCheckoutSession(
   )
   const attached = await attachSaleItems(db, result.saleId, items.data)
 
+  // AFTER the items land — both the kind and the offer are read off them.
+  const conv = await recordConversion(db, result.saleId, items.data)
+
   return {
     status: 'processed',
     saleId: result.saleId,
-    note: `checkout ${result.status}, ${attached} line item(s) attached`,
+    note: `checkout ${result.status}, ${attached} line item(s) attached, conversion ${conv.status}${conv.kindSlug ? ` (${conv.kindSlug})` : ''}`,
   }
 }
 
@@ -409,10 +419,16 @@ async function onInvoicePaid(env: Env, db: Db, invoice: StripeInvoice): Promise<
   if (!result.saleId) return saleOutcome(result, 'invoice')
 
   const attached = await attachSaleItems(db, result.saleId, invoice.lines?.data ?? [])
+
+  // The renewal path. The live line items carry `price.recurring.interval`, which
+  // is the ONLY reliable way to tell a yearly subscription from a one-off — see
+  // the note in `core/conversions.ts`.
+  const conv = await recordConversion(db, result.saleId, invoice.lines?.data ?? [])
+
   return {
     status: 'processed',
     saleId: result.saleId,
-    note: `invoice ${result.status}${subscription ? ' (subscription)' : ''}, ${attached} line item(s) attached`,
+    note: `invoice ${result.status}${subscription ? ' (subscription)' : ''}, ${attached} line item(s) attached, conversion ${conv.status}${conv.kindSlug ? ` (${conv.kindSlug})` : ''}`,
   }
 }
 

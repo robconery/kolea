@@ -173,10 +173,22 @@ export interface StripeLineItem {
   amount_total?: number
   /** Invoice line items. */
   amount?: number
-  /** Checkout line items only. */
-  price?: { id: string; product: string | { id: string } } | null
+  /** Checkout line items only. `recurring` is what tells a subscription from a
+      one-off without having to trust the synced catalog. */
+  price?: {
+    id: string
+    product: string | { id: string }
+    recurring?: { interval: string; interval_count: number } | null
+  } | null
   /** Invoice line items only. */
   pricing?: { price_details?: { price?: string; product?: string } | null } | null
+  /**
+   * The span this line bills for, epoch seconds. Invoice lines carry no `price`
+   * object in this API version, so the period is the only interval signal on the
+   * payload itself — a renewal covering a year is a yearly subscription whether
+   * or not the price catalog has been synced.
+   */
+  period?: { start: number; end: number } | null
 }
 
 /** The price and product a line item refers to, whichever shape it arrived in. */

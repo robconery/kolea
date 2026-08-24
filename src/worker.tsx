@@ -14,8 +14,12 @@ import { broadcasts, messages } from './db/schema.ts'
 import { handleMcp } from './mcp/server.ts'
 import type { Env, SendJob } from './types.ts'
 import { admin } from './web/admin.tsx'
+import { analytics } from './web/admin-analytics.tsx'
+import { analyticsSequences } from './web/admin-analytics-sequences.tsx'
 import { audience } from './web/admin-audience.tsx'
 import { campaignsAdmin } from './web/admin-campaigns.tsx'
+import { conversionsAdmin } from './web/admin-conversions.tsx'
+import { goalsAdmin } from './web/admin-goals.tsx'
 import { help } from './web/admin-help.tsx'
 import { mail } from './web/admin-mail.tsx'
 import { store } from './web/admin-store.tsx'
@@ -52,10 +56,17 @@ app.all('/mcp/:secret', (c) =>
 app.use('*', requireOperator)
 app.route('/', admin)
 app.route('/', audience)
+// Read-only by construction — see the header note in `web/admin-analytics.tsx`.
+// The sequence screens come first so `/analytics/sequences/:id` is matched by
+// its own router rather than swallowed by anything broader.
+app.route('/', analyticsSequences)
+app.route('/', analytics)
 app.route('/', tagging)
 app.route('/', store)
 app.route('/', mail)
 app.route('/', campaignsAdmin)
+app.route('/', conversionsAdmin)
+app.route('/', goalsAdmin)
 app.route('/', help)
 app.route('/', seed)
 

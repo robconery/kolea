@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm'
-import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
+import { index, integer, primaryKey, real, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
 
 // Conventions (see `sqlite-dev` skill): snake_case column names under camelCase
 // TS keys, plural tables, `id` surrogate key, NOT NULL FKs with explicit onDelete,
@@ -211,6 +211,29 @@ export const broadcasts = sqliteTable(
     // from the last subscriber id it reached.
     cursorSubscriberId: integer('cursor_subscriber_id').notNull().default(0),
     createdAt: ts('created_at').notNull(),
+
+    // ── Imported engagement totals (Kit history).
+    //
+    // Broadcasts imported from Kit have no `messages` rows and never will —
+    // nothing was sent from here, so there is no per-recipient history to
+    // reconstruct. Without these, every send before the cutover reads as a
+    // zero, and the dashboard's whole premise ("is my writing landing?")
+    // has one data point.
+    //
+    // `importedRecipients` is the flag: non-null means "trust this row, not
+    // the events table". `broadcastStats()` picks one source or the other and
+    // never blends them — a half-imported, half-live figure is a lie with a
+    // decimal point on it.
+    //
+    // Deliberately NOT stored: a delivered count. Kit reports one and Resend's
+    // webhook coverage is partial, so the two would not mean the same thing.
+    // Rates here are always over `recipients - bounced`.
+    importedRecipients: integer('imported_recipients'),
+    importedOpened: integer('imported_opened'),
+    importedClicked: integer('imported_clicked'),
+    importedUnsubscribed: integer('imported_unsubscribed'),
+    /** Provenance, so an imported figure can always be labelled as one in the UI. */
+    importedFrom: text('imported_from'),
   },
   (t) => [index('broadcasts_status_scheduled_idx').on(t.status, t.scheduledAt)],
 )
@@ -233,6 +256,29 @@ export const sequences = sqliteTable(
     campaignId: integer('campaign_id').references(() => campaigns.id, { onDelete: 'set null' }),
     isActive: integer('is_active', { mode: 'boolean' }).notNull().default(false),
     createdAt: ts('created_at').notNull(),
+
+    // ── Imported engagement totals (Kit history). Same contract as
+    // `broadcasts.imported*`: non-null `importedSubscribers` means "trust this
+    // row, not the events table", and the two sources are never blended.
+    //
+    // ⚠️ Kit reports sequence engagement as RATES, not counts — its report has
+    // an open rate and a click rate and no denominators anywhere. So rates are
+    // what gets stored, rather than counts reconstructed by multiplying by a
+    // subscriber figure that means something else entirely (Kit's
+    // "Subscribers" is who is in the sequence *now*, not who was ever mailed).
+    //
+    // Both rates are over people reached, which is how Kit computes them —
+    // NOT click-to-open. `core/analytics.ts` derives the click-to-open figure
+    // the Signal score wants by dividing one by the other, and says so.
+    importedSubscribers: integer('imported_subscribers'),
+    /** 0–1. Kit's "open rate", over recipients. */
+    importedOpenRate: real('imported_open_rate'),
+    /** 0–1. Kit's "click rate", over recipients — not over openers. */
+    importedClickRate: real('imported_click_rate'),
+    /** A count, not a rate. Kit reports this one as an integer. */
+    importedUnsubscribed: integer('imported_unsubscribed'),
+    /** Provenance, so an imported figure can always be labelled as one. */
+    importedFrom: text('imported_from'),
   },
   (t) => [uniqueIndex('sequences_slug_key').on(t.slug)],
 )
@@ -630,8 +676,12 @@ export const events = sqliteTable(
     messageId: integer('message_id')
       .notNull()
       .references(() => messages.id, { onDelete: 'cascade' }),
+    // `unsubscribe` is the one type that is not a provider webhook: it is written
+    // by the preference centre when a reader acts on a consent choice, against the
+    // message that brought them there. That makes "what did this send cost me?"
+    // the same query shape as opens and clicks, instead of a guess at a time window.
     type: text('type', {
-      enum: ['delivered', 'open', 'click', 'bounce', 'complaint', 'failed'],
+      enum: ['delivered', 'open', 'click', 'bounce', 'complaint', 'failed', 'unsubscribe'],
     }).notNull(),
     occurredAt: ts('occurred_at').notNull(),
     meta: text('meta', { mode: 'json' }).notNull().$type<Record<string, unknown>>().default({}),
@@ -979,3 +1029,189 @@ export type StripeEvent = typeof stripeEvents.$inferSelect
 export type StripeProduct = typeof stripeProducts.$inferSelect
 export type StripePrice = typeof stripePrices.$inferSelect
 export type SaleItem = typeof saleItems.$inferSelect
+
+// ─────────────────────────────────────────────────── conversions & goals
+
+/**
+ * ⭐ What counts as a conversion — as data, not an enum.
+ *
+ * Rob's funnel has more than two ends: bought something, signed up yearly,
+ * joined a cohort, and whatever comes next. An enum would make each of those a
+ * schema migration, so the *names* live here and only the *detection* stays in
+ * code (`classifyKind` in core/conversions.ts).
+ *
+ * `ruleType` is the small closed set of ways a sale can be recognised:
+ *
+ *   `price_interval` — `ruleValue` is a Stripe interval ('year'). The only
+ *      durable way to spot a subscription: of ~359 live yearly subs, 6 sit on
+ *      the product tagged `sku: yearly`, so product and offer both lie here.
+ *   `offer_in` — `ruleValue` is a comma-separated list of offer slugs. Cohorts
+ *      are just specific offers; The Pivot is one already.
+ *   `any_sale` — the catch-all. Whatever fell through is a purchase.
+ *   `manual` — never matched automatically. For goals fed by hand or by
+ *      something that isn't a Stripe sale at all.
+ *
+ * `priority` orders the walk, lowest first, and the FIRST match wins. That is
+ * what keeps "one row per sale, most specific kind" true: a yearly subscription
+ * is also a sale, and matching both would double every revenue sum.
+ */
+export const conversionKinds = sqliteTable(
+  'conversion_kinds',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    slug: text('slug').notNull(),
+    label: text('label').notNull(),
+    ruleType: text('rule_type', {
+      enum: ['price_interval', 'offer_in', 'any_sale', 'manual'],
+    })
+      .notNull()
+      .default('manual'),
+    /** Interpreted per `ruleType`. Null for `any_sale` and `manual`. */
+    ruleValue: text('rule_value'),
+    /** Lowest first, first match wins. Leave gaps so a kind can be slotted between. */
+    priority: integer('priority').notNull().default(100),
+    isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
+    createdAt: ts('created_at').notNull(),
+  },
+  (t) => [
+    uniqueIndex('conversion_kinds_slug_key').on(t.slug),
+    index('conversion_kinds_priority_idx').on(t.priority),
+  ],
+)
+
+/**
+ * ⭐ The bottom of the funnel: sent → opened → clicked → **converted**.
+ *
+ * `sales` records that money moved. This records that a *goal was reached*, and
+ * freezes the path the person took to reach it.
+ *
+ * ## One row per sale
+ *
+ * `sale_id` is UNIQUE, which is both the "most specific kind wins" rule and the
+ * idempotency guard against Stripe's at-least-once webhook delivery.
+ *
+ * ## ⚠️ No refund status, on purpose
+ *
+ * A sale is a sale (Rob's call, and he refunds for all sorts of reasons that say
+ * nothing about whether the mail worked). The refund itself is not lost — it
+ * lives on `sales.status`, where accounting can find it. A conversion is a
+ * marketing fact and simply does not track it.
+ *
+ * ## The frozen path
+ *
+ * `message_id` is the grain that makes a funnel joinable — `events` already
+ * counts opens and clicks per message, so a conversion carrying a message id
+ * puts the last step in the same keyspace as the first four. `campaign_id`,
+ * `offer_slug` and `kind_slug` are derived and stored anyway: re-running
+ * attribution must never silently rewrite last quarter's numbers.
+ */
+export const conversions = sqliteTable(
+  'conversions',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    subscriberId: integer('subscriber_id')
+      .notNull()
+      .references(() => subscribers.id, { onDelete: 'cascade' }),
+    // nullable-fk: `set null` so retiring a kind cannot delete the history that
+    // was counted under it — `kindSlug` below is what reports actually read.
+    kindId: integer('kind_id').references(() => conversionKinds.id, { onDelete: 'set null' }),
+    /** Frozen at conversion time. Renaming a kind must not rewrite the past. */
+    kindSlug: text('kind_slug').notNull(),
+    // nullable-fk: every conversion has a sale today, but a Discord signup or a
+    // webinar registration would not, and `value_cents` already carries the money.
+    saleId: integer('sale_id').references(() => sales.id, { onDelete: 'set null' }),
+    /** Frozen at conversion time. Never recomputed from the sale. */
+    valueCents: integer('value_cents').notNull().default(0),
+    currency: text('currency').notNull().default('usd'),
+
+    // ── the attribution path, frozen ───────────────────────────────────────
+    // nullable-fk: null when nobody clicked anything inside the window, which is
+    // the honest answer for a direct sale.
+    messageId: integer('message_id').references(() => messages.id, { onDelete: 'set null' }),
+    sourceKind: text('source_kind', {
+      enum: ['broadcast', 'sequence', 'form', 'direct'],
+    })
+      .notNull()
+      .default('direct'),
+    /** Id of the broadcast/sequence/form. Not a real FK — it points at three
+        tables, and a deleted broadcast must not erase how somebody converted.
+        0 sentinel rather than NULL, same reasoning as `attributions.source_id`. */
+    sourceId: integer('source_id').notNull().default(0),
+    // nullable-fk: derived from the message's broadcast/sequence. Most mail is
+    // not part of a campaign, and that is not a failure to record.
+    campaignId: integer('campaign_id').references(() => campaigns.id, { onDelete: 'set null' }),
+    // nullable-fk: resolved via `stripe_products.metadata.sku` → `offers.slug`.
+    offerId: integer('offer_id').references(() => offers.id, { onDelete: 'set null' }),
+    /** Denormalized and frozen. Null for a membership, which is not an offer. */
+    offerSlug: text('offer_slug'),
+    /** How the path was decided. `explicit` means a human said so, and no
+        automatic pass may overwrite it. */
+    attributedBy: text('attributed_by', {
+      enum: ['explicit', 'last_touch', 'none'],
+    })
+      .notNull()
+      .default('none'),
+    /** Seconds between the click and the conversion. Makes the attribution model
+        auditable after the fact instead of a thing you have to trust. */
+    touchLagSeconds: integer('touch_lag_seconds'),
+
+    occurredAt: ts('occurred_at').notNull(),
+    createdAt: ts('created_at').notNull(),
+  },
+  (t) => [
+    uniqueIndex('conversions_sale_key').on(t.saleId).where(sql`sale_id is not null`),
+    index('conversions_subscriber_idx').on(t.subscriberId),
+    index('conversions_message_idx').on(t.messageId),
+    index('conversions_campaign_idx').on(t.campaignId),
+    index('conversions_offer_idx').on(t.offerSlug),
+    // The shape every goal reads: this kind, in this window.
+    index('conversions_kind_occurred_idx').on(t.kindSlug, t.occurredAt),
+  ],
+)
+
+/**
+ * ⭐ A target: how many of a kind, over a named period.
+ *
+ * ## Periods are named, never arbitrary
+ *
+ * `periodType` + `periodYear` + `periodIndex` — "June 2026", "Q2 2026", "2026".
+ * Deliberately NOT a pair of timestamps: a goal running 3 May to 19 July is not
+ * comparable to anything, and the whole value of a goal is holding this quarter
+ * against the last one. The dates are derived (`core/goals.ts`), so the same
+ * label always means the same window.
+ *
+ * ## Goals overlap on purpose
+ *
+ * A quarterly goal and a campaign goal both count the same conversion. They are
+ * lenses, not buckets — a sale is not "spent" by being counted once. Which also
+ * means totals across goals do not sum to anything, and the UI must not imply
+ * they do.
+ */
+export const goals = sqliteTable(
+  'goals',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    name: text('name').notNull(),
+    // nullable-fk: null counts EVERY conversion in the window, which is the
+    // right shape for "make $40k this quarter, however it arrives".
+    kindId: integer('kind_id').references(() => conversionKinds.id, { onDelete: 'cascade' }),
+    periodType: text('period_type', { enum: ['month', 'quarter', 'year'] })
+      .notNull()
+      .default('year'),
+    periodYear: integer('period_year').notNull(),
+    /** 1–12 for a month, 1–4 for a quarter, ignored for a year. */
+    periodIndex: integer('period_index').notNull().default(0),
+    /** How many people. Null when the goal is only about money. */
+    targetCount: integer('target_count'),
+    /** How much money, in cents. Null when the goal is only about headcount. */
+    targetCents: integer('target_cents'),
+    // nullable-fk: null means "everything in the window", set means "this push".
+    campaignId: integer('campaign_id').references(() => campaigns.id, { onDelete: 'cascade' }),
+    createdAt: ts('created_at').notNull(),
+  },
+  (t) => [index('goals_period_idx').on(t.periodYear, t.periodType, t.periodIndex)],
+)
+
+export type Conversion = typeof conversions.$inferSelect
+export type ConversionKind = typeof conversionKinds.$inferSelect
+export type Goal = typeof goals.$inferSelect

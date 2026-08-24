@@ -425,6 +425,9 @@ mail.get('/broadcasts/:id', async (c) => {
   if (!b) return c.notFound()
 
   const stats = await broadcastStats(db, id)
+  // Bounces never reached a human, so every rate on this page is over this and
+  // never over `delivered` — provider delivered-webhook coverage is partial.
+  const reached = Math.max(0, stats.recipients - stats.bounced)
   const audienceSize = await countSegment(db, b.segment ?? {})
   const choices = await audienceChoices(db)
   const allCampaigns = await listCampaigns(db)
@@ -545,20 +548,46 @@ mail.get('/broadcasts/:id', async (c) => {
               <div class="stat">
                 <div class="n">{stats.opened}</div>
                 <div class="l">Opened</div>
+                {reached > 0 ? (
+                  <div class="h">{((stats.opened / reached) * 100).toFixed(1)}% of reached</div>
+                ) : null}
               </div>
               <div class="stat">
                 <div class="n">{stats.clicked}</div>
                 <div class="l">Clicked</div>
+                {stats.opened > 0 ? (
+                  <div class="h">
+                    {((stats.clicked / stats.opened) * 100).toFixed(2)}% of readers
+                  </div>
+                ) : null}
               </div>
               <div class="stat">
-                <div class="n">{stats.suppressed}</div>
-                <div class="l">Skipped</div>
+                <div class="n">{stats.unsubscribed}</div>
+                <div class="l">Unsubscribed</div>
+                {reached > 0 ? (
+                  <div class="h">{((stats.unsubscribed / reached) * 100).toFixed(2)}% of reached</div>
+                ) : null}
               </div>
-              <div class="stat">
-                <div class="n">{stats.failed}</div>
-                <div class="l">Failed</div>
-              </div>
+              {stats.source === 'live' ? (
+                <>
+                  <div class="stat">
+                    <div class="n">{stats.suppressed}</div>
+                    <div class="l">Skipped</div>
+                  </div>
+                  <div class="stat">
+                    <div class="n">{stats.failed}</div>
+                    <div class="l">Failed</div>
+                  </div>
+                </>
+              ) : null}
             </div>
+            {stats.source === 'imported' ? (
+              <p class="faint" style="margin:26px 0 0">
+                Totals carried over from Kit. There are no per-recipient records behind them, so
+                nothing here can be opened up — and rates are over recipients, which Kit already
+                reports net of bounces.
+              </p>
+            ) : null}
         </div>
       </div>
 

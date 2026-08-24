@@ -201,6 +201,7 @@ campaignsAdmin.get('/campaigns/:id', async (c) => {
         </div>
       ) : null}
 
+
       <div class="card">
         <div class="card-h">
           <h2>Sales</h2>
@@ -307,6 +308,7 @@ campaignsAdmin.get('/campaigns/:id', async (c) => {
                   placeholder="5000"
                 />
               </div>
+
             </div>
             <div class="field">
               <label>Description</label>
@@ -337,7 +339,6 @@ campaignsAdmin.post('/campaigns/:id', async (c) => {
 
   const goalRaw = String(form.get('goal') ?? '').trim()
   const goalCents = goalRaw ? readAmountCents(goalRaw) : null
-
   await updateCampaign(db, id, {
     name,
     description: String(form.get('description') ?? '') || null,

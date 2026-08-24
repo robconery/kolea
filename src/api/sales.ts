@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import { recordConversion } from '../core/conversions.ts'
 import { recordSale } from '../core/sales.ts'
 import { getDb } from '../db/index.ts'
 import type { Env } from '../types.ts'
@@ -79,7 +80,14 @@ salesApi.post('/api/sales', async (c) => {
   if (result.status === 'invalid_email') return c.json({ error: 'invalid email' }, 400)
   if (result.status === 'invalid_amount') return c.json({ error: 'invalid amount' }, 400)
 
+  // A manually posted sale converts too, refunded or not — a sale is a sale, and
+  // the refund is already recorded on the sale itself. No line items to read, so
+  // the kind falls back to the synced catalog and lands on the `any_sale`
+  // catch-all when nothing more specific matches.
+  const conversion = result.saleId ? (await recordConversion(db, result.saleId)).status : null
+
   const body = {
+    conversion,
     id: result.saleId,
     status: result.status,
     subscriber_id: result.subscriberId,

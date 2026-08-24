@@ -71,6 +71,27 @@
       "when": 1787292982913,
       "tag": "0009_brown_random",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1787600339134,
+      "tag": "0010_hard_meteorite",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1787606004294,
+      "tag": "0011_watery_valeria_richards",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1787606712010,
+      "tag": "0012_misty_jigsaw",
+      "breakpoints": true
     }
   ]
 }

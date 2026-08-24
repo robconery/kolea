@@ -294,6 +294,53 @@ export interface BroadcastStats {
   clicked: number
   bounced: number
   complained: number
+  /** Unique messages whose reader used the preference centre afterwards. */
+  unsubscribed: number
+  /**
+   * Where these numbers came from. `imported` means Kit's own totals, carried
+   * across at the cutover — there are no per-recipient rows behind them, so
+   * nothing here can be drilled into and the UI must say so.
+   */
+  source: 'live' | 'imported'
+}
+
+const EMPTY_STATS: Omit<BroadcastStats, 'source'> = {
+  recipients: 0,
+  sent: 0,
+  suppressed: 0,
+  failed: 0,
+  delivered: 0,
+  opened: 0,
+  clicked: 0,
+  bounced: 0,
+  complained: 0,
+  unsubscribed: 0,
+}
+
+/**
+ * Turn a broadcast's carried-over Kit totals into the same shape live stats use.
+ *
+ * Kit reports "Recipients" as who it actually delivered to, so there is no bounce
+ * figure to carry and `bounced` stays 0 — which keeps `recipients - bounced` a
+ * correct denominator on both paths. `delivered` stays 0 on purpose: it is not
+ * comparable to Resend's webhook-derived count, and nothing may divide by it.
+ */
+function importedStats(b: {
+  importedRecipients: number | null
+  importedOpened: number | null
+  importedClicked: number | null
+  importedUnsubscribed: number | null
+}): BroadcastStats {
+  const recipients = b.importedRecipients ?? 0
+  return {
+    ...EMPTY_STATS,
+    recipients,
+    sent: recipients,
+    opened: b.importedOpened ?? 0,
+    clicked: b.importedClicked ?? 0,
+    unsubscribed: b.importedUnsubscribed ?? 0,
+    source: 'imported',
+  }
 }
 
 export async function broadcastStats(db: Db, broadcastId: number): Promise<BroadcastStats> {
@@ -303,6 +350,24 @@ export async function broadcastStats(db: Db, broadcastId: number): Promise<Broad
     .where(eq(messages.broadcastId, broadcastId))
     .groupBy(messages.status)
     .all()
+
+  // No per-recipient history at all means one of two things: a Kit-era broadcast
+  // that carries its totals inline, or a broadcast that genuinely sent nothing.
+  // Never blend the two sources — a row is one or the other.
+  if (byStatus.length === 0) {
+    const b = await db
+      .select({
+        importedRecipients: broadcasts.importedRecipients,
+        importedOpened: broadcasts.importedOpened,
+        importedClicked: broadcasts.importedClicked,
+        importedUnsubscribed: broadcasts.importedUnsubscribed,
+      })
+      .from(broadcasts)
+      .where(eq(broadcasts.id, broadcastId))
+      .get()
+    if (b?.importedRecipients != null) return importedStats(b)
+    return { ...EMPTY_STATS, source: 'live' }
+  }
 
   const byEvent = await db
     .select({ type: events.type, n: sql<number>`count(distinct ${events.messageId})` })
@@ -325,5 +390,7 @@ export async function broadcastStats(db: Db, broadcastId: number): Promise<Broad
     clicked: e('click'),
     bounced: e('bounce'),
     complained: e('complaint'),
+    unsubscribed: e('unsubscribe'),
+    source: 'live',
   }
 }
