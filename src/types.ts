@@ -6,6 +6,8 @@ export interface Env {
   DB: D1Database
   SEND_QUEUE?: Queue<SendJob>
   MEDIA: R2Bucket
+  /** Lead-magnet files. Separate from MEDIA — nothing serves this bucket by key. */
+  DOWNLOADS: R2Bucket
   ASSETS: Fetcher
 
   EMAIL_PROVIDER: string

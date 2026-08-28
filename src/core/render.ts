@@ -17,6 +17,12 @@ export interface RenderContext {
   trackClicks: boolean
   /** False for transactional mail: a receipt gets no unsubscribe footer. */
   showFooter: boolean
+  /**
+   * Per-message merge values the subscriber row can't supply — today `{{link}}`,
+   * a lead magnet's download URL, which is one person's grant token and so
+   * cannot be baked into the body the operator wrote.
+   */
+  extras?: Record<string, string>
 }
 
 export interface RenderedEmail {
@@ -26,12 +32,20 @@ export interface RenderedEmail {
   oneClickUnsubscribeUrl: string
 }
 
-export function mergeFields(body: string, sub: { email: string; name: string | null }): string {
+export function mergeFields(
+  body: string,
+  sub: { email: string; name: string | null },
+  extras?: Record<string, string>,
+): string {
   const first = (sub.name ?? '').trim().split(/\s+/)[0] ?? ''
-  return body
+  let out = body
     .replace(/\{\{\s*name\s*\}\}/g, sub.name ?? 'there')
     .replace(/\{\{\s*first_name\s*\}\}/g, first || 'there')
     .replace(/\{\{\s*email\s*\}\}/g, sub.email)
+  for (const [field, value] of Object.entries(extras ?? {})) {
+    out = out.replaceAll(`{{${field}}}`, value)
+  }
+  return out
 }
 
 export interface EmailBody {
@@ -56,15 +70,19 @@ export function renderEmail(body: EmailBody, ctx: RenderContext): RenderedEmail 
   const oneClickUnsubscribeUrl = `${ctx.publicUrl}/p/${ctx.unsubToken}/one-click?${from}`
 
   // Never track the unsubscribe link itself — a click on "leave this series"
-  // must not be routed through a redirect that could fail.
+  // must not be routed through a redirect that could fail. Download links are
+  // exempt for the same reason: the download is already counted on its grant
+  // row, so the redirect would add a way for the one link that matters to break
+  // and buy nothing.
   const trackLink = (url: string): string => {
     if (!ctx.trackClicks) return url
     if (url.startsWith(`${ctx.publicUrl}/p/`)) return url
+    if (url.startsWith(`${ctx.publicUrl}/d/`)) return url
     if (!/^https?:\/\//i.test(url)) return url
     return `${ctx.publicUrl}/t/click/${ctx.messageId}?u=${encodeURIComponent(url)}`
   }
 
-  const mergeValue = (field: string): string => mergeFieldValue(field, ctx.subscriber)
+  const mergeValue = (field: string): string => mergeFieldValue(field, ctx.subscriber, ctx.extras)
 
   let inner: string
   let plain: string
@@ -75,7 +93,7 @@ export function renderEmail(body: EmailBody, ctx: RenderContext): RenderedEmail 
     plain = renderDocToText(body.json, o)
   } else {
     // Legacy markdown path.
-    const merged = mergeFields(body.md, ctx.subscriber)
+    const merged = mergeFields(body.md, ctx.subscriber, ctx.extras)
     inner = marked.parse(merged, { async: false }) as string
     if (ctx.trackClicks) inner = rewriteLinks(inner, ctx)
     plain = stripMd(merged)
@@ -84,6 +102,24 @@ export function renderEmail(body: EmailBody, ctx: RenderContext): RenderedEmail 
   const pixel = ctx.trackOpens
     ? `<img src="${ctx.publicUrl}/t/open/${ctx.messageId}.gif" width="1" height="1" alt="" style="display:block;border:0" />`
     : ''
+
+  // A second pass over the finished strings, because `{{link}}` is most useful
+  // as a *link target* — the href of a button or a link — and the
+  // document walker only merges text nodes. Cheap, and it means the operator can
+  // put the token wherever it reads best without learning which places work.
+  for (const [field, value] of Object.entries(ctx.extras ?? {})) {
+    const token = `{{${field}}}`
+    inner = inner.replaceAll(token, value)
+    plain = plain.replaceAll(token, value)
+    // A link href goes through `trackLink` first, which percent-encodes the whole
+    // target into `?u=` — so by the time we get here the braces are `%7B%7B…`.
+    // Substituting that form too is what makes a click-tracked download button work.
+    const wrapped = encodeURIComponent(token)
+    if (wrapped !== token) {
+      inner = inner.replaceAll(wrapped, encodeURIComponent(value))
+      plain = plain.replaceAll(wrapped, encodeURIComponent(value))
+    }
+  }
 
   const html = shell(inner, ctx.showFooter ? footerHtml(ctx, preferenceUrl) : '', pixel)
   const text = ctx.showFooter
@@ -121,7 +157,11 @@ export function footerPreviewHtml(scope: Scope, scopeLabel: string): string {
 }
 
 /** Shared by the markdown path and the rich-document `mergeTag` node. */
-export function mergeFieldValue(field: string, sub: { email: string; name: string | null }): string {
+export function mergeFieldValue(
+  field: string,
+  sub: { email: string; name: string | null },
+  extras?: Record<string, string>,
+): string {
   const first = (sub.name ?? '').trim().split(/\s+/)[0] ?? ''
   switch (field) {
     case 'first_name':
@@ -131,7 +171,7 @@ export function mergeFieldValue(field: string, sub: { email: string; name: strin
     case 'email':
       return sub.email
     default:
-      return ''
+      return extras?.[field] ?? ''
   }
 }
 
@@ -164,6 +204,7 @@ function footerText(ctx: RenderContext): string {
 function rewriteLinks(html: string, ctx: RenderContext): string {
   return html.replace(/href="(https?:\/\/[^"]+)"/g, (match, url: string) => {
     if (url.startsWith(`${ctx.publicUrl}/p/`)) return match // never track the unsubscribe link
+    if (url.startsWith(`${ctx.publicUrl}/d/`)) return match // nor the download, counted on its grant
     return `href="${ctx.publicUrl}/t/click/${ctx.messageId}?u=${encodeURIComponent(url)}"`
   })
 }

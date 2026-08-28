@@ -1,8 +1,12 @@
-import { asc, eq, sql } from 'drizzle-orm'
+import { and, asc, count, eq, sql } from 'drizzle-orm'
 import type { Db } from '../db/index.ts'
-import { campaigns, formTags, forms, sequences, tags } from '../db/schema.ts'
+import { type DocNode, campaigns, formTags, forms, messages, sequences, tags } from '../db/schema.ts'
+import type { Env } from '../types.ts'
 import { recordTouch } from './campaigns.ts'
-import { slugify } from './ids.ts'
+import { grantDownload } from './downloads.ts'
+import { normalizeEmail, slugify } from './ids.ts'
+import { docIsEmpty } from './render-doc.ts'
+import { dispatch } from './sending.ts'
 import { enroll } from './sequences.ts'
 import { upsertSubscriber } from './subscribers.ts'
 
@@ -21,6 +25,16 @@ export async function listForms(db: Db) {
     .leftJoin(campaigns, eq(campaigns.id, forms.campaignId))
     .orderBy(asc(forms.name))
     .all()
+}
+
+/** How much delivery mail this form has actually put on the wire. */
+export async function formDeliveryCount(db: Db, formId: number): Promise<number> {
+  const row = await db
+    .select({ n: count() })
+    .from(messages)
+    .where(and(eq(messages.formId, formId), eq(messages.status, 'sent')))
+    .get()
+  return row?.n ?? 0
 }
 
 export async function getForm(db: Db, id: number) {
@@ -71,6 +85,9 @@ export interface FormInput {
   successMessage?: string
   isActive?: boolean
   tagIds?: number[]
+  // ── The reply and its file are NOT here. They are written only by
+  // `setFormReply` and the upload endpoint, so saving a form's settings can
+  // never silently change — or erase — what lands in somebody's inbox.
 }
 
 export async function createForm(db: Db, input: FormInput): Promise<number> {
@@ -109,6 +126,31 @@ export async function updateForm(db: Db, id: number, input: FormInput): Promise<
   await setFormTags(db, id, input.tagIds ?? [])
 }
 
+/**
+ * The reply, written on its own.
+ *
+ * Separate from `updateForm` because it is the one part of a form that puts mail
+ * on the wire: saving the settings must never be able to quietly change, or
+ * quietly erase, what gets sent.
+ */
+export interface ReplyInput {
+  /** Empty turns the reply off. That check is the whole on/off switch. */
+  subject: string | null
+  bodyJson: DocNode | null
+  bodyMd: string
+}
+
+export async function setFormReply(db: Db, id: number, input: ReplyInput): Promise<void> {
+  await db
+    .update(forms)
+    .set({
+      deliverySubject: input.subject?.trim() || null,
+      deliveryBodyJson: input.bodyJson,
+      deliveryBodyMd: input.bodyMd,
+    })
+    .where(eq(forms.id, id))
+}
+
 export async function setFormTags(db: Db, formId: number, tagIds: number[]): Promise<void> {
   await db.delete(formTags).where(eq(formTags.formId, formId))
   for (const tagId of tagIds) {
@@ -142,8 +184,98 @@ export interface SubmitResult {
   subscriberId?: number
   /** Whether this submission started the form's sequence. */
   enrolled?: boolean
+  /** Whether the reply — the one carrying the file — was queued by this submission. */
+  delivered?: boolean
   message: string
   redirectUrl?: string | null
+}
+
+export type DeliveryOutcome =
+  /** The form has no reply configured. Most forms. */
+  | 'none'
+  /** A subject with nothing under it. Refused rather than sending a blank email. */
+  | 'no_body'
+  | 'queued'
+  /** This address already got it today. See the idempotency key below. */
+  | 'already'
+
+/**
+ * ⭐ Hand over the lead magnet, now.
+ *
+ * Deliberately *not* step 1 of a sequence. A sequence step waits for the minutely
+ * tick, is silently swallowed while the sequence is paused, and is refused for
+ * anyone holding a `sequence_optouts` row for that series — three ways for
+ * somebody who just asked for a file to get nothing. This goes out inside the
+ * submit request, under the transactional consent rule, so an unsubscribed
+ * reader still receives what they asked for. `forms.sequence_id` still handles
+ * whatever nurture follows.
+ *
+ * ⚠️ `/f/:slug` is public, unauthenticated and CORS-open, so this is the one
+ * place in Kōlea where a stranger's HTTP request causes mail to be sent. The
+ * idempotency key is dated on purpose: at most one delivery per address per form
+ * per day. That caps what a bot can do with the endpoint to a single message,
+ * while still letting somebody who genuinely lost the mail re-submit tomorrow.
+ */
+async function deliver(
+  env: Env,
+  db: Db,
+  form: typeof forms.$inferSelect,
+  subscriber: { id: number; email: string },
+): Promise<DeliveryOutcome> {
+  const subject = form.deliverySubject?.trim()
+  if (!subject) return 'none'
+
+  const json = form.deliveryBodyJson
+  const md = form.deliveryBodyMd ?? ''
+  const hasBody = (json && !docIsEmpty(json)) || md.trim().length > 0
+  if (!hasBody) return 'no_body'
+
+  // The link is per person, so it has to exist before the mail is rendered.
+  if (form.downloadKey) await grantDownload(db, form.id, subscriber.id)
+
+  const idempotencyKey = `form:${form.id}:${subscriber.id}:${new Date().toISOString().slice(0, 10)}`
+  const already = await db
+    .select({ id: messages.id })
+    .from(messages)
+    .where(eq(messages.idempotencyKey, idempotencyKey))
+    .get()
+  if (already) return 'already'
+
+  let messageId: number
+  try {
+    const inserted = await db
+      .insert(messages)
+      .values({
+        subscriberId: subscriber.id,
+        kind: 'form',
+        formId: form.id,
+        toEmail: subscriber.email,
+        subject,
+        // Snapshotted, not referenced: the form is a template the operator keeps
+        // editing, and what went out has to stay what went out (invariant 9).
+        bodyJson: json ?? null,
+        bodyMd: md,
+        status: 'queued',
+        idempotencyKey,
+        createdAt: new Date(),
+      })
+      .returning({ id: messages.id })
+    messageId = inserted[0]!.id
+  } catch {
+    // Lost the race with a double-click: the unique index on `idempotency_key`
+    // caught the second insert, which is the index doing its job. Somebody
+    // impatient must not get a 500 from a form that worked.
+    return 'already'
+  }
+
+  try {
+    await dispatch(env, db, [messageId])
+  } catch {
+    // A queue that refuses the job must not fail the submission: the person is
+    // saved, the message row exists, and `health` reports anything left sitting
+    // in `queued`. Losing the mail is recoverable; losing the signup is not.
+  }
+  return 'queued'
 }
 
 /**
@@ -152,10 +284,16 @@ export interface SubmitResult {
  *
  * Every effect here is idempotent, because a form gets double-submitted by
  * impatient people and retried by flaky networks. Tagging skips tags already
- * present, `recordTouch` collapses on its unique index, and `enroll` refuses a
- * second enrollment — so submitting twice is indistinguishable from once.
+ * present, `recordTouch` collapses on its unique index, `enroll` refuses a
+ * second enrollment, and the delivery mail is keyed by form+person+day — so
+ * submitting twice is indistinguishable from once.
  */
-export async function submitForm(db: Db, slug: string, input: SubmitInput): Promise<SubmitResult> {
+export async function submitForm(
+  env: Env,
+  db: Db,
+  slug: string,
+  input: SubmitInput,
+): Promise<SubmitResult> {
   const form = await getFormBySlug(db, slug)
   if (!form) return { status: 'unknown_form', message: 'No such form.' }
 
@@ -195,6 +333,11 @@ export async function submitForm(db: Db, slug: string, input: SubmitInput): Prom
     enrolled = result === 'enrolled' || result === 'already'
   }
 
+  // Fulfillment last, and only after the person exists: everything above is a
+  // database write we can repeat, and this is the one step that leaves the
+  // building.
+  const delivery = await deliver(env, db, form, { id, email: normalizeEmail(input.email) })
+
   // Counters live in D1 because Workers logs are gone within the week.
   await db
     .update(forms)
@@ -205,6 +348,7 @@ export async function submitForm(db: Db, slug: string, input: SubmitInput): Prom
     status: 'ok',
     subscriberId: id,
     enrolled,
+    delivered: delivery === 'queued',
     message: form.successMessage,
     redirectUrl: form.redirectUrl,
   }

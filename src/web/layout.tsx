@@ -864,6 +864,8 @@ const ICONS: Record<string, string> = {
   bc: 'M4 12.2 20.2 4.6l-4.4 15.2-3.9-5.9L4 12.2Zm7.9 1.7 4.9-8',
   seq: 'M5.4 6.6h6.2a3.1 3.1 0 0 1 0 6.2H9a3.1 3.1 0 0 0 0 6.2h6.6M14.6 16.6l2.6 2.4-2.6 2.4M14.6 4.2 17.2 6.6l-2.6 2.4',
   out: 'M4 13.6h4.2l1.3 2.5h5l1.3-2.5H20M6.5 4.8h11l2.5 8.8v5.6H4v-5.6l2.5-8.8Z',
+  /* A sheet with a filled line and an arrow leaving it: fill this in, get that back. */
+  forms: 'M6.2 3.8h11.6v16.4H6.2V3.8Zm2.8 4.2h6M9 11.2h3.2M14.8 12.6v5m0 0 2-2m-2 2-2-2',
   camp: 'M12 3.6a8.4 8.4 0 1 0 0 16.8 8.4 8.4 0 0 0 0-16.8Zm0 4.6a3.8 3.8 0 1 0 0 7.6 3.8 3.8 0 0 0 0-7.6Zm0 3.3a.5.5 0 1 0 0 1 .5.5 0 0 0 0-1Z',
   store: 'M5.6 8.2h12.8l1 11.4H4.6l1-11.4Zm3.4 0V6.4a3 3 0 0 1 6 0v1.8',
   /* A target with an arrow in it. */
@@ -927,6 +929,9 @@ const NAV: ({ grp: string } | { href: string; key: string; label: string })[] = 
   { href: '/outbox', key: 'out', label: 'Outbox' },
   { grp: 'Money' },
   { href: '/campaigns', key: 'camp', label: 'Campaigns' },
+  // ⭐ Its own slot rather than a tab under Campaigns: a form is where a lead
+  // magnet is built and where the file lives, and it was unfindable one level in.
+  { href: '/forms', key: 'forms', label: 'Forms' },
   // ⭐ Target first, then the events measured against it, then the catalogue
   // they were sold from: the funnel reads top to bottom in the rail too.
   { href: '/goals', key: 'goals', label: 'Goals' },
@@ -1089,6 +1094,19 @@ export const CampaignTabs: FC<{ on: 'campaigns' | 'forms' | 'sales' }> = ({ on }
   </div>
 )
 
+/** "4.2 MB". Sizes are for a human deciding whether a zip is too big to email about. */
+export function fmtBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  const units = ['KB', 'MB', 'GB']
+  let n = bytes / 1024
+  let i = 0
+  while (n >= 1024 && i < units.length - 1) {
+    n /= 1024
+    i++
+  }
+  return `${n < 10 ? n.toFixed(1) : Math.round(n)} ${units[i]}`
+}
+
 /** The eyebrow that sits over a page title. Small, quiet, and always there. */
 export const Eyebrow: FC<PropsWithChildren> = ({ children }) => (
   <div class="eyebrow">{children}</div>
@@ -1166,14 +1184,24 @@ export const RichEditor: FC<{
   bare?: boolean
   /** The consent footer, rendered by `footerPreviewHtml`, shown under the paper. */
   footer?: string
-}> = ({ json, md, bare, footer }) => {
+  /**
+   * Standing in an ordinary page rather than the composer frame, where the host
+   * is the whole sheet — so the footer closes it instead of floating under it as
+   * a second, narrower one. See `.bm-inline` in `client/editor.css`.
+   */
+  inline?: boolean
+}> = ({ json, md, bare, footer, inline }) => {
   // Markdown-authored content is converted for editing. Without this the editor
   // would open empty on legacy content and the first save would erase it.
   const doc = json ?? (md ? mdToDoc(md) : null)
   const guts = (
     <>
       <input type="hidden" name="body_json" value={doc ? JSON.stringify(doc) : ''} />
-      <div class="bm-editor-host" data-editor data-field="body_json" />
+      <div
+        class={inline ? 'bm-editor-host bm-inline' : 'bm-editor-host'}
+        data-editor
+        data-field="body_json"
+      />
       <noscript>
         <textarea name="body_md_fallback" placeholder="Markdown (JavaScript is off)">
           {md ?? ''}
@@ -1239,6 +1267,25 @@ export const MailReader: FC<{
       ) : null}
     </div>
   )
+}
+
+/**
+ * Read a body back out of a posted form: the rich document if the editor posted
+ * one, markdown otherwise (the `<noscript>` path, or a legacy form).
+ *
+ * Lives next to `RichEditor` because it is the other half of the same contract —
+ * one field of body content, however it was authored.
+ */
+export function readEditorBody(form: FormData): { bodyJson: DocNode | null; bodyMd: string } {
+  const raw = String(form.get('body_json') ?? '').trim()
+  const md = String(form.get('body_md_fallback') ?? form.get('body') ?? '')
+  if (!raw) return { bodyJson: null, bodyMd: md }
+  try {
+    return { bodyJson: JSON.parse(raw) as DocNode, bodyMd: md }
+  } catch {
+    // Never lose someone's writing to a parse error.
+    return { bodyJson: null, bodyMd: md || raw }
+  }
 }
 
 /** The hint that lives under the editor everywhere else. */

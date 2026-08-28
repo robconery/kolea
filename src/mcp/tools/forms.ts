@@ -1,12 +1,15 @@
 import type { McpServer } from '@modelcontextprotocol/server'
 import * as z from 'zod/v4'
+import { fileStats } from '../../core/downloads.ts'
 import {
   createForm,
   deleteForm,
+  formDeliveryCount,
   formTagIds,
   formTagList,
   getForm,
   listForms,
+  setFormReply,
   updateForm,
 } from '../../core/forms.ts'
 import { type Ctx, defineTool, fail, ok } from '../kit.ts'
@@ -48,9 +51,23 @@ export function registerForms(server: McpServer, ctx: Ctx): void {
       if (!form) return fail('No such form.')
 
       const endpoint = `${ctx.env.PUBLIC_URL}/f/${form.slug}`
+      const stats = await fileStats(ctx.db, id)
       return ok({
         ...form,
         endpoint,
+        reply: {
+          // No subject means no reply is sent. That check is the on/off switch.
+          active: Boolean(form.deliverySubject?.trim()),
+          sent: await formDeliveryCount(ctx.db, id),
+          file: form.downloadKey
+            ? {
+                filename: form.downloadFilename,
+                bytes: form.downloadBytes,
+                linksIssued: stats.links,
+                downloads: stats.taken,
+              }
+            : null,
+        },
         tags: await formTagList(ctx.db, id),
         embed: [
           `<form method="post" action="${endpoint}">`,
@@ -101,7 +118,7 @@ export function registerForms(server: McpServer, ctx: Ctx): void {
     'form_update',
     {
       description:
-        'Update a form. Omitted fields are cleared, not kept — read the form with form_get first and pass the whole shape back.',
+        'Update a form. Omitted fields are cleared, not kept — read the form with form_get first and pass the whole shape back. The reply and its file are not touched here; the reply has its own tool, form_set_reply.',
       inputSchema: z.object({
         id: z.number().int(),
         name: z.string().min(1),
@@ -129,6 +146,48 @@ export function registerForms(server: McpServer, ctx: Ctx): void {
         isActive: args.is_active ?? true,
       })
       return ok({ updated: true })
+    },
+  )
+
+  defineTool(
+    server,
+    ctx,
+    'form_set_reply',
+    {
+      description: [
+        "Write the form's reply — the email that goes out the instant somebody submits, carrying the file they signed up for.",
+        'It is NOT a sequence step: it sends inside the submit request, under the transactional consent rule, so an unsubscribed reader still gets what they asked for. Use the form\'s sequence for the nurture that follows.',
+        'Put {{link}} in the body where the download belongs; it renders as that one person\'s private URL.',
+        'An empty subject turns the reply off. The file itself is uploaded from the form\'s page in the admin console — binary, so there is no tool for it.',
+      ].join(' '),
+      inputSchema: z.object({
+        id: z.number().int(),
+        subject: z.string().describe('Empty string turns the reply off'),
+        body: z.string().describe('Markdown. Include {{link}} when the form has a file attached'),
+      }),
+      annotations: { idempotentHint: true },
+    },
+    async (args) => {
+      const form = await getForm(ctx.db, args.id)
+      if (!form) return fail('No such form.')
+
+      if (args.subject.trim() && !args.body.trim()) {
+        return fail('A reply needs a body. An empty email is worse than none.')
+      }
+      if (form.downloadKey && args.subject.trim() && !args.body.includes('{{link}}')) {
+        return fail(
+          `This form hands over ${form.downloadFilename}, but the body has no {{link}} in it, so the reader would get no download. Add it.`,
+        )
+      }
+
+      await setFormReply(ctx.db, args.id, {
+        subject: args.subject,
+        // Markdown only from here: the rich document is authored in the admin
+        // editor, and writing null clears it so what you passed is what sends.
+        bodyJson: null,
+        bodyMd: args.body,
+      })
+      return ok({ updated: true, replyActive: Boolean(args.subject.trim()) })
     },
   )
 

@@ -427,7 +427,36 @@
      own. The toolbar keeps the top edge; the title bar above it scrolls away. */
   .compose-main .bm-editor { padding: 18px 0 0; }
   .compose-main .bm-prose { min-height: 52vh; padding: 26px 22px; border-radius: 0; border-left: 0; border-right: 0; }
-  .bm-mailfoot { width: 100%; margin: 0; padding: 18px 22px 26px; border-radius: 0; border-left: 0; border-right: 0; }
+  .compose-main .bm-mailfoot { width: 100%; margin: 0; padding: 18px 22px 26px; border-radius: 0; border-left: 0; border-right: 0; }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   The editor inline in a page — a form's reply, not the composer.
+
+   Here the host *is* the sheet: full width, one radius, one shadow. The footer
+   has to close that sheet rather than float under it as a second, narrower
+   piece of paper, so it drops the composer's centred 640px column and takes the
+   prose's own side padding. Same rule, same left edge, one object.
+   ───────────────────────────────────────────────────────────────────────── */
+.bm-inline .bm-prose {
+  /* The 60px floor is for a page-tall sheet with nothing under it. With a
+     footer closing the sheet it only needs room to click into. */
+  padding-bottom: 40px;
+  border-radius: 0;
+}
+.bm-inline > .bm-mailfoot {
+  width: auto;
+  max-width: none;
+  margin: 0;
+  /* 34px is `.bm-prose`'s side padding: the footer text starts on the same
+     vertical as the words above it. */
+  padding: 18px 34px 26px;
+  border: 0;
+  border-top: 1px solid var(--e-line-2);
+  border-radius: 0 0 14px 14px;
+}
+@media (max-width: 980px) {
+  .bm-inline > .bm-mailfoot { padding: 16px 22px 22px; }
 }
 
 /* ── reading a sent mail

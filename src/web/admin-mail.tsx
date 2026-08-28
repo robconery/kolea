@@ -37,6 +37,7 @@ import {
   RichEditor,
   fmtDate,
   readCampaignId,
+  readEditorBody,
   statusPill,
 } from './layout.tsx'
 
@@ -281,22 +282,6 @@ const Subject = ({ value }: { value?: string }) => (
 )
 
 /**
- * Read a body from a form: rich document if the editor posted one, markdown
- * otherwise (the `<noscript>` path, or a legacy form).
- */
-function readBody(form: FormData): { bodyJson: DocNode | null; bodyMd: string } {
-  const raw = String(form.get('body_json') ?? '').trim()
-  const md = String(form.get('body_md_fallback') ?? form.get('body') ?? '')
-  if (!raw) return { bodyJson: null, bodyMd: md }
-  try {
-    return { bodyJson: JSON.parse(raw) as DocNode, bodyMd: md }
-  } catch {
-    // Never lose someone's writing to a parse error.
-    return { bodyJson: null, bodyMd: md || raw }
-  }
-}
-
-/**
  * Did the operator press "Send a preview" rather than "Save"?
  *
  * The preview button is a submit inside the composer's own form, so the draft
@@ -334,7 +319,7 @@ mail.post('/broadcasts', async (c) => {
   const subject = String(form.get('subject') ?? 'Untitled')
   const id = await createBroadcast(db, {
     subject,
-    ...readBody(form),
+    ...readEditorBody(form),
     ...audience,
     campaignId: readCampaignId(form),
   })
@@ -367,7 +352,7 @@ mail.post('/broadcasts/autosave', async (c) => {
     })
     const id = await createBroadcast(db, {
       subject: subject || 'Untitled',
-      ...readBody(form),
+      ...readEditorBody(form),
       ...audience,
       campaignId: readCampaignId(form),
     })
@@ -387,7 +372,7 @@ mail.post('/broadcasts/autosave', async (c) => {
     .update(broadcasts)
     .set({
       subject,
-      ...readBody(form),
+      ...readEditorBody(form),
       ...audience,
       campaignId: readCampaignId(form),
     })
@@ -629,7 +614,7 @@ mail.post('/broadcasts/:id/edit', async (c) => {
     .update(broadcasts)
     .set({
       subject,
-      ...readBody(form),
+      ...readEditorBody(form),
       ...audience,
       campaignId: readCampaignId(form),
     })
@@ -968,7 +953,7 @@ mail.post('/sequences/:id/steps', async (c) => {
   const subject = String(form.get('subject') ?? '')
   const added = await addStep(db, id, {
     subject,
-    ...readBody(form),
+    ...readEditorBody(form),
     ...(raw !== null && String(raw).trim() !== '' ? { delayDays: Number(raw) } : {}),
   })
 
@@ -1004,7 +989,7 @@ mail.post('/sequences/:id/steps/autosave', async (c) => {
   const rawId = String(form.get('id') ?? '').trim()
 
   if (!rawId) {
-    const added = await addStep(db, id, { subject, ...readBody(form), ...delay })
+    const added = await addStep(db, id, { subject, ...readEditorBody(form), ...delay })
     if (!added.ok || !added.stepId) {
       return c.json({ ok: false, reason: added.reason ?? 'could not add the step' }, 422)
     }
@@ -1017,7 +1002,7 @@ mail.post('/sequences/:id/steps/autosave', async (c) => {
   }
 
   const stepId = Number(rawId)
-  const result = await updateStep(db, stepId, { subject, ...readBody(form), ...delay })
+  const result = await updateStep(db, stepId, { subject, ...readEditorBody(form), ...delay })
   if (!result.ok) return c.json({ ok: false, reason: 'that step is gone' }, 404)
 
   return c.json({
@@ -1198,7 +1183,7 @@ mail.post('/sequences/:id/steps/:stepId', async (c) => {
   const subject = String(form.get('subject') ?? '')
   const result = await updateStep(db, stepId, {
     subject,
-    ...readBody(form),
+    ...readEditorBody(form),
     ...(raw !== null && String(raw).trim() !== '' ? { delayDays: Number(raw) } : {}),
   })
   if (!result.ok) return c.notFound()

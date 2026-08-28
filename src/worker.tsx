@@ -1,5 +1,6 @@
 import { and, asc, eq, lte, or } from 'drizzle-orm'
 import { Hono } from 'hono'
+import { downloadRoutes } from './api/downloads.ts'
 import { formsApi } from './api/forms.tsx'
 import { mediaRoutes } from './api/media.ts'
 import { api } from './api/routes.ts'
@@ -43,6 +44,11 @@ app.route('/', formsApi)
 app.route('/', salesApi)
 // Serving media is public (the URLs go into email); uploading is guarded inside.
 app.route('/', mediaRoutes)
+// `/d/:token` is public — a form's file, and the link arrives in somebody's
+// inbox where there is no Access login. The grant token is the whole
+// authorization; uploading is guarded inside. ⚠️ Production needs a Cloudflare
+// Access **Bypass** policy for `/d/*`.
+app.route('/', downloadRoutes)
 
 // MCP carries its own credential (path secret + admin-scoped bearer key), so it
 // sits ahead of the Cloudflare Access gate — an agent has no browser to do an

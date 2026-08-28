@@ -13,6 +13,7 @@ import {
   canReceiveTransactionalIn,
   loadConsentSnapshot,
 } from './consent.ts'
+import { downloadUrl, grantDownload, grantsForMessages } from './downloads.ts'
 import { normalizeEmail } from './ids.ts'
 import { BROADCAST_SCOPE_LABEL, type EmailBody, renderEmail } from './render.ts'
 
@@ -29,6 +30,13 @@ export function previewAddress(env: Env): string {
 export type PreviewTarget =
   | { kind: 'broadcast'; broadcastId: number; subject: string }
   | { kind: 'sequence'; stepId: number; sequenceId: number; subject: string }
+  /**
+   * A form's delivery mail. It carries its body inline rather than an id,
+   * because the operator is previewing the draft in front of them — and a real
+   * grant is minted for the preview recipient, so the download link in the copy
+   * that arrives is a working one.
+   */
+  | { kind: 'form'; formId: number; subject: string; body: EmailBody; hasFile: boolean }
 
 export type PreviewResult = { ok: true; messageId: number; to: string } | { ok: false; reason: string }
 
@@ -63,8 +71,16 @@ export async function sendPreview(
   const block =
     target.kind === 'sequence'
       ? canReceiveSequenceIn(snapshot, sub, target.sequenceId)
-      : canReceiveBroadcastIn(snapshot, sub)
+      : target.kind === 'form'
+        ? canReceiveTransactionalIn(snapshot, sub.email)
+        : canReceiveBroadcastIn(snapshot, sub)
   if (block.blocked) return { ok: false, reason: `${email} cannot receive this: ${block.reason}` }
+
+  // Mint the real grant, so the preview tests the download too and not just the
+  // wording. Idempotent — previewing twice reuses the same link.
+  if (target.kind === 'form' && target.hasFile) {
+    await grantDownload(db, target.formId, sub.id)
+  }
 
   const inserted = await db
     .insert(messages)
@@ -73,11 +89,14 @@ export async function sendPreview(
       kind: target.kind,
       broadcastId: target.kind === 'broadcast' ? target.broadcastId : null,
       sequenceStepId: target.kind === 'sequence' ? target.stepId : null,
+      formId: target.kind === 'form' ? target.formId : null,
       toEmail: sub.email,
       subject: `[preview] ${target.subject}`,
+      bodyJson: target.kind === 'form' ? (target.body.json ?? null) : null,
+      bodyMd: target.kind === 'form' ? target.body.md : null,
       status: 'queued',
       // Distinct per attempt, so previewing again after an edit really re-sends.
-      idempotencyKey: `preview:${target.kind}:${target.kind === 'broadcast' ? target.broadcastId : target.stepId}:${sub.id}:${Date.now()}`,
+      idempotencyKey: `preview:${target.kind}:${previewSourceId(target)}:${sub.id}:${Date.now()}`,
       createdAt: new Date(),
     })
     .returning({ id: messages.id })
@@ -85,6 +104,12 @@ export async function sendPreview(
   const messageId = inserted[0]!.id
   await dispatch(env, db, [messageId])
   return { ok: true, messageId, to: sub.email }
+}
+
+function previewSourceId(target: PreviewTarget): number {
+  if (target.kind === 'broadcast') return target.broadcastId
+  if (target.kind === 'sequence') return target.stepId
+  return target.formId
 }
 
 /** D1 caps bound parameters at 100 per query. */
@@ -224,6 +249,15 @@ export async function sendMessages(
   )
   const seqById = new Map(seqs.map((s) => [s.id, s]))
 
+  // Lead-magnet links are per person, so the body can't carry them — the grant
+  // token is looked up here and merged in as `{{link}}` at render time.
+  const grants = await grantsForMessages(
+    db,
+    queued.flatMap((m) =>
+      m.kind === 'form' && m.formId ? [{ formId: m.formId, subscriberId: m.subscriberId }] : [],
+    ),
+  )
+
   const snapshot = await loadConsentSnapshot(
     db,
     queued.map((m) => m.toEmail),
@@ -256,7 +290,14 @@ export async function sendMessages(
 
     // Transactional mail carries no unsubscribe footer and no tracking — it isn't
     // marketing, and offering to unsubscribe from a receipt is nonsense.
+    //
+    // A form's delivery mail is not in that category: the person just joined the
+    // list, so it carries the ordinary newsletter footer. Only the *eligibility*
+    // rule is transactional — see `eligibility()`.
     const isMarketing = msg.kind !== 'transactional'
+
+    const grantToken =
+      msg.kind === 'form' && msg.formId ? grants.get(`${msg.formId}:${msg.subscriberId}`) : undefined
 
     const rendered = renderEmail(resolved.body, {
       publicUrl: env.PUBLIC_URL,
@@ -268,6 +309,9 @@ export async function sendMessages(
       trackOpens: isMarketing,
       trackClicks: isMarketing,
       showFooter: isMarketing,
+      // `{{link}}` is this one reader's download URL, which is why it cannot be
+      // written into the body the operator authored.
+      extras: grantToken ? { link: downloadUrl(env.PUBLIC_URL, grantToken) } : undefined,
     })
 
     pending.push({
@@ -359,8 +403,19 @@ function resolveSource(
     }
   }
 
+  // Form delivery and transactional mail both carry their own body: it was
+  // snapshotted onto the message when it was queued, so editing the form's
+  // template afterwards can't rewrite what already went out (invariant 9).
+  if (msg.kind === 'form') {
+    return {
+      body: { json: msg.bodyJson, md: msg.bodyMd ?? '' },
+      scope: { kind: 'broadcast' },
+      scopeLabel: BROADCAST_SCOPE_LABEL,
+    }
+  }
+
   return {
-    body: { md: msg.bodyMd ?? '' },
+    body: { json: msg.bodyJson, md: msg.bodyMd ?? '' },
     scope: { kind: 'broadcast' },
     scopeLabel: 'account notifications',
   }
@@ -382,6 +437,10 @@ function eligibility(
   if (msg.kind === 'sequence' && scope.kind === 'sequence') {
     return canReceiveSequenceIn(snapshot, sub, scope.sequenceId)
   }
+  // `form` lands here with `transactional`, deliberately. Handing over the file
+  // somebody just asked for is fulfillment, not marketing: an unsubscribed
+  // reader still gets their download, and only a dead address or a spam
+  // complaint stops it (ARCHITECTURE → Consent).
   return canReceiveTransactionalIn(snapshot, sub.email)
 }
 

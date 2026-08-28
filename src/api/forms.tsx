@@ -94,7 +94,7 @@ formsApi.post('/f/:slug', async (c) => {
     trap = String(form.get(TRAP_FIELD) ?? '') || null
   }
 
-  const result = await submitForm(db, slug, { email, name, trap })
+  const result = await submitForm(c.env, db, slug, { email, name, trap })
 
   if (result.status === 'unknown_form') {
     return wantsJson ? c.json({ error: 'unknown form' }, 404, CORS) : c.notFound()
@@ -105,7 +105,18 @@ formsApi.post('/f/:slug', async (c) => {
   if (wantsJson) {
     return failed
       ? c.json({ ok: false, error: result.message }, 400, CORS)
-      : c.json({ ok: true, message: result.message, enrolled: result.enrolled ?? false }, 200, CORS)
+      : c.json(
+          {
+            ok: true,
+            message: result.message,
+            enrolled: result.enrolled ?? false,
+            // The link itself is never in this response — it travels by email
+            // only, so the address has to be real and working to get the file.
+            delivered: result.delivered ?? false,
+          },
+          200,
+          CORS,
+        )
   }
 
   if (failed) {

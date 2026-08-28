@@ -434,6 +434,29 @@ export const forms = sqliteTable(
     campaignId: integer('campaign_id').references(() => campaigns.id, { onDelete: 'set null' }),
     /** Where the browser lands after a plain form post. Falls back to a plain page. */
     redirectUrl: text('redirect_url'),
+
+    // ── The lead magnet, and the reply that carries it. Both live here, on the
+    // form, because that is what they are: this form hands over this file with
+    // this email. There is no separate library to visit first.
+    //
+    // The reply is deliberately NOT step 1 of a sequence. A sequence step waits
+    // for the minutely tick, is silently swallowed while `is_active` is 0, and is
+    // refused for anyone holding a `sequence_optouts` row for that series — three
+    // ways for somebody who just asked for a file to never get it. This goes out
+    // inside the submit request, under the transactional consent rule.
+    // `sequence_id` above still handles whatever nurture follows.
+    //
+    /** R2 key in the DOWNLOADS bucket. Null = this form hands over no file. */
+    downloadKey: text('download_key'),
+    /** What the browser saves it as, sent in `Content-Disposition`. */
+    downloadFilename: text('download_filename'),
+    downloadContentType: text('download_content_type'),
+    downloadBytes: integer('download_bytes'),
+    downloadUploadedAt: ts('download_uploaded_at'),
+    /** No subject means no reply is sent. That check is the whole on/off switch. */
+    deliverySubject: text('delivery_subject'),
+    deliveryBodyJson: text('delivery_body_json', { mode: 'json' }).$type<DocNode | null>(),
+    deliveryBodyMd: text('delivery_body_md'),
     successMessage: text('success_message').notNull().default("You're subscribed. Thanks!"),
     isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
     // Observable in D1, because Workers logs are gone in a week.
@@ -442,6 +465,39 @@ export const forms = sqliteTable(
     createdAt: ts('created_at').notNull(),
   },
   (t) => [uniqueIndex('forms_slug_key').on(t.slug)],
+)
+
+/**
+ * One person's link to one form's file: `/d/:token`.
+ *
+ * Per-person rather than one shared URL, because "who actually opened the
+ * toolkit" is the most useful thing a lead magnet tells you, and a single link
+ * cannot answer it. The pair is unique, so re-submitting the form hands back the
+ * same link instead of minting a second one — the email can be re-sent and every
+ * copy of it still works.
+ */
+export const downloadGrants = sqliteTable(
+  'download_grants',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    formId: integer('form_id')
+      .notNull()
+      .references(() => forms.id, { onDelete: 'cascade' }),
+    subscriberId: integer('subscriber_id')
+      .notNull()
+      .references(() => subscribers.id, { onDelete: 'cascade' }),
+    /** The unguessable half of the URL. Nothing else authenticates a download. */
+    token: text('token').notNull(),
+    // Observable in D1, because Workers logs are gone in a week.
+    downloadCount: integer('download_count').notNull().default(0),
+    lastDownloadedAt: ts('last_downloaded_at'),
+    createdAt: ts('created_at').notNull(),
+  },
+  (t) => [
+    uniqueIndex('download_grants_token_key').on(t.token),
+    uniqueIndex('download_grants_person_key').on(t.formId, t.subscriberId),
+    index('download_grants_subscriber_idx').on(t.subscriberId),
+  ],
 )
 
 export const formTags = sqliteTable(
@@ -636,17 +692,25 @@ export const messages = sqliteTable(
     subscriberId: integer('subscriber_id')
       .notNull()
       .references(() => subscribers.id, { onDelete: 'cascade' }),
-    kind: text('kind', { enum: ['broadcast', 'sequence', 'transactional'] }).notNull(),
-    // nullable-fk: exactly one source per `kind`; transactional has neither.
+    kind: text('kind', { enum: ['broadcast', 'sequence', 'transactional', 'form'] }).notNull(),
+    // nullable-fk: exactly one source per `kind`; transactional has none.
     broadcastId: integer('broadcast_id').references(() => broadcasts.id, { onDelete: 'cascade' }),
     sequenceStepId: integer('sequence_step_id').references(() => sequenceSteps.id, {
       onDelete: 'cascade',
     }),
+    // `set null`, not cascade: deleting a form must not erase the record of the
+    // mail it already sent. Only used to find the recipient's download grant at
+    // render time — the body itself is snapshotted below.
+    formId: integer('form_id').references(() => forms.id, { onDelete: 'set null' }),
     toEmail: text('to_email').notNull(),
     subject: text('subject').notNull(),
-    // Transactional only — broadcast and sequence bodies live on their source row
-    // so editing the source can't rewrite history for already-sent mail.
+    // Transactional and form-delivery mail only — broadcast and sequence bodies
+    // live on their source row so editing the source can't rewrite history for
+    // already-sent mail. A form's delivery mail is a *template* the operator
+    // keeps editing, so it goes the other way: the body is copied here at queue
+    // time and what went out stays what went out (invariant 9).
     bodyMd: text('body_md'),
+    bodyJson: text('body_json', { mode: 'json' }).$type<DocNode | null>(),
     status: text('status', { enum: ['queued', 'sent', 'failed', 'suppressed'] })
       .notNull()
       .default('queued'),
@@ -864,6 +928,7 @@ export type DevOutboxItem = typeof devOutbox.$inferSelect
 export type Campaign = typeof campaigns.$inferSelect
 export type Attribution = typeof attributions.$inferSelect
 export type Form = typeof forms.$inferSelect
+export type DownloadGrant = typeof downloadGrants.$inferSelect
 export type Sale = typeof sales.$inferSelect
 export type ApiKey = typeof apiKeys.$inferSelect
 export type McpCall = typeof mcpCalls.$inferSelect

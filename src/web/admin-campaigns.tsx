@@ -11,12 +11,15 @@ import {
   setCampaignStatus,
   updateCampaign,
 } from '../core/campaigns.ts'
+import { MAX_DOWNLOAD_BYTES, detachFile, fileStats } from '../core/downloads.ts'
 import {
   createForm,
   deleteForm,
+  formDeliveryCount,
   formTagList,
   getForm,
   listForms,
+  setFormReply,
   updateForm,
 } from '../core/forms.ts'
 import { listSales, recordSale, revenueTotals, salesForCampaign } from '../core/sales.ts'
@@ -24,9 +27,32 @@ import { findOrCreateTag } from '../core/subscribers.ts'
 import { getDb } from '../db/index.ts'
 import { sequences } from '../db/schema.ts'
 import type { Env } from '../types.ts'
-import { CampaignTabs, Flash, Layout, fmtDate, fmtMoney, statusPill } from './layout.tsx'
+import { BROADCAST_SCOPE_LABEL, footerPreviewHtml } from '../core/render.ts'
+import { previewAddress, sendPreview } from '../core/sending.ts'
+import {
+  CampaignTabs,
+  EditorHint,
+  Flash,
+  Layout,
+  RichEditor,
+  fmtBytes,
+  fmtDate,
+  fmtMoney,
+  readEditorBody,
+  statusPill,
+} from './layout.tsx'
 
 export const campaignsAdmin = new Hono<{ Bindings: Env }>()
+
+/**
+ * The consent footer a reply carries, for the editor's paper preview.
+ *
+ * Broadcast-scoped: submitting the form put this person on the list, so the
+ * unsubscribe they are offered is the newsletter. The *eligibility* rule for the
+ * reply is transactional — see `core/sending.ts` — which is a different question
+ * from what the footer says.
+ */
+const replyFooter = footerPreviewHtml({ kind: 'broadcast' }, BROADCAST_SCOPE_LABEL)
 
 /** "$1,240.00 · €95.00" — one entry per currency, because totals can't be added. */
 const money = (rows: { currency: string; cents: number }[]) =>
@@ -368,18 +394,19 @@ campaignsAdmin.post('/campaigns/:id/delete', async (c) => {
 
 campaignsAdmin.get('/forms', async (c) => {
   const db = getDb(c.env)
-  const [rows, seqs, allCampaigns] = await Promise.all([
-    listForms(db),
-    db.select().from(sequences).orderBy(asc(sequences.name)).all(),
-    listCampaigns(db),
-  ])
+  const rows = await listForms(db)
 
   return c.html(
-    <Layout title="Forms" nav="camp">
+    <Layout title="Forms" nav="forms">
       <div class="head">
         <div>
           <h1>Forms</h1>
           <div class="sub">A named POST endpoint. No embed script, no hosted landing page.</div>
+        </div>
+        <div class="actions">
+          <a class="btn primary" href="/forms/new">
+            New form
+          </a>
         </div>
       </div>
 
@@ -400,6 +427,7 @@ campaignsAdmin.get('/forms', async (c) => {
                   <th>Form</th>
                   <th>Endpoint</th>
                   <th>Starts</th>
+                  <th>Sends back</th>
                   <th>Campaign</th>
                   <th class="num">Submits</th>
                 </tr>
@@ -427,6 +455,17 @@ campaignsAdmin.get('/forms', async (c) => {
                         <span class="faint">-</span>
                       )}
                     </td>
+                    <td>
+                      {form.deliverySubject ? (
+                        <span class="pill ok">{form.downloadFilename ?? 'reply only'}</span>
+                      ) : form.downloadFilename ? (
+                        <span class="pill warn" title="A file with no reply reaches nobody">
+                          {form.downloadFilename} (no reply)
+                        </span>
+                      ) : (
+                        <span class="faint">-</span>
+                      )}
+                    </td>
                     <td>{campaignName ?? <span class="faint">-</span>}</td>
                     <td class="num">
                       {form.submitCount}
@@ -440,33 +479,92 @@ campaignsAdmin.get('/forms', async (c) => {
         </div>
       </div>
 
-      <div class="card">
-        <div class="card-h">
-          <h2>New form</h2>
-        </div>
-        <div class="card-b">
-          <div class="note">
-            <strong>Submitting is one request.</strong> The person is created or updated, tagged,
-            credited to the campaign, and dropped into the sequence: all idempotent, so a
-            double-click changes nothing the second time.
-          </div>
-          <FormFields seqs={seqs} allCampaigns={allCampaigns} tagNames="" action="/forms" />
-        </div>
-      </div>
     </Layout>,
   )
 })
 
-const FormFields = ({
-  seqs,
-  allCampaigns,
-  action,
-  form,
-  tagNames,
-}: {
+/**
+ * The file upload, in about thirty lines of browser JavaScript.
+ *
+ * A raw `PUT` rather than a plain `<form enctype="multipart/form-data">` because
+ * `formData()` in the Worker buffers the whole body into a 128MB isolate.
+ * Streaming the file straight into R2 is the difference between a 90MB zip
+ * working and the Worker dying.
+ */
+const newFormJs = `
+const form = document.querySelector('#new-form')
+const input = document.querySelector('#dl-file')
+const status = document.querySelector('#dl-status')
+form?.addEventListener('submit', async (e) => {
+  const file = input && input.files && input.files[0]
+  // No file: let the browser post the form the ordinary way. Nothing to intercept.
+  if (!file) return
+  e.preventDefault()
+  if (file.size > ${MAX_DOWNLOAD_BYTES}) {
+    status.textContent = 'That file is larger than ${MAX_DOWNLOAD_BYTES / 1024 / 1024}MB.'
+    return
+  }
+  const button = form.querySelector('button[type=submit]')
+  if (button) button.disabled = true
+  try {
+    status.textContent = 'Creating the form…'
+    // The file input has no name, so it is not in here — the form post stays small.
+    const made = await fetch('/forms', {
+      method: 'POST',
+      headers: { Accept: 'application/json' },
+      body: new FormData(form),
+    })
+    const form_ = await made.json()
+    if (!made.ok || !form_.id) throw new Error(form_.error || 'could not create the form')
+
+    status.textContent = 'Uploading ' + file.name + '…'
+    const put = await fetch('/api/forms/' + form_.id + '/file?filename=' + encodeURIComponent(file.name), {
+      method: 'PUT',
+      headers: { 'Content-Type': file.type || 'application/octet-stream' },
+      body: file,
+    })
+    const up = await put.json()
+    if (!put.ok) throw new Error(up.error || ('upload failed (' + put.status + ')'))
+
+    location.href = '/forms/' + form_.id + '?flash=' + encodeURIComponent('Form created, ' + file.name + ' attached.')
+  } catch (err) {
+    status.textContent = String(err.message || err)
+    if (button) button.disabled = false
+  }
+})
+`
+
+const uploadJs = (formId: number) => `
+const input = document.querySelector('#dl-file')
+const status = document.querySelector('#dl-status')
+input?.addEventListener('change', async () => {
+  const file = input.files && input.files[0]
+  if (!file) return
+  if (file.size > ${MAX_DOWNLOAD_BYTES}) {
+    status.textContent = 'That file is larger than ${MAX_DOWNLOAD_BYTES / 1024 / 1024}MB.'
+    return
+  }
+  status.textContent = 'Uploading ' + file.name + '…'
+  input.disabled = true
+  try {
+    const res = await fetch('/api/forms/${formId}/file?filename=' + encodeURIComponent(file.name), {
+      method: 'PUT',
+      headers: { 'Content-Type': file.type || 'application/octet-stream' },
+      body: file,
+    })
+    const body = await res.json()
+    if (!res.ok) throw new Error(body.error || ('upload failed (' + res.status + ')'))
+    location.href = '/forms/${formId}?flash=' + encodeURIComponent(file.name + ' attached.')
+  } catch (err) {
+    status.textContent = String(err.message || err)
+    input.disabled = false
+  }
+})
+`
+
+interface FieldsProps {
   seqs: { id: number; name: string; isActive: boolean }[]
   allCampaigns: { id: number; name: string }[]
-  action: string
   form?: {
     name: string
     slug: string
@@ -477,8 +575,16 @@ const FormFields = ({
     isActive: boolean
   }
   tagNames: string
-}) => (
-  <form method="post" action={action}>
+}
+
+/**
+ * The settings themselves, with no `<form>` around them.
+ *
+ * Split out because the new-form page posts these *and* the reply in a single
+ * submit — one page, one button — while the detail page saves them on their own.
+ */
+const FormFieldsInner = ({ seqs, allCampaigns, form, tagNames }: FieldsProps) => (
+  <>
     <div class="row">
       <div class="field">
         <label>Name</label>
@@ -554,6 +660,12 @@ const FormFields = ({
       </label>
     </div>
 
+  </>
+)
+
+const FormFields = ({ action, ...props }: FieldsProps & { action: string }) => (
+  <form method="post" action={action}>
+    <FormFieldsInner {...props} />
     <button class="btn primary">Save form</button>
   </form>
 )
@@ -590,13 +702,151 @@ campaignsAdmin.post('/forms', async (c) => {
   const db = getDb(c.env)
   const body = await c.req.formData()
   const input = readFormInput(body)
-  if (!input.name) return c.redirect('/forms?flash=A form needs a name.&kind=warn')
+
+  // The new-form page posts with `fetch` when it has a file to upload after, and
+  // needs the new id back rather than a redirect it can't follow usefully.
+  const wantsJson = (c.req.header('Accept') ?? '').includes('application/json')
+  const bail = (msg: string) =>
+    wantsJson ? c.json({ error: msg }, 400) : c.redirect(`/forms/new?flash=${encodeURIComponent(msg)}&kind=warn`)
+
+  if (!input.name) return bail('A form needs a name.')
+
+  const subject = String(body.get('deliverySubject') ?? '').trim()
+  const { bodyJson, bodyMd } = readEditorBody(body)
+  if (subject && !bodyJson && !bodyMd.trim()) {
+    return bail("The reply has a subject and no body. An empty email is worse than none.")
+  }
 
   const id = await createForm(db, {
     ...input,
     tagIds: await readTagIds(db, String(body.get('tags') ?? '')),
   })
-  return c.redirect(`/forms/${id}?flash=Form created. Grab the snippet below.`)
+  // Written separately, and only when there is one: the reply is the part that
+  // puts mail on the wire, so it never rides along silently with the settings.
+  if (subject) await setFormReply(db, id, { subject, bodyJson, bodyMd })
+
+  if (wantsJson) return c.json({ id })
+  return c.redirect(
+    `/forms/${id}?flash=${encodeURIComponent(
+      subject ? 'Form created. Attach the file below.' : 'Form created. Grab the snippet below.',
+    )}`,
+  )
+})
+
+/**
+ * Everything a form is, on one page, in one submit: the settings, the file it
+ * hands over, and the reply that carries it.
+ *
+ * The file is the one part that can't be written until the form has an id, so
+ * `newFormJs` creates the form first and then streams the file at it. With
+ * JavaScript off the page still posts normally and the file is attached from the
+ * form's own page afterwards — which is what the `<noscript>` note says.
+ */
+campaignsAdmin.get('/forms/new', async (c) => {
+  const db = getDb(c.env)
+  const [seqs, allCampaigns] = await Promise.all([
+    db.select().from(sequences).orderBy(asc(sequences.name)).all(),
+    listCampaigns(db),
+  ])
+
+  return c.html(
+    <Layout title="New form" nav="forms" editor>
+      <div class="head">
+        <div>
+          <h1>New form</h1>
+          <div class="sub">A named POST endpoint, a file, and the reply that hands it over.</div>
+        </div>
+        <div class="actions">
+          <a class="btn" href="/forms">
+            Back to forms
+          </a>
+        </div>
+      </div>
+
+      <Flash msg={c.req.query('flash')} kind={c.req.query('kind')} />
+
+      <form method="post" action="/forms" id="new-form">
+        <div class="card">
+          <div class="card-h">
+            <h2>Settings</h2>
+          </div>
+          <div class="card-b">
+            <div class="note">
+              <strong>Submitting is one request.</strong> The person is created or updated, tagged,
+              credited to the campaign, and dropped into the sequence: all idempotent, so a
+              double-click changes nothing the second time.
+            </div>
+            <FormFieldsInner seqs={seqs} allCampaigns={allCampaigns} tagNames="" />
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-h">
+            <h2>The file</h2>
+          </div>
+          <div class="card-b">
+            <div class="field">
+              <label>The file people are signing up for (optional)</label>
+              <input type="file" id="dl-file" accept=".zip,.pdf,.epub,.gz,.tar" />
+            </div>
+            <p class="faint" id="dl-status">
+              Zip, PDF, epub, tar or gzip, up to {MAX_DOWNLOAD_BYTES / 1024 / 1024}MB. It is never
+              public: it leaves only through <span class="mono">/d/&lt;token&gt;</span>, one link
+              issued to one person, and <span class="mono">{'{{link}}'}</span> in the reply is how
+              they get it.
+            </p>
+            <noscript>
+              <p class="faint">
+                JavaScript is off, so this file input won't upload. Create the form, then attach the
+                file from its own page.
+              </p>
+            </noscript>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-h">
+            <h2>The reply</h2>
+          </div>
+          <div class="card-b">
+            <div class="note">
+              <strong>This goes out the moment somebody submits.</strong> Not on the minutely tick,
+              not as step one of a sequence — inside the request, so it's in their inbox before
+              they've switched tabs. Leave the subject empty and no reply is sent at all.
+            </div>
+
+            <div class="field">
+              <label>Subject (empty = send nothing)</label>
+              <input
+                type="text"
+                name="deliverySubject"
+                placeholder="Here's the Claude Code Toolkit"
+              />
+            </div>
+
+            <div class="field">
+              <label>Body</label>
+              <RichEditor bare inline footer={replyFooter} />
+              <p class="faint" style="margin:10px 0 0">
+                Put <span class="mono">{'{{link}}'}</span> wherever the download belongs — as a
+                button's link, a text link, or on its own line. It becomes that one person's private
+                URL.
+              </p>
+              <EditorHint />
+            </div>
+          </div>
+        </div>
+
+        <div class="actions">
+          <button class="btn primary" type="submit">
+            Create form
+          </button>
+        </div>
+      </form>
+
+      <script dangerouslySetInnerHTML={{ __html: newFormJs }} />
+    </Layout>,
+  )
 })
 
 campaignsAdmin.get('/forms/:id', async (c) => {
@@ -605,10 +855,12 @@ campaignsAdmin.get('/forms/:id', async (c) => {
   const form = await getForm(db, id)
   if (!form) return c.notFound()
 
-  const [seqs, allCampaigns, theirTags] = await Promise.all([
+  const [seqs, allCampaigns, theirTags, stats, replied] = await Promise.all([
     db.select().from(sequences).orderBy(asc(sequences.name)).all(),
     listCampaigns(db),
     formTagList(db, id),
+    fileStats(db, id),
+    formDeliveryCount(db, id),
   ])
 
   const endpoint = `${c.env.PUBLIC_URL}/f/${form.slug}`
@@ -631,8 +883,17 @@ campaignsAdmin.get('/forms/:id', async (c) => {
 })
 // → { ok: true, message: "...", enrolled: true }`
 
+  const hasFile = Boolean(form.downloadKey)
+  const hasSubject = Boolean(form.deliverySubject?.trim())
+  const hasBody = Boolean(form.deliveryBodyJson) || Boolean(form.deliveryBodyMd?.trim())
+  // Cheap and blunt: the token is looked for in the serialized document as well
+  // as the markdown, because it can sit in a link href where no text node has it.
+  const linksTheFile = `${JSON.stringify(form.deliveryBodyJson ?? '')}${form.deliveryBodyMd ?? ''}`.includes(
+    '{{link}}',
+  )
+
   return c.html(
-    <Layout title={form.name} nav="camp">
+    <Layout title={form.name} nav="forms" editor>
       <div class="head">
         <div>
           <h1>{form.name}</h1>
@@ -656,6 +917,26 @@ campaignsAdmin.get('/forms/:id', async (c) => {
         </div>
       ) : null}
 
+      {hasFile && !hasSubject ? (
+        <div class="flash warn">
+          {form.downloadFilename} is attached, but there's no reply — the link only ever travels by
+          email, so nobody who submits this form can reach the file. Write the reply below.
+        </div>
+      ) : null}
+
+      {hasSubject && !hasBody ? (
+        <div class="flash warn">
+          The reply has a subject and no body, so it won't send. An empty email is worse than none.
+        </div>
+      ) : null}
+
+      {hasFile && hasSubject && hasBody && !linksTheFile ? (
+        <div class="flash warn">
+          A file is attached but the reply never says <span class="mono">{'{{link}}'}</span>, so it
+          goes out with no download link in it. Add one below.
+        </div>
+      ) : null}
+
       <div class="card">
         <div class="card-b flush">
           <div class="stats">
@@ -675,6 +956,16 @@ campaignsAdmin.get('/forms/:id', async (c) => {
               </div>
               <div class="l">Starts</div>
             </div>
+            <div class="stat">
+              <div class="n">{replied}</div>
+              <div class="l">Replies sent</div>
+            </div>
+            {hasFile ? (
+              <div class="stat">
+                <div class="n">{stats.taken}</div>
+                <div class="l">Downloads</div>
+              </div>
+            ) : null}
           </div>
         </div>
       </div>
@@ -706,6 +997,108 @@ campaignsAdmin.get('/forms/:id', async (c) => {
 
       <div class="card">
         <div class="card-h">
+          <h2>The file</h2>
+        </div>
+        <div class="card-b">
+          {hasFile ? (
+            <div class="row" style="align-items:start">
+              <div class="field">
+                <label>Attached</label>
+                <div class="mono">{form.downloadFilename}</div>
+                <p class="faint" style="margin:6px 0 0">
+                  {fmtBytes(form.downloadBytes ?? 0)} · uploaded {fmtDate(form.downloadUploadedAt)} ·{' '}
+                  {stats.links} link{stats.links === 1 ? '' : 's'} handed out
+                </p>
+              </div>
+              <div class="field">
+                <label>Replace it</label>
+                <input type="file" id="dl-file" accept=".zip,.pdf,.epub,.gz,.tar" />
+                <p class="faint" style="margin:6px 0 0">
+                  Every link already sent keeps working and starts serving the new file.
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div class="field">
+              <label>Upload the file people are signing up for</label>
+              <input type="file" id="dl-file" accept=".zip,.pdf,.epub,.gz,.tar" />
+            </div>
+          )}
+
+          <p class="faint" id="dl-status">
+            Zip, PDF, epub, tar or gzip, up to {MAX_DOWNLOAD_BYTES / 1024 / 1024}MB. Nothing here is
+            public: the file leaves only through <span class="mono">/d/&lt;token&gt;</span>, one link
+            issued to one person, and <span class="mono">{'{{link}}'}</span> in the reply below is how
+            they get it.
+          </p>
+
+          {hasFile ? (
+            <form method="post" action={`/forms/${id}/file/delete`} style="margin-top:14px">
+              <button class="btn danger sm">Remove the file</button>
+            </form>
+          ) : null}
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-h">
+          <h2>The reply</h2>
+        </div>
+        <div class="card-b">
+          <div class="note">
+            <strong>This goes out the moment somebody submits.</strong> Not on the minutely tick, not
+            as step one of a sequence — inside the request, so it's in their inbox before they've
+            switched tabs. It follows the transactional consent rule: somebody who left the
+            newsletter still gets what they just asked for. One per address per form per day.
+            {form.sequenceId
+              ? ' The sequence in the settings below still runs afterwards, for the nurture.'
+              : ' Point “Start this sequence” below at a sequence if you want nurture to follow.'}
+          </div>
+
+          <form method="post" action={`/forms/${id}/reply`}>
+            <div class="field">
+              <label>Subject (empty = send nothing)</label>
+              <input
+                type="text"
+                name="deliverySubject"
+                value={form.deliverySubject ?? ''}
+                placeholder="Here's the Claude Code Toolkit"
+              />
+            </div>
+
+            <div class="field">
+              <label>Body</label>
+              <RichEditor
+                bare
+                inline
+                json={form.deliveryBodyJson}
+                md={form.deliveryBodyMd ?? ''}
+                footer={replyFooter}
+              />
+              <p class="faint" style="margin:10px 0 0">
+                Put <span class="mono">{'{{link}}'}</span> wherever the download belongs — as a
+                button's link, a text link, or on its own line. It becomes that one person's private
+                URL.
+              </p>
+              <EditorHint />
+            </div>
+
+            <div class="actions">
+              <button class="btn primary">Save the reply</button>
+              <button class="btn" name="action" value="test">
+                Save and send me a test
+              </button>
+            </div>
+            <p class="faint" style="margin:10px 0 0">
+              A test goes to {previewAddress(c.env)} and nowhere else, with a real download link, so
+              you can click it.
+            </p>
+          </form>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-h">
           <h2>Settings</h2>
         </div>
         <div class="card-b">
@@ -726,6 +1119,8 @@ campaignsAdmin.get('/forms/:id', async (c) => {
           </form>
         </div>
       </div>
+
+      <script dangerouslySetInnerHTML={{ __html: uploadJs(id) }} />
     </Layout>,
   )
 })
@@ -742,6 +1137,66 @@ campaignsAdmin.post('/forms/:id', async (c) => {
     tagIds: await readTagIds(db, String(body.get('tags') ?? '')),
   })
   return c.redirect(`/forms/${id}?flash=Saved.`)
+})
+
+/**
+ * Save the reply, and optionally send one copy to the operator.
+ *
+ * A separate endpoint from the settings save on purpose: this is the only part
+ * of a form that puts mail on the wire, and it should not be possible to change
+ * it by accident while editing a redirect URL.
+ */
+campaignsAdmin.post('/forms/:id/reply', async (c) => {
+  const db = getDb(c.env)
+  const id = Number(c.req.param('id'))
+  const form = await getForm(db, id)
+  if (!form) return c.notFound()
+
+  const body = await c.req.formData()
+  const subject = String(body.get('deliverySubject') ?? '').trim()
+  const { bodyJson, bodyMd } = readEditorBody(body)
+
+  await setFormReply(db, id, { subject: subject || null, bodyJson, bodyMd })
+
+  if (String(body.get('action') ?? '') !== 'test') {
+    return c.redirect(
+      `/forms/${id}?flash=${encodeURIComponent(subject ? 'Reply saved.' : 'Reply turned off — no subject, nothing sends.')}`,
+    )
+  }
+  if (!subject) return c.redirect(`/forms/${id}?flash=Give it a subject first.&kind=warn`)
+
+  const result = await sendPreview(
+    c.env,
+    db,
+    {
+      kind: 'form',
+      formId: id,
+      subject,
+      body: { json: bodyJson, md: bodyMd },
+      hasFile: Boolean(form.downloadKey),
+    },
+    previewAddress(c.env),
+  )
+  return c.redirect(
+    result.ok
+      ? `/forms/${id}?flash=${encodeURIComponent(`Saved. Test sent to ${result.to}.`)}`
+      : `/forms/${id}?flash=${encodeURIComponent(`Saved, but the test didn't send: ${result.reason}`)}&kind=warn`,
+  )
+})
+
+/**
+ * Drop the file. Every link ever sent for it stops working, which is the point —
+ * there is no other way to revoke one.
+ */
+campaignsAdmin.post('/forms/:id/file/delete', async (c) => {
+  const db = getDb(c.env)
+  const id = Number(c.req.param('id'))
+  const form = await getForm(db, id)
+  if (!form) return c.notFound()
+
+  await detachFile(db, id)
+  if (form.downloadKey) await c.env.DOWNLOADS.delete(form.downloadKey)
+  return c.redirect(`/forms/${id}?flash=File removed. Every link sent for it is now dead.&kind=warn`)
 })
 
 campaignsAdmin.post('/forms/:id/delete', async (c) => {

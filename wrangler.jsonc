@@ -18,7 +18,15 @@
 
   // Image uploads. R2 is S3-compatible but the native binding needs no credentials,
   // which is what makes uploads work in `wrangler dev` offline.
-  "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "big-mailer-media" }],
+  //
+  // DOWNLOADS is a separate bucket, not a prefix in MEDIA, on purpose: `/media/:key`
+  // hands out anything in MEDIA to anyone holding the key, and lead magnets must
+  // never be one routing change away from that handler. They leave only through
+  // `/d/:token`, which resolves a grant row first.
+  "r2_buckets": [
+    { "binding": "MEDIA", "bucket_name": "big-mailer-media" },
+    { "binding": "DOWNLOADS", "bucket_name": "big-mailer-downloads" }
+  ],
 
   "queues": {
     "producers": [{ "binding": "SEND_QUEUE", "queue": "big-mailer-send" }],
@@ -87,7 +95,10 @@
           "migrations_dir": "migrations"
         }
       ],
-      "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "big-mailer-media" }],
+      "r2_buckets": [
+        { "binding": "MEDIA", "bucket_name": "big-mailer-media" },
+        { "binding": "DOWNLOADS", "bucket_name": "big-mailer-downloads" }
+      ],
       "queues": {
         "producers": [{ "binding": "SEND_QUEUE", "queue": "big-mailer-send" }],
         "consumers": [

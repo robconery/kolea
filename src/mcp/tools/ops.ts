@@ -173,6 +173,7 @@ export function registerOps(server: McpServer, ctx: Ctx): void {
         bindings: {
           queue: Boolean(ctx.env.SEND_QUEUE),
           media: Boolean(ctx.env.MEDIA),
+          downloads: Boolean(ctx.env.DOWNLOADS),
           stripe: Boolean(ctx.env.STRIPE_SECRET_KEY),
           resend: Boolean(ctx.env.RESEND_API_KEY),
         },
