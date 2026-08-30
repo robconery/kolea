@@ -536,6 +536,23 @@ td a{color:#dbe9ff}
 td a:hover{color:#7dd3fc}
 td a .faint{color:var(--faint)}
 
+/* A row that is a link to its own editor: click the subject, or anywhere along
+   the strip. Every cell carries its own anchor and the cell's padding moves onto
+   it, so the target is the whole row including the gutters, with no JS.
+   A stretched ::after does NOT work here: position:relative on a <tr> does not
+   establish a containing block, so it would resolve against the already-relative
+   <td> and only ever cover one cell. Verified in Chromium, don't "simplify" it.
+   Only the subject anchor is reachable by keyboard or screen reader; the others
+   are aria-hidden, so the row is one link, not three. */
+tr.rowlink{cursor:pointer}
+tr.rowlink td{padding:0}
+tr.rowlink td>a{display:block;padding:15px 18px;color:inherit;text-decoration:none}
+tr.rowlink td:first-child>a{padding-left:0}
+tr.rowlink td:last-child>a{padding-right:0}
+tr.rowlink td>a.rl{color:#fff;font-weight:500}
+tr.rowlink:hover td>a.rl{color:#7dd3fc}
+tr.rowlink td>a.rl:focus-visible{outline:2px solid var(--beam,#38bdf8);outline-offset:-2px}
+
 .meter{height:5px;border-radius:99px;overflow:hidden;margin-top:8px;
   background:rgba(148,190,255,.1)}
 .meter>i{display:block;height:100%;border-radius:99px;background:var(--beam);

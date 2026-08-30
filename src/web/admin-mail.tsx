@@ -875,24 +875,31 @@ mail.get('/sequences/:id', async (c) => {
                   <th class="num">#</th>
                   <th>Subject</th>
                   <th>Delay</th>
-                  <th />
                 </tr>
               </thead>
               <tbody>
-                {steps.map((st) => (
-                  <tr>
-                    <td class="num">{st.position}</td>
-                    <td>{st.subject}</td>
-                    <td class="faint">
-                      {formatDelay(st.delayDays)}
-                    </td>
-                    <td style="text-align:right">
-                      <a class="btn sm" href={`/sequences/${id}/steps/${st.id}`}>
-                        Edit
-                      </a>
-                    </td>
-                  </tr>
-                ))}
+                {steps.map((st) => {
+                  const href = `/sequences/${id}/steps/${st.id}`
+                  return (
+                    <tr class="rowlink">
+                      <td class="num">
+                        <a href={href} tabindex={-1} aria-hidden="true">
+                          {st.position}
+                        </a>
+                      </td>
+                      <td>
+                        <a class="rl" href={href}>
+                          {st.subject}
+                        </a>
+                      </td>
+                      <td class="faint">
+                        <a href={href} tabindex={-1} aria-hidden="true">
+                          {formatDelay(st.delayDays)}
+                        </a>
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           )}
