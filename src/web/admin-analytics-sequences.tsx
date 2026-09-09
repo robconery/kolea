@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import type { FC } from 'hono/jsx'
+import { sequenceExits } from '../core/activity.ts'
 import {
   type SequencePerf,
   goalBoard,
@@ -332,10 +333,11 @@ analyticsSequences.get('/analytics/sequences/:id', async (c) => {
   const s = all.find((x) => x.id === id)
   if (!s) return c.notFound()
 
-  const [steps, intake, board] = await Promise.all([
+  const [steps, intake, board, exits] = await Promise.all([
     sequenceSteps(db, id),
     sequenceIntake(db, id, 12),
     goalBoard(db, { limit: 8 }),
+    sequenceExits(db, id),
   ])
 
   // Which goals this sequence is currently feeding — read off the same
@@ -453,6 +455,46 @@ analyticsSequences.get('/analytics/sequences/:id', async (c) => {
           </div>
         </div>
       </div>
+
+      {exits.cancelled + exits.optedOut > 0 ? (
+        <div class="card">
+          <div class="card-h">
+            <h2>Why people left</h2>
+          </div>
+          <div class="card-b">
+            <p class="faint" style="margin:0 0 16px">
+              The step chart below says <b>where</b>. This says <b>why</b> — and the difference
+              matters, because "they asked to leave", "they bounced" and "they bought the thing and
+              we stopped selling it to them" all look identical in an enrollment's status.
+            </p>
+            <table>
+              <thead>
+                <tr>
+                  <th>Reason</th>
+                  <th class="num">People</th>
+                </tr>
+              </thead>
+              <tbody>
+                {exits.optedOut > 0 ? (
+                  <tr>
+                    <td>
+                      Chose to leave this sequence
+                      <div class="faint">and stayed on everything else</div>
+                    </td>
+                    <td class="num">{num(exits.optedOut)}</td>
+                  </tr>
+                ) : null}
+                {exits.cancelledBy.map((r) => (
+                  <tr>
+                    <td>{r.reason.replace(/_/g, ' ')}</td>
+                    <td class="num">{num(r.n)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : null}
 
       <div class="card">
         <div class="card-h">

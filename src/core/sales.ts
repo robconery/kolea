@@ -1,6 +1,7 @@
 import { and, desc, eq, sql } from 'drizzle-orm'
 import type { Db } from '../db/index.ts'
 import { campaigns, sales, sequenceEnrollments, sequences, subscribers } from '../db/schema.ts'
+import { logActivity } from './activity.ts'
 import { getCampaignBySlug, lastTouch, recordTouch } from './campaigns.ts'
 import { isValidEmail, normalizeEmail } from './ids.ts'
 import { addTags, findOrCreateTag, upsertSubscriber } from './subscribers.ts'
@@ -78,6 +79,23 @@ export async function recordSale(db: Db, input: SaleInput): Promise<SaleResult> 
 
       if (wantsRefund && existing.status !== 'refunded') {
         await db.update(sales).set({ status: 'refunded' }).where(eq(sales.id, existing.id))
+        // `sales.status` flips in place, so the date money came back exists
+        // nowhere else. Keyed on the sale: a replayed `charge.refunded` webhook
+        // must not book two refunds.
+        await logActivity(db, {
+          type: 'refunded',
+          subscriberId: existing.subscriberId,
+          campaignId: existing.campaignId,
+          occurredAt: input.occurredAt ?? new Date(),
+          meta: {
+            saleId: existing.id,
+            amountCents: existing.amountCents,
+            currency: existing.currency,
+            product: existing.product,
+            externalId: existing.externalId,
+          },
+          dedupeKey: `refunded:${existing.id}`,
+        })
         return {
           status: 'refunded',
           saleId: existing.id,
@@ -161,6 +179,25 @@ export async function recordSale(db: Db, input: SaleInput): Promise<SaleResult> 
     .returning({ id: sales.id })
 
   const saleId = inserted[0]!.id
+
+  // ⭐ The end of the story, and the only part of it that pays for the rest.
+  // Carries the campaign so "what did this launch actually make" is one
+  // group-by over the same table as "who left because of it".
+  await logActivity(db, {
+    type: wantsRefund ? 'refunded' : 'purchased',
+    subscriberId,
+    campaignId,
+    occurredAt: input.occurredAt ?? now,
+    meta: {
+      saleId,
+      amountCents: cents,
+      currency: (input.currency || 'usd').toLowerCase(),
+      product: input.product?.trim() || null,
+      externalId,
+      attributedBy,
+    },
+    dedupeKey: `${wantsRefund ? 'refunded' : 'purchased'}:${saleId}`,
+  })
 
   // A campaign named on the sale itself is a touch we hadn't seen — record it so
   // the campaign's people count includes the person who bought from it.

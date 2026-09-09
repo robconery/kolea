@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm'
 import type { Db } from '../db/index.ts'
 import { events, messages, subscribers } from '../db/schema.ts'
 import type { ProviderEvent } from '../providers/types.ts'
+import { logActivity } from './activity.ts'
 import { touchFromMessage } from './campaigns.ts'
 import { suppressAddress } from './consent.ts'
 import { applyTagRules } from './tagging.ts'
@@ -64,6 +65,7 @@ export async function applyProviderEvent(db: Db, ev: ProviderEvent): Promise<voi
       .update(subscribers)
       .set({ status: 'bounced' })
       .where(eq(subscribers.id, msg.subscriberId))
+    await logLeaving(db, msg.subscriberId, 'bounced', msg.id, msg.toEmail)
   }
 
   if (ev.type === 'complaint') {
@@ -72,7 +74,35 @@ export async function applyProviderEvent(db: Db, ev: ProviderEvent): Promise<voi
       .update(subscribers)
       .set({ status: 'complained' })
       .where(eq(subscribers.id, msg.subscriberId))
+    await logLeaving(db, msg.subscriberId, 'complained', msg.id, msg.toEmail)
   }
+}
+
+/**
+ * The same fact, told twice on purpose.
+ *
+ * `events` already has the bounce against the message — that is how you cost a
+ * send. This is the person leaving the list, which is how you read list health,
+ * and it has to sit in the same feed as every other departure or net growth is
+ * assembled from two different shapes. The message id rides along in the meta,
+ * so the two are never out of touch.
+ */
+async function logLeaving(
+  db: Db,
+  subscriberId: number,
+  type: 'bounced' | 'complained',
+  messageId: number,
+  email: string,
+) {
+  await logActivity(db, {
+    type,
+    subscriberId,
+    source: 'queue',
+    meta: { messageId, email },
+    // Status is terminal, so this happens once no matter how many times the
+    // provider replays the webhook.
+    dedupeKey: `${type}:${subscriberId}`,
+  })
 }
 
 /**

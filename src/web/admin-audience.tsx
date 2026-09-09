@@ -1,5 +1,6 @@
 import { type SQL, and, asc, desc, eq, inArray, like, or } from 'drizzle-orm'
 import { Hono } from 'hono'
+import { type FeedRow, activityForSubscriber } from '../core/activity.ts'
 import { touchesFor } from '../core/campaigns.ts'
 import { preferencesFor } from '../core/consent.ts'
 import { purchasesForEmail, statsForEmail } from '../core/purchases.ts'
@@ -283,6 +284,24 @@ audience.post('/subscribers/import', async (c) => {
   return c.redirect(`/subscribers?flash=${encodeURIComponent(msg)}`)
 })
 
+/**
+ * The object of the sentence, for one person's timeline. Deliberately thin —
+ * the row already says what happened; this says what it happened *to*, and only
+ * when there is something worth naming.
+ */
+function activityDetail(a: FeedRow): string {
+  const m = a.meta
+  const name = (v: unknown) => (typeof v === 'string' && v ? v : null)
+  return (
+    name(m.tag) ??
+    name(m.formName) ??
+    name(m.product) ??
+    (a.sequenceName ? `${a.sequenceName}${typeof m.position === 'number' ? ` — step ${m.position}` : ''}` : null) ??
+    a.campaignName ??
+    ''
+  )
+}
+
 audience.get('/subscribers/:id', async (c) => {
   const db = getDb(c.env)
   const id = Number(c.req.param('id'))
@@ -304,6 +323,10 @@ audience.get('/subscribers/:id', async (c) => {
     .orderBy(desc(messages.id))
     .limit(20)
     .all()
+
+  // Imported history IS included here, unlike the feed. On one person's page
+  // "arrived in the 2019 Kit export" is the answer you came for, not noise.
+  const story = await activityForSubscriber(db, id, 100)
 
   const [touches, purchases, storeOrders, storeStats] = await Promise.all([
     touchesFor(db, id),
@@ -542,6 +565,56 @@ audience.get('/subscribers/:id', async (c) => {
           </div>
         </div>
       ) : null}
+
+      <div class="card">
+        <div class="card-h">
+          <h2>Activity</h2>
+          <div class="actions">
+            <a class="btn sm" href="/activity">
+              Whole list
+            </a>
+          </div>
+        </div>
+        <div class="card-b flush">
+          {story.length === 0 ? (
+            <div class="empty">
+              <p>Nothing recorded yet.</p>
+              <p>
+                Activity starts from when this person next does something — it is not
+                reconstructed from before it was being written down.
+              </p>
+            </div>
+          ) : (
+            <table>
+              <thead>
+                <tr>
+                  <th>What</th>
+                  <th>Detail</th>
+                  <th>Via</th>
+                  <th>When</th>
+                </tr>
+              </thead>
+              <tbody>
+                {story.map((a) => (
+                  <tr>
+                    <td style="white-space:nowrap">
+                      <span class="pill">{a.type.replace(/_/g, ' ')}</span>
+                    </td>
+                    <td>
+                      {activityDetail(a)}
+                      {typeof a.meta.reason === 'string' ? (
+                        <div class="faint">{a.meta.reason.replace(/_/g, ' ')}</div>
+                      ) : null}
+                    </td>
+                    <td class="faint">{a.source}</td>
+                    <td class="faint">{fmtDate(a.occurredAt)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
 
       <div class="card">
         <div class="card-h">

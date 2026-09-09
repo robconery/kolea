@@ -758,6 +758,110 @@ export const events = sqliteTable(
   ],
 )
 
+// ─────────────────────────────────────────────────────────── activities
+
+/**
+ * ⭐ The story of a person, as told by us.
+ *
+ * Deliberately a SECOND log beside `events`, not an extension of it. The
+ * difference is who is speaking:
+ *
+ *   `events`     — what the PROVIDER told us about a MESSAGE. Foreign truth,
+ *                  webhook-shaped, replayable, `message_id NOT NULL`.
+ *   `activities` — what KŌLEA did or observed about a PERSON. Our own truth,
+ *                  written at the point of decision in `core/`.
+ *
+ * Making `events.message_id` nullable to fit both in one table was the obvious
+ * shortcut and the wrong one: it weakens the only FK that makes "what did this
+ * send cost me?" answerable, and mixes two things with different retention,
+ * different idempotency and different trust.
+ *
+ * ⭐ The rule for what belongs here: **log the transitions that state tables
+ * overwrite.** `sequence_enrollments.next_step_id` moves on every tick and
+ * `.status` flips `active` → `completed`; both facts are destroyed in place, so
+ * both are logged. A sequence step being *sent* is NOT logged — `messages` already
+ * records every send with `sent_at`, and two places to count the same mail is two
+ * places to get it wrong. The feed joins `messages` for the mail and `activities`
+ * for the person.
+ */
+export const activities = sqliteTable(
+  'activities',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    subscriberId: integer('subscriber_id')
+      .notNull()
+      .references(() => subscribers.id, { onDelete: 'cascade' }),
+    type: text('type', {
+      enum: [
+        // arrival
+        'subscribed',
+        'pending_added',
+        'promoted',
+        'imported',
+        'form_submitted',
+        // consent — every one of these is a change to what we may send
+        'unsubscribed',
+        'resubscribed',
+        'unsubscribed_all',
+        'suppressed',
+        'unsuppressed',
+        'bounced',
+        'complained',
+        // sequences
+        'sequence_enrolled',
+        'sequence_advanced',
+        'sequence_completed',
+        'sequence_cancelled',
+        'sequence_opted_out',
+        'sequence_rejoined',
+        // labels
+        'tagged',
+        'untagged',
+        // attribution + money
+        'touched',
+        'purchased',
+        'refunded',
+      ],
+    }).notNull(),
+    occurredAt: ts('occurred_at').notNull(),
+    /** nullable-fk: most activity has no campaign, and deleting one must not
+        delete the history of what happened under it. */
+    campaignId: integer('campaign_id').references(() => campaigns.id, { onDelete: 'set null' }),
+    /** nullable-fk: the other axis worth grouping by. Set null for the same reason. */
+    sequenceId: integer('sequence_id').references(() => sequences.id, { onDelete: 'set null' }),
+    /**
+     * HOW the write happened, not what it did. This is the column that keeps a
+     * 13.7k-row backfill from reading as the best signup day in the list's
+     * history: everything historical lands as `import`, and every growth chart
+     * excludes it. Without this the log is actively misleading on day one.
+     */
+    source: text('source', {
+      enum: ['web', 'form', 'api', 'mcp', 'cron', 'queue', 'stripe', 'import', 'system'],
+    })
+      .notNull()
+      .default('system'),
+    /** form_id, step_id, tag_id, amount_cents, reason — everything that is not a
+        group-by target. Deliberately not FKs: a deleted form must not erase the
+        history of how somebody arrived (same call as `attributions.source_id`). */
+    meta: text('meta', { mode: 'json' }).notNull().$type<Record<string, unknown>>().default({}),
+    /** Idempotency, same trick as `events.dedupe_key`. A replayed Stripe webhook
+        or a double-tapped preference link must leave one row, not two. */
+    dedupeKey: text('dedupe_key'),
+  },
+  (t) => [
+    // The per-person timeline: "everything about this human, newest first".
+    index('activities_subscriber_idx').on(t.subscriberId, t.occurredAt),
+    // The feed and every health chart: "what happened on the list this week",
+    // filtered by type. Leading with `occurred_at` because the feed is always
+    // time-ordered and the type filter is a refinement of it.
+    index('activities_occurred_idx').on(t.occurredAt),
+    index('activities_type_idx').on(t.type, t.occurredAt),
+    // Sequence funnels group by (sequence, type) over the whole table.
+    index('activities_sequence_idx').on(t.sequenceId, t.type),
+    uniqueIndex('activities_dedupe_key').on(t.dedupeKey).where(sql`dedupe_key is not null`),
+  ],
+)
+
 // Global kill switch. Keyed by ADDRESS, not subscriber: bounced and transactional
 // addresses may have no subscriber row at all.
 export const suppressions = sqliteTable(

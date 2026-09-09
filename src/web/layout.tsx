@@ -705,6 +705,19 @@ html:has(.compose-stage){overflow:hidden}
 .side-sec:first-child::before{display:none}
 .side-sec>h3{margin-bottom:15px}
 .side-sec>*+.field{margin-top:20px}
+
+/* The step list in the composer sidebar — a table of contents you can steer by. */
+.stepnav ol{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+.stepnav ol a,.stepnav ol li>span{display:grid;grid-template-columns:20px 1fr auto;gap:10px;
+  align-items:baseline;padding:7px 9px;border-radius:7px;font-size:13px;line-height:1.35;
+  color:var(--ink);text-decoration:none}
+.stepnav ol a:hover{background:rgba(148,190,255,.075);color:#fff}
+.stepnav li.here>span{background:rgba(148,190,255,.13);color:#fff;font-weight:600}
+.stepnav .n{font-variant-numeric:tabular-nums;color:var(--faint);font-size:12px;text-align:right}
+.stepnav li.here .n{color:inherit}
+.stepnav .s{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.stepnav .d{font-size:11.5px;color:var(--faint);white-space:nowrap}
+.stepnav-add{margin:14px 0 0 9px}
 /* A caption the screen reader needs and the design does not. */
 .hide-vis{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;
   clip-path:inset(50%);white-space:nowrap}
@@ -877,6 +890,9 @@ th a.on{color:#7dd3fc}
  */
 const ICONS: Record<string, string> = {
   home: 'M3.8 11.4 12 4.4l8.2 7M6.4 10v9.6h11.2V10M10.2 19.6v-5.2h3.6v5.2',
+  /* A heartbeat trace. The feed is a pulse — the one screen that shows the list
+     as something moving rather than something counted. */
+  act: 'M3.2 12.4h4l2.2-6 3.4 12.4 2.4-8.2 1.7 4.6h4.4',
   subs: 'M9.2 11.4a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4ZM3.6 19.4c.4-3.1 2.8-5 5.6-5s5.2 1.9 5.6 5M16.2 5.5a3.1 3.1 0 0 1 0 5.9M17.4 14.8c1.9.6 3.1 2.2 3.4 4.4',
   bc: 'M4 12.2 20.2 4.6l-4.4 15.2-3.9-5.9L4 12.2Zm7.9 1.7 4.9-8',
   seq: 'M5.4 6.6h6.2a3.1 3.1 0 0 1 0 6.2H9a3.1 3.1 0 0 0 0 6.2h6.6M14.6 16.6l2.6 2.4-2.6 2.4M14.6 4.2 17.2 6.6l-2.6 2.4',
@@ -936,6 +952,10 @@ const NAV: ({ grp: string } | { href: string; key: string; label: string })[] = 
   // them behind a tab strip is how a measurement tool goes unread.
   { grp: 'Analytics' },
   { href: '/analytics', key: 'an', label: 'Overview' },
+  // ⭐ First under Overview because it is the only screen here that reports
+  // *events* rather than state — what happened, in order. Everything else on
+  // this list is a number you read off the end of it.
+  { href: '/activity', key: 'act', label: 'Activity' },
   { href: '/analytics/sequences', key: 'anseq', label: 'Sequences' },
   { href: '/analytics/broadcasts', key: 'anbc', label: 'Broadcasts' },
   { href: '/analytics/contribution', key: 'ancon', label: 'Contribution' },

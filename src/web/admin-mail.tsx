@@ -637,12 +637,57 @@ mail.post('/broadcasts/:id/send', async (c) => {
 
 // ───────────────────────────────────────────────── sequences
 
+type SequenceRow = Awaited<ReturnType<typeof sequenceListRows>>[number]
+
+async function sequenceListRows(db: Db) {
+  // Newest first — the sequence being worked on is almost always the last one
+  // made. `createdAt`, not `id`, because imported Kit sequences were backfilled
+  // in whatever order the export listed them.
+  const rows = await db.select().from(sequences).orderBy(desc(sequences.createdAt)).all()
+  return await Promise.all(rows.map(async (s) => ({ ...s, stats: await sequenceStats(db, s.id) })))
+}
+
+function SequenceTable({ rows }: { rows: SequenceRow[] }) {
+  return (
+    <table>
+      <thead>
+        <tr>
+          <th>Sequence</th>
+          <th>Trigger</th>
+          <th class="num">Steps</th>
+          <th class="num">Active</th>
+          <th class="num">Left it</th>
+          <th>Live</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((s) => (
+          <tr>
+            <td>
+              <a href={`/sequences/${s.id}`} style="font-weight:500">
+                {s.name}
+              </a>
+              <div class="faint">{s.description}</div>
+            </td>
+            <td>
+              <span class="pill">{s.trigger}</span>
+            </td>
+            <td class="num">{s.stats.steps}</td>
+            <td class="num">{s.stats.active}</td>
+            <td class="num">{s.stats.optedOut}</td>
+            <td>{s.isActive ? <span class="pill ok">live</span> : <span class="pill">off</span>}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
 mail.get('/sequences', async (c) => {
   const db = getDb(c.env)
-  const rows = await db.select().from(sequences).orderBy(desc(sequences.id)).all()
-  const withStats = await Promise.all(
-    rows.map(async (s) => ({ ...s, stats: await sequenceStats(db, s.id) })),
-  )
+  const rows = await sequenceListRows(db)
+  const live = rows.filter((s) => s.isActive)
+  const off = rows.filter((s) => !s.isActive)
 
   return c.html(
     <Layout title="Sequences" nav="seq">
@@ -665,45 +710,28 @@ mail.get('/sequences', async (c) => {
 
       <div class="card">
         <div class="card-b flush">
-          {withStats.length === 0 ? (
+          {live.length === 0 ? (
             <div class="empty">
-              <p>No sequences yet.</p>
+              <p>{rows.length === 0 ? 'No sequences yet.' : 'No live sequences.'}</p>
             </div>
           ) : (
-            <table>
-              <thead>
-                <tr>
-                  <th>Sequence</th>
-                  <th>Trigger</th>
-                  <th class="num">Steps</th>
-                  <th class="num">Active</th>
-                  <th class="num">Left it</th>
-                  <th>Live</th>
-                </tr>
-              </thead>
-              <tbody>
-                {withStats.map((s) => (
-                  <tr>
-                    <td>
-                      <a href={`/sequences/${s.id}`} style="font-weight:500">
-                        {s.name}
-                      </a>
-                      <div class="faint">{s.description}</div>
-                    </td>
-                    <td>
-                      <span class="pill">{s.trigger}</span>
-                    </td>
-                    <td class="num">{s.stats.steps}</td>
-                    <td class="num">{s.stats.active}</td>
-                    <td class="num">{s.stats.optedOut}</td>
-                    <td>{s.isActive ? <span class="pill ok">live</span> : <span class="pill">off</span>}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <SequenceTable rows={live} />
           )}
         </div>
       </div>
+
+      {off.length > 0 && (
+        <details style="margin-top:1rem">
+          <summary class="faint" style="cursor:pointer">
+            {off.length} inactive {off.length === 1 ? 'sequence' : 'sequences'}
+          </summary>
+          <div class="card" style="margin-top:.5rem">
+            <div class="card-b flush">
+              <SequenceTable rows={off} />
+            </div>
+          </div>
+        </details>
+      )}
     </Layout>,
   )
 })
@@ -1052,9 +1080,10 @@ mail.get('/sequences/:id/steps/new', async (c) => {
   if (!seq) return c.notFound()
 
   const count = await db
-    .select({ id: sequenceSteps.id })
+    .select()
     .from(sequenceSteps)
     .where(eq(sequenceSteps.sequenceId, id))
+    .orderBy(asc(sequenceSteps.position))
     .all()
   const first = count.length === 0
 
@@ -1080,6 +1109,12 @@ mail.get('/sequences/:id/steps/new', async (c) => {
           <div class="side-sec">
             <StepDelay value={first ? '0' : '1'} first={first} />
           </div>
+          {!first && (
+            <div class="side-sec">
+              <h3>All steps</h3>
+              <StepNav seqId={id} steps={count} current={null} />
+            </div>
+          )}
           <div class="side-sec">
             <h3>Writing</h3>
             <EditorHint />
@@ -1114,6 +1149,59 @@ const StepDelay = ({ value, first }: { value: string; first: boolean }) => (
   </div>
 )
 
+/**
+ * The other steps in the sequence, so the composer is a place you can move
+ * around in rather than a dead end you have to back out of.
+ * `current` is the step being edited; `null` while writing a new one.
+ */
+const StepNav = ({
+  seqId,
+  steps,
+  current,
+}: {
+  seqId: number
+  steps: { id: number; position: number; subject: string; delayDays: number }[]
+  current: number | null
+}) => (
+  <nav class="stepnav">
+    <ol>
+      {steps.map((st) => {
+        const here = st.id === current
+        const inner = (
+          <>
+            <span class="n">{st.position}</span>
+            <span class="s">{st.subject || 'Untitled'}</span>
+            <span class="d">{formatDelay(st.delayDays)}</span>
+          </>
+        )
+        return (
+          <li class={here ? 'here' : ''}>
+            {here ? (
+              <span aria-current="step">{inner}</span>
+            ) : (
+              <a href={`/sequences/${seqId}/steps/${st.id}`}>{inner}</a>
+            )}
+          </li>
+        )
+      })}
+      {current === null && (
+        <li class="here">
+          <span aria-current="step">
+            <span class="n">{steps.length + 1}</span>
+            <span class="s">This step</span>
+            <span class="d">new</span>
+          </span>
+        </li>
+      )}
+    </ol>
+    {current !== null && (
+      <a class="btn sm stepnav-add" href={`/sequences/${seqId}/steps/new`}>
+        Add a step
+      </a>
+    )}
+  </nav>
+)
+
 mail.get('/sequences/:id/steps/:stepId', async (c) => {
   const db = getDb(c.env)
   const id = Number(c.req.param('id'))
@@ -1122,6 +1210,14 @@ mail.get('/sequences/:id/steps/:stepId', async (c) => {
   const step = await db.select().from(sequenceSteps).where(eq(sequenceSteps.id, stepId)).get()
   if (!step || step.sequenceId !== id) return c.notFound()
   const seq = await db.select().from(sequences).where(eq(sequences.id, id)).get()
+
+  // The whole run of steps, so the sidebar can jump straight to any of them.
+  const siblings = await db
+    .select()
+    .from(sequenceSteps)
+    .where(eq(sequenceSteps.sequenceId, id))
+    .orderBy(asc(sequenceSteps.position))
+    .all()
 
   return c.html(
     <ComposeLayout
@@ -1140,6 +1236,10 @@ mail.get('/sequences/:id/steps/:stepId', async (c) => {
         <>
           <div class="side-sec">
             <StepDelay value={String(step.delayDays)} first={step.position === 1} />
+          </div>
+          <div class="side-sec">
+            <h3>All steps</h3>
+            <StepNav seqId={id} steps={siblings} current={stepId} />
           </div>
           <div class="side-sec">
             <h3>Writing</h3>

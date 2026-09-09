@@ -10,6 +10,8 @@ import {
   subscribers,
 } from '../db/schema.ts'
 import type { Env } from '../types.ts'
+import type { ActivityInput } from './activity.ts'
+import { logActivities, logActivity } from './activity.ts'
 import { canReceiveSequence } from './consent.ts'
 import { slugify } from './ids.ts'
 import { dispatch } from './sending.ts'
@@ -79,6 +81,18 @@ export async function enroll(
     nextRunAt: new Date(now.getTime() + step.delayDays * DAY_MS),
     enrolledAt: now,
   })
+
+  // The head of the funnel. Deduped on the pair because `sequence_enrollments`
+  // is itself unique on it — one person enters one sequence once, and a
+  // re-enrollment after a cancel would otherwise double-count the denominator
+  // every funnel percentage is divided by.
+  await logActivity(db, {
+    type: 'sequence_enrolled',
+    subscriberId,
+    sequenceId,
+    occurredAt: now,
+    dedupeKey: `seq_enrolled:${sequenceId}:${subscriberId}`,
+  })
   return 'enrolled'
 }
 
@@ -139,9 +153,21 @@ export async function tickSequences(env: Env, db: Db): Promise<number> {
 
   const toSend: number[] = []
 
+  /**
+   * ⚠️ Activity is accumulated here and flushed in ONE insert after the loop,
+   * never written per enrollment.
+   *
+   * D1 allows 1,000 queries per Worker invocation and this loop already spends
+   * roughly seven of them per due enrollment, up to `TICK_LIMIT`. A log write
+   * inside the loop is the difference between a tick that finishes and a tick
+   * that dies partway through with mail half-sent.
+   */
+  const activity: ActivityInput[] = []
+
   for (const d of due) {
     if (d.stepId === null) {
       await complete(db, d.enrollmentId)
+      activity.push(completedActivity(d.subscriberId, d.sequenceId, now, 'no_next_step'))
       continue
     }
 
@@ -149,6 +175,7 @@ export async function tickSequences(env: Env, db: Db): Promise<number> {
     const sub = await db.select().from(subscribers).where(eq(subscribers.id, d.subscriberId)).get()
     if (!step || !sub) {
       await complete(db, d.enrollmentId)
+      activity.push(completedActivity(d.subscriberId, d.sequenceId, now, 'step_or_person_gone'))
       continue
     }
 
@@ -159,6 +186,16 @@ export async function tickSequences(env: Env, db: Db): Promise<number> {
         .update(sequenceEnrollments)
         .set({ status: 'cancelled', nextRunAt: null })
         .where(eq(sequenceEnrollments.id, d.enrollmentId))
+      // ⭐ Worth logging the *reason*: this is the difference between "they
+      // asked to leave" and "we stopped because they bounced", which look
+      // identical in `sequence_enrollments.status` and mean opposite things.
+      activity.push({
+        type: 'sequence_cancelled',
+        subscriberId: d.subscriberId,
+        sequenceId: d.sequenceId,
+        occurredAt: now,
+        meta: { reason: block.reason ?? 'consent', atPosition: step.position },
+      })
       continue
     }
 
@@ -188,6 +225,19 @@ export async function tickSequences(env: Env, db: Db): Promise<number> {
       .all()
     const following = next.find((s) => s.position > step.position)
 
+    // ⭐ The funnel row. `next_step_id` is about to be overwritten, so this is
+    // the only place the fact "this person reached step N" is ever recorded.
+    // Deduped on (step, person) for the same reason the message is:
+    // `seqstep:` guarantees one send, and this guarantees one count of it.
+    activity.push({
+      type: 'sequence_advanced',
+      subscriberId: d.subscriberId,
+      sequenceId: d.sequenceId,
+      occurredAt: now,
+      meta: { stepId: step.id, position: step.position, subject: step.subject },
+      dedupeKey: `seq_advanced:${step.id}:${d.subscriberId}`,
+    })
+
     if (following) {
       await db
         .update(sequenceEnrollments)
@@ -198,11 +248,32 @@ export async function tickSequences(env: Env, db: Db): Promise<number> {
         .where(eq(sequenceEnrollments.id, d.enrollmentId))
     } else {
       await complete(db, d.enrollmentId)
+      activity.push(completedActivity(d.subscriberId, d.sequenceId, now, 'finished'))
     }
   }
 
+  await logActivities(db, activity)
   await dispatch(env, db, toSend)
   return toSend.length
+}
+
+function completedActivity(
+  subscriberId: number,
+  sequenceId: number,
+  occurredAt: Date,
+  reason: string,
+): ActivityInput {
+  return {
+    type: 'sequence_completed',
+    subscriberId,
+    sequenceId,
+    occurredAt,
+    meta: { reason },
+    // Reaching the end is a once-per-enrollment fact, and the tick is
+    // deliberately re-runnable — an unkeyed row would let a replayed tick
+    // report a completion rate above 100%.
+    dedupeKey: `seq_completed:${sequenceId}:${subscriberId}`,
+  }
 }
 
 async function complete(db: Db, enrollmentId: number) {

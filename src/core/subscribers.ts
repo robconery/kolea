@@ -1,6 +1,7 @@
-import { and, eq } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 import type { Db } from '../db/index.ts'
 import { subscriberTags, subscribers, tags } from '../db/schema.ts'
+import { logActivity } from './activity.ts'
 import { isValidEmail, normalizeEmail, randomToken, slugify } from './ids.ts'
 import { enrollOnSubscribe, enrollOnTag } from './sequences.ts'
 
@@ -74,6 +75,19 @@ export async function upsertSubscriber(
         .where(eq(subscribers.id, existing.id))
     }
 
+    if (promoting) {
+      await logActivity(db, {
+        type: 'promoted',
+        subscriberId: existing.id,
+        meta: { from: 'pending', source: input.source ?? existing.source },
+        // A person can only be promoted once — the branch is guarded on
+        // `pending` — but a double-submitted form races itself, and two
+        // "joined the list" rows for one joining is exactly the noise this
+        // feed exists to not have.
+        dedupeKey: `promoted:${existing.id}`,
+      })
+    }
+
     if (input.tagIds?.length) await addTags(db, existing.id, input.tagIds)
     if (promoting && input.triggerSubscribeSequences !== false) {
       await enrollOnSubscribe(db, existing.id)
@@ -95,6 +109,17 @@ export async function upsertSubscriber(
     .returning({ id: subscribers.id })
 
   const id = inserted[0]!.id
+
+  // `pending` is "we have their address, they did not ask for mail" — a buyer on
+  // file. Logging it as `subscribed` would inflate every growth chart with people
+  // who never joined, so it gets its own type and stays out of the joined count.
+  await logActivity(db, {
+    type: wantedStatus === 'active' ? 'subscribed' : 'pending_added',
+    subscriberId: id,
+    meta: { email, origin: input.source ?? null },
+    dedupeKey: `${wantedStatus === 'active' ? 'subscribed' : 'pending'}:${id}`,
+  })
+
   if (input.tagIds?.length) await addTags(db, id, input.tagIds)
   // `pending` means "we have their address, they did not ask for mail" — the
   // welcome series is not a thing that can be true of them yet. It fires later,
@@ -113,6 +138,10 @@ export async function upsertSubscriber(
  */
 export async function addTags(db: Db, subscriberId: number, tagIds: number[]): Promise<number> {
   const now = new Date()
+  // One lookup for the whole call, not one per tag. Tagging runs inside CSV
+  // import and inside the queue consumer, and D1 allows 1,000 queries per
+  // invocation — a per-tag name lookup is how a 13k import runs out of budget.
+  const names = await tagNames(db, tagIds)
   let added = 0
   for (const tagId of tagIds) {
     const before = await db
@@ -128,6 +157,16 @@ export async function addTags(db: Db, subscriberId: number, tagIds: number[]): P
       .insert(subscriberTags)
       .values({ subscriberId, tagId, taggedAt: now })
       .onConflictDoNothing()
+    await logActivity(db, {
+      type: 'tagged',
+      subscriberId,
+      occurredAt: now,
+      meta: { tagId, tag: names.get(tagId) ?? null },
+      // `subscriber_tags` is a compound PK, so a tag lands at most once —
+      // but it can be removed and re-added, and both of those are real
+      // events. Keyed on the moment, not the pair.
+      dedupeKey: `tagged:${subscriberId}:${tagId}:${now.getTime()}`,
+    })
     await enrollOnTag(db, subscriberId, tagId)
     added++
   }
@@ -135,9 +174,31 @@ export async function addTags(db: Db, subscriberId: number, tagIds: number[]): P
 }
 
 export async function removeTag(db: Db, subscriberId: number, tagId: number): Promise<void> {
-  await db
+  const name = (await tagNames(db, [tagId])).get(tagId) ?? null
+  const removed = await db
     .delete(subscriberTags)
     .where(and(eq(subscriberTags.subscriberId, subscriberId), eq(subscriberTags.tagId, tagId)))
+    .returning({ tagId: subscriberTags.tagId })
+
+  // Only log a removal that removed something. Un-tagging somebody who was never
+  // tagged is a no-op, and a feed full of no-ops is a feed nobody reads.
+  if (removed.length === 0) return
+  await logActivity(db, {
+    type: 'untagged',
+    subscriberId,
+    meta: { tagId, tag: name },
+  })
+}
+
+/** Names for the feed. A row saying "tagged: 47" is not a story. */
+async function tagNames(db: Db, tagIds: number[]): Promise<Map<number, string>> {
+  if (tagIds.length === 0) return new Map()
+  const rows = await db
+    .select({ id: tags.id, name: tags.name })
+    .from(tags)
+    .where(inArray(tags.id, tagIds))
+    .all()
+  return new Map(rows.map((r) => [r.id, r.name]))
 }
 
 export async function findOrCreateTag(db: Db, name: string): Promise<number> {

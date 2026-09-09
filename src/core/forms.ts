@@ -2,6 +2,7 @@ import { and, asc, count, eq, sql } from 'drizzle-orm'
 import type { Db } from '../db/index.ts'
 import { type DocNode, campaigns, formTags, forms, messages, sequences, tags } from '../db/schema.ts'
 import type { Env } from '../types.ts'
+import { logActivity } from './activity.ts'
 import { recordTouch } from './campaigns.ts'
 import { grantDownload } from './downloads.ts'
 import { normalizeEmail, slugify } from './ids.ts'
@@ -314,6 +315,21 @@ export async function submitForm(
   if (outcome === 'invalid' || !id) {
     return { status: 'invalid_email', message: 'That email address looks wrong.' }
   }
+
+  // ⭐ "How they got in", recorded against the form itself rather than inferred
+  // from `subscribers.source`, which is a single overwritable text column and
+  // says nothing about the second time somebody used a different form.
+  //
+  // Not deduped: a form gets double-submitted, and unlike the touch it collapses
+  // into, each submission is a real thing that happened. The upsert above is
+  // what keeps the *person* from being created twice.
+  await logActivity(db, {
+    type: 'form_submitted',
+    subscriberId: id,
+    campaignId: form.campaignId,
+    sequenceId: form.sequenceId,
+    meta: { formId: form.id, formSlug: form.slug, formName: form.name, outcome },
+  })
 
   if (form.campaignId) {
     await recordTouch(db, {

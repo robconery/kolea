@@ -5,6 +5,7 @@ import { formsApi } from './api/forms.tsx'
 import { mediaRoutes } from './api/media.ts'
 import { api } from './api/routes.ts'
 import { salesApi } from './api/sales.ts'
+import { withActivitySource } from './core/activity.ts'
 import { sendBroadcastNow } from './core/broadcasts.ts'
 import { sendMessages } from './core/sending.ts'
 import { tickSequences } from './core/sequences.ts'
@@ -15,6 +16,7 @@ import { broadcasts, messages } from './db/schema.ts'
 import { handleMcp } from './mcp/server.ts'
 import type { Env, SendJob } from './types.ts'
 import { admin } from './web/admin.tsx'
+import { activityAdmin } from './web/admin-activity.tsx'
 import { analytics } from './web/admin-analytics.tsx'
 import { analyticsSequences } from './web/admin-analytics-sequences.tsx'
 import { audience } from './web/admin-audience.tsx'
@@ -30,6 +32,29 @@ import { prefs } from './web/prefs.tsx'
 import { seed } from './web/seed.tsx'
 
 const app = new Hono<{ Bindings: Env }>()
+
+/**
+ * Stamp every activity row with how the request got here.
+ *
+ * The domain doesn't know or care whether it was called by a browser, an agent
+ * or a cron, and threading a `source` argument through thirty signatures to tell
+ * it would put a transport concern in every one of them. So it rides in
+ * `AsyncLocalStorage`, set once here at the edge and read at the leaf in
+ * `core/activity.ts`.
+ *
+ * The path prefixes are matched longest-first and the default is `web`, so a new
+ * admin route needs no change here — only a new *public* surface does.
+ */
+app.use('*', (c, next) => {
+  const path = new URL(c.req.url).pathname
+  const source =
+    path.startsWith('/mcp/') ? 'mcp'
+    : path.startsWith('/f/') ? 'form'
+    : path.startsWith('/api/stripe') || path.startsWith('/webhooks/stripe') ? 'stripe'
+    : path.startsWith('/api/') || path.startsWith('/hooks/') ? 'api'
+    : 'web'
+  return withActivitySource(source, next)
+})
 
 /** Must match the second entry in `triggers.crons` in wrangler.jsonc exactly. */
 const DAILY_CRON = '17 9 * * *'
@@ -65,6 +90,7 @@ app.route('/', audience)
 // Read-only by construction — see the header note in `web/admin-analytics.tsx`.
 // The sequence screens come first so `/analytics/sequences/:id` is matched by
 // its own router rather than swallowed by anything broader.
+app.route('/', activityAdmin)
 app.route('/', analyticsSequences)
 app.route('/', analytics)
 app.route('/', tagging)
@@ -89,7 +115,7 @@ export default {
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
     if (controller.cron === DAILY_CRON) {
       ctx.waitUntil(
-        (async () => {
+        withActivitySource('stripe', async () => {
           if (!env.STRIPE_SECRET_KEY) return
           const db = getDb(env)
 
@@ -111,13 +137,13 @@ export default {
           } catch {
             /* recorded in sync_runs */
           }
-        })(),
+        }),
       )
       return
     }
 
     ctx.waitUntil(
-      (async () => {
+      withActivitySource('cron', async () => {
         const db = getDb(env)
         await tickSequences(env, db)
 
@@ -139,7 +165,7 @@ export default {
           .all()
 
         for (const b of due) await sendBroadcastNow(env, db, b.id)
-      })(),
+      }),
     )
   },
 
@@ -149,35 +175,39 @@ export default {
    * address never re-sends the other 99 in the batch (SPEC 4.1).
    */
   async queue(batch: MessageBatch<SendJob>, env: Env) {
-    const db = getDb(env)
-
-    // The dead-letter queue has no send path. Its job is to make a give-up
-    // visible as a row — Workers logs are gone in a week, and a message that
-    // quietly stopped existing is the worst possible failure for a mailer.
-    if (batch.queue.endsWith('-dlq')) {
-      for (const msg of batch.messages) {
-        await db
-          .update(messages)
-          .set({ status: 'failed', error: 'gave up after exhausting queue retries' })
-          .where(and(eq(messages.id, msg.body.messageId), eq(messages.status, 'queued')))
-        msg.ack()
-      }
-      return
-    }
-
-    try {
-      const outcomes = await sendMessages(
-        env,
-        db,
-        batch.messages.map((m) => m.body.messageId),
-      )
-      for (const msg of batch.messages) {
-        const outcome = outcomes.get(msg.body.messageId)
-        if (outcome?.status === 'failed' && outcome.retryable) msg.retry()
-        else msg.ack()
-      }
-    } catch {
-      batch.retryAll()
-    }
+    return await withActivitySource('queue', () => consumeBatch(batch, env))
   },
+}
+
+async function consumeBatch(batch: MessageBatch<SendJob>, env: Env) {
+  const db = getDb(env)
+
+  // The dead-letter queue has no send path. Its job is to make a give-up
+  // visible as a row — Workers logs are gone in a week, and a message that
+  // quietly stopped existing is the worst possible failure for a mailer.
+  if (batch.queue.endsWith('-dlq')) {
+    for (const msg of batch.messages) {
+      await db
+        .update(messages)
+        .set({ status: 'failed', error: 'gave up after exhausting queue retries' })
+        .where(and(eq(messages.id, msg.body.messageId), eq(messages.status, 'queued')))
+      msg.ack()
+    }
+    return
+  }
+
+  try {
+    const outcomes = await sendMessages(
+      env,
+      db,
+      batch.messages.map((m) => m.body.messageId),
+    )
+    for (const msg of batch.messages) {
+      const outcome = outcomes.get(msg.body.messageId)
+      if (outcome?.status === 'failed' && outcome.retryable) msg.retry()
+      else msg.ack()
+    }
+  } catch {
+    batch.retryAll()
+  }
 }

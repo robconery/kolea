@@ -8,6 +8,7 @@ import {
   suppressions,
 } from '../db/schema.ts'
 // `sequences` is used for existence checks as well as the preference listing.
+import { logActivity } from './activity.ts'
 import { normalizeEmail } from './ids.ts'
 
 /**
@@ -214,7 +215,7 @@ export async function leaveSequence(
     .insert(sequenceOptouts)
     .values({ subscriberId, sequenceId, optedOutAt: now })
     .onConflictDoNothing()
-  await db
+  const cancelled = await db
     .update(sequenceEnrollments)
     .set({ status: 'cancelled', nextRunAt: null })
     .where(
@@ -224,12 +225,26 @@ export async function leaveSequence(
         eq(sequenceEnrollments.status, 'active'),
       ),
     )
+    .returning({ id: sequenceEnrollments.id })
+
+  // ⭐ The row that makes scoped consent legible. `sequence_optouts` records the
+  // standing preference; this records the moment it was made, next to everything
+  // else that happened to this person — so "they left the drip but stayed on the
+  // newsletter" reads as one story instead of two tables.
+  await logActivity(db, {
+    type: 'sequence_opted_out',
+    subscriberId,
+    sequenceId,
+    meta: { cancelledEnrollment: cancelled.length > 0 },
+    // A refresh or a double-tap on the preference link is one decision.
+    dedupeKey: `seq_optout:${subscriberId}:${sequenceId}`,
+  })
   return true
 }
 
 /** Rejoin a sequence. Leaving is reversible by the subscriber (SPEC 2.9). */
 export async function rejoinSequence(db: Db, subscriberId: number, sequenceId: number) {
-  await db
+  const removed = await db
     .delete(sequenceOptouts)
     .where(
       and(
@@ -237,6 +252,12 @@ export async function rejoinSequence(db: Db, subscriberId: number, sequenceId: n
         eq(sequenceOptouts.sequenceId, sequenceId),
       ),
     )
+    .returning({ sequenceId: sequenceOptouts.sequenceId })
+
+  if (removed.length === 0) return
+  // Not deduped: leaving and rejoining is a loop a person is allowed to run more
+  // than once, and each pass is a real thing they did.
+  await logActivity(db, { type: 'sequence_rejoined', subscriberId, sequenceId })
 }
 
 /** Off the newsletter. Sequence enrollments keep running. */
@@ -245,6 +266,11 @@ export async function unsubscribeBroadcasts(db: Db, subscriberId: number) {
     .update(subscribers)
     .set({ status: 'unsubscribed', unsubscribedAt: new Date() })
     .where(eq(subscribers.id, subscriberId))
+
+  // `subscribers.unsubscribed_at` holds only the LAST departure and is nulled on
+  // return, so the history of who left and when exists nowhere else. Net list
+  // growth is uncomputable without this row.
+  await logActivity(db, { type: 'unsubscribed', subscriberId, meta: { scope: 'broadcasts' } })
 }
 
 export async function resubscribeBroadcasts(db: Db, subscriberId: number) {
@@ -252,6 +278,7 @@ export async function resubscribeBroadcasts(db: Db, subscriberId: number) {
     .update(subscribers)
     .set({ status: 'active', unsubscribedAt: null })
     .where(eq(subscribers.id, subscriberId))
+  await logActivity(db, { type: 'resubscribed', subscriberId })
 }
 
 /**
@@ -269,7 +296,7 @@ export async function unsubscribeAll(db: Db, subscriberId: number, email: string
     .update(subscribers)
     .set({ status: 'unsubscribed', unsubscribedAt: now })
     .where(eq(subscribers.id, subscriberId))
-  await db
+  const cancelled = await db
     .update(sequenceEnrollments)
     .set({ status: 'cancelled', nextRunAt: null })
     .where(
@@ -278,6 +305,18 @@ export async function unsubscribeAll(db: Db, subscriberId: number, email: string
         eq(sequenceEnrollments.status, 'active'),
       ),
     )
+    .returning({ sequenceId: sequenceEnrollments.sequenceId })
+
+  // One row, not one per cancelled enrollment. This was a single decision — "off
+  // everything" — and splintering it into six `sequence_cancelled` rows would
+  // read as six choices. What it took down goes in the meta.
+  await logActivity(db, {
+    type: 'unsubscribed_all',
+    subscriberId,
+    occurredAt: now,
+    meta: { email: normalizeEmail(email), sequencesCancelled: cancelled.map((c) => c.sequenceId) },
+    dedupeKey: `unsub_all:${subscriberId}`,
+  })
 }
 
 export async function suppressAddress(
@@ -285,14 +324,48 @@ export async function suppressAddress(
   email: string,
   reason: 'hard_bounce' | 'complaint' | 'manual',
 ) {
-  await db
+  const addr = normalizeEmail(email)
+  const inserted = await db
     .insert(suppressions)
-    .values({ email: normalizeEmail(email), reason, createdAt: new Date() })
+    .values({ email: addr, reason, createdAt: new Date() })
     .onConflictDoNothing()
+    .returning({ email: suppressions.email })
+
+  // Already suppressed — nothing changed, so nothing happened.
+  if (inserted.length === 0) return
+  await logActivityForAddress(db, addr, 'suppressed', { reason })
 }
 
 export async function unsuppressAddress(db: Db, email: string) {
-  await db.delete(suppressions).where(eq(suppressions.email, normalizeEmail(email)))
+  const addr = normalizeEmail(email)
+  const removed = await db
+    .delete(suppressions)
+    .where(eq(suppressions.email, addr))
+    .returning({ email: suppressions.email })
+  if (removed.length === 0) return
+  await logActivityForAddress(db, addr, 'unsuppressed', {})
+}
+
+/**
+ * Suppressions are keyed by ADDRESS, deliberately — a hard bounce or a
+ * transactional-only recipient may have no subscriber row at all. The activity
+ * log is keyed by PERSON, equally deliberately, because it is a story about
+ * people. Where the two don't meet, the suppression still stands and simply
+ * goes unlogged: an orphan address has no story to appear in.
+ */
+async function logActivityForAddress(
+  db: Db,
+  email: string,
+  type: 'suppressed' | 'unsuppressed',
+  meta: Record<string, unknown>,
+) {
+  const sub = await db
+    .select({ id: subscribers.id })
+    .from(subscribers)
+    .where(eq(subscribers.email, email))
+    .get()
+  if (!sub) return
+  await logActivity(db, { type, subscriberId: sub.id, meta: { ...meta, email } })
 }
 
 // ───────────────────────────────────────────────── preference center data

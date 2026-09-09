@@ -11,6 +11,7 @@ import {
   sequences,
   subscribers,
 } from '../db/schema.ts'
+import { logActivity } from './activity.ts'
 import { slugify } from './ids.ts'
 
 export type SourceKind = 'form' | 'broadcast' | 'sequence' | 'manual'
@@ -44,6 +45,20 @@ export async function recordTouch(db: Db, touch: Touch): Promise<boolean> {
     })
     .onConflictDoNothing()
     .returning({ id: attributions.id })
+
+  // Only the touch that was actually new. `attributions_touch_key` collapses
+  // repeats on purpose — one person touching one campaign is one fact — and the
+  // activity row has to agree with it, or the feed shows a re-submitted form as
+  // a fresh arrival every time.
+  if (inserted.length > 0) {
+    await logActivity(db, {
+      type: 'touched',
+      subscriberId: touch.subscriberId,
+      campaignId: touch.campaignId,
+      occurredAt: touch.occurredAt ?? new Date(),
+      meta: { sourceKind: touch.sourceKind, sourceId: touch.sourceId ?? 0 },
+    })
+  }
 
   return inserted.length > 0
 }

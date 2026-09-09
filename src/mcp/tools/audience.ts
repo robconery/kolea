@@ -1,6 +1,13 @@
 import type { McpServer } from '@modelcontextprotocol/server'
 import { and, desc, eq, like, or } from 'drizzle-orm'
 import * as z from 'zod/v4'
+import {
+  type ActivityType,
+  activityCounts,
+  activityFeed,
+  activityForSubscriber,
+  growthByDay,
+} from '../../core/activity.ts'
 import { campaignsForSubscriber, touchesFor } from '../../core/campaigns.ts'
 import { preferencesFor } from '../../core/consent.ts'
 import { normalizeEmail } from '../../core/ids.ts'
@@ -18,6 +25,33 @@ import {
 import { type Ctx, clampLimit, defineTool, fail, money, ok } from '../kit.ts'
 
 const STATUSES = ['pending', 'active', 'unsubscribed', 'bounced', 'complained'] as const
+
+const ACTIVITY_TYPES = [
+  'subscribed',
+  'pending_added',
+  'promoted',
+  'imported',
+  'form_submitted',
+  'unsubscribed',
+  'resubscribed',
+  'unsubscribed_all',
+  'suppressed',
+  'unsuppressed',
+  'bounced',
+  'complained',
+  'sequence_enrolled',
+  'sequence_advanced',
+  'sequence_completed',
+  'sequence_cancelled',
+  'sequence_opted_out',
+  'sequence_rejoined',
+  'tagged',
+  'untagged',
+  'touched',
+  'purchased',
+  'refunded',
+] as const satisfies readonly ActivityType[]
+
 
 /** Tag rows for one person. Two queries, not one per tag. */
 async function tagsOf(ctx: Ctx, subscriberId: number) {
@@ -187,9 +221,23 @@ export function registerAudience(server: McpServer, ctx: Ctx): void {
 
       const purchases = await salesForSubscriber(ctx.db, sub.id)
 
+      // The story, in order: how they arrived, what they were tagged, how far
+      // into each sequence they got, what they bought. `messages` below is the
+      // mail; this is the person. Imported rows are included here — on one
+      // person's page, history is exactly what you came for.
+      const activity = await activityForSubscriber(ctx.db, sub.id)
+
       return ok({
         subscriber: { id: sub.id, email: sub.email, name: sub.name, status: sub.status },
         tags: await tagsOf(ctx, sub.id),
+        activity: activity.map((a) => ({
+          type: a.type,
+          occurredAt: a.occurredAt,
+          via: a.source,
+          campaign: a.campaignName,
+          sequence: a.sequenceName,
+          ...a.meta,
+        })),
         touches: await touchesFor(ctx.db, sub.id),
         campaigns: await campaignsForSubscriber(ctx.db, sub.id),
         purchases: purchases.map(({ sale, campaignName }) => ({
@@ -323,6 +371,86 @@ export function registerAudience(server: McpServer, ctx: Ctx): void {
         warning: purchases.length
           ? `${purchases.length} sale(s) were deleted with them — revenue reports will change.`
           : undefined,
+      })
+    },
+  )
+
+  defineTool(
+    server,
+    ctx,
+    'activity_list',
+    {
+      description:
+        'The activity feed: signups, form submissions, tags, sequence progress, consent changes and purchases, newest first. This is the story of the list — use it for "what has been happening", "why is the list shrinking", or "what is working". Backfilled history is excluded unless you ask for it.',
+      inputSchema: z.object({
+        types: z.array(z.enum(ACTIVITY_TYPES)).optional().describe('Filter to these activity types'),
+        sequence_id: z.number().int().optional(),
+        campaign_id: z.number().int().optional(),
+        subscriber_id: z.number().int().optional(),
+        days: z.number().int().optional().describe('Look back this many days'),
+        include_imported: z
+          .boolean()
+          .optional()
+          .describe('Include backfilled history. Default false — it is not activity.'),
+        limit: z.number().int().optional().describe('Default 100, max 500'),
+        before_id: z.number().int().optional().describe('Keyset page: rows older than this id'),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => {
+      const rows = await activityFeed(ctx.db, {
+        types: args.types ? [...args.types] : undefined,
+        sequenceId: args.sequence_id,
+        campaignId: args.campaign_id,
+        subscriberId: args.subscriber_id,
+        since: args.days ? Date.now() - args.days * 24 * 60 * 60 * 1000 : undefined,
+        includeImported: args.include_imported,
+        limit: clampLimit(args.limit, 100, 500),
+        beforeId: args.before_id,
+      })
+
+      return ok({
+        count: rows.length,
+        // The id to pass as `before_id` for the next page. Null when this is the end.
+        nextBeforeId: rows.length ? (rows[rows.length - 1]?.id ?? null) : null,
+        activity: rows.map((r) => ({
+          id: r.id,
+          type: r.type,
+          occurredAt: r.occurredAt,
+          via: r.source,
+          subscriber: { id: r.subscriberId, email: r.email, name: r.name },
+          campaign: r.campaignName,
+          sequence: r.sequenceName,
+          ...r.meta,
+        })),
+      })
+    },
+  )
+
+  defineTool(
+    server,
+    ctx,
+    'list_health',
+    {
+      description:
+        'Net list growth per day plus a breakdown of what the list has been doing. Answers "is the list growing" honestly: joins minus departures, with backfilled history excluded so an import never reads as a good day.',
+      inputSchema: z.object({
+        days: z.number().int().optional().describe('Window in days. Default 90.'),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    async ({ days }) => {
+      const window = clampLimit(days, 90, 365)
+      const daily = await growthByDay(ctx.db, window)
+      const counts = await activityCounts(ctx.db, window)
+
+      return ok({
+        windowDays: window,
+        joined: daily.reduce((n, d) => n + d.joined, 0),
+        left: daily.reduce((n, d) => n + d.left, 0),
+        net: daily.reduce((n, d) => n + d.net, 0),
+        daily,
+        byType: counts,
       })
     },
   )
