@@ -96,6 +96,10 @@
 		"SITE_TITLE": "Big Machine",
 		"SITE_TAGLINE": "Essays on code, business and the long way round.",
 		"SITE_AUTHOR": "Rob Conery",
+		// The signup form the site's subscribe box posts to. It posts to the ADMIN
+		// host (`PUBLIC_URL`/f/<slug>), which is where the form endpoint lives, so
+		// consent arrives by exactly the same path as a signup from anywhere else.
+		"SITE_FORM_SLUG": "newsletter",
 		// Local only: bypasses the Cloudflare Access check. Never set in production.
 		"DEV_AUTH_BYPASS": "true",
 		// Locally the provider is "console", so an MCP send lands in the Outbox
@@ -191,6 +195,9 @@
 				"SITE_TITLE": "Big Machine",
 				"SITE_TAGLINE": "Essays on code, business and the long way round.",
 				"SITE_AUTHOR": "Rob Conery",
+				// forms.slug = 'newsletter' ("General Signup"), which enrols into the
+				// welcome sequence. Renaming that form's slug silently breaks the box.
+				"SITE_FORM_SLUG": "newsletter",
 				"DEV_AUTH_BYPASS": "false",
 				// Admin console identity. Both are required: `web/auth.ts` fails closed
 				// and refuses everyone if either is missing.
