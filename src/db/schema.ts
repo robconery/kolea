@@ -234,8 +234,51 @@ export const broadcasts = sqliteTable(
     importedUnsubscribed: integer('imported_unsubscribed'),
     /** Provenance, so an imported figure can always be labelled as one in the UI. */
     importedFrom: text('imported_from'),
+
+    // ── Published to the web (the public site at `SITE_URL`).
+    //
+    // A post IS a broadcast that opted in. One write becomes one send and one
+    // page; a separate `posts` table would mean authoring the same piece twice,
+    // which is the exact thing this project exists to avoid.
+    //
+    // `publishedAt` is the only gate the public site reads — null means the
+    // broadcast is mail and nothing else. It defaults to null for every existing
+    // row, which matters: the imported Kit archive is hundreds of `sent`
+    // broadcasts, and publishing is a per-post, deliberate act, never a backfill.
+    //
+    // Deliberately NOT `status: 'published'`. Publishing is orthogonal to the
+    // send lifecycle — a sent broadcast can go up months later, come down, and
+    // go back up, and none of that may disturb the row the send path reads.
+    publishedAt: ts('published_at'),
+    /** URL identity. Unique across published and unpublished alike, so taking a
+        post down never frees its slug for something else to claim. */
+    slug: text('slug'),
+    /** Card copy and the meta description. Derived from the body on publish when
+        the operator doesn't write one. */
+    excerpt: text('excerpt'),
+    /** Card art and the og:image. Either a `/media/...` URL from our own uploader
+        or a hotlinked `images.unsplash.com` one — absolute either way, because it
+        also has to resolve inside email. */
+    featureImage: text('feature_image'),
+    /** Photographer's name, when the image came from Unsplash. Stored rather than
+        looked up: the credit has to render on the page years later, offline from
+        the API, and a credit that can fail to load is not a credit. */
+    featureImageCredit: text('feature_image_credit'),
+    /** Their profile link, carrying the referral parameters Unsplash requires. */
+    featureImageCreditUrl: text('feature_image_credit_url'),
+    /** The body flattened to plain text, written on publish. Search reads this
+        and never the document JSON: `LIKE` over a JSON blob matches attribute
+        names and hex colours as happily as it matches prose. */
+    searchText: text('search_text'),
   },
-  (t) => [index('broadcasts_status_scheduled_idx').on(t.status, t.scheduledAt)],
+  (t) => [
+    index('broadcasts_status_scheduled_idx').on(t.status, t.scheduledAt),
+    // SQLite treats NULLs as distinct in a unique index, so every unpublished
+    // broadcast keeps a null slug without colliding with the others.
+    uniqueIndex('broadcasts_slug_key').on(t.slug),
+    // The public index page's only query: newest published first.
+    index('broadcasts_published_at_idx').on(t.publishedAt),
+  ],
 )
 
 // ─────────────────────────────────────────────────────────── sequences
@@ -836,7 +879,7 @@ export const activities = sqliteTable(
      * excludes it. Without this the log is actively misleading on day one.
      */
     source: text('source', {
-      enum: ['web', 'form', 'api', 'mcp', 'cron', 'queue', 'stripe', 'import', 'system'],
+      enum: ['web', 'site', 'form', 'api', 'mcp', 'cron', 'queue', 'stripe', 'import', 'system'],
     })
       .notNull()
       .default('system'),

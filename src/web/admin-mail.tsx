@@ -1,7 +1,11 @@
 import { asc, desc, eq } from 'drizzle-orm'
 import { Hono } from 'hono'
+import type { FC } from 'hono/jsx'
 import { broadcastStats, createBroadcast, startBroadcast } from '../core/broadcasts.ts'
 import { listCampaigns } from '../core/campaigns.ts'
+import { storeMedia } from '../core/media.ts'
+import { clearFeatureImage, publishPost, setFeatureImage, unpublishPost } from '../core/posts.ts'
+import { type Photo, searchPhotos, triggerDownload, unsplashConfigured } from '../core/unsplash.ts'
 import { countSegment, describeRule, listSegments } from '../core/segments.ts'
 import {
   type SequenceTrigger,
@@ -469,6 +473,15 @@ mail.get('/broadcasts/:id', async (c) => {
                 ) : null}
               </div>
             ) : null}
+            {c.env.SITE_URL ? (
+              <div class="side-sec">
+                <h3>Web</h3>
+                <p class="faint" style="margin:0">
+                  {b.publishedAt ? 'Published' : 'Not published'} ·{' '}
+                  <a href={`/broadcasts/${id}/publishing`}>Publishing →</a>
+                </p>
+              </div>
+            ) : null}
             <div class="side-sec">
               <h3>Writing</h3>
               <EditorHint />
@@ -576,6 +589,8 @@ mail.get('/broadcasts/:id', async (c) => {
         </div>
       </div>
 
+      <WebStatus env={c.env} b={b} />
+
       <div class="card">
         <div class="card-h">
           <h2>Content</h2>
@@ -591,6 +606,354 @@ mail.get('/broadcasts/:id', async (c) => {
       </div>
     </Layout>,
   )
+})
+
+/**
+ * One line on the broadcast report: is this thing on the web, and where.
+ *
+ * The controls themselves live on their own page. They have to work for drafts
+ * too, and a draft opens in the composer — which is one full-page form, and
+ * forms cannot nest.
+ */
+const WebStatus: FC<{ env: Env; b: Broadcast }> = ({ env, b }) => {
+  if (!env.SITE_URL) return null
+  const url = b.slug ? `${env.SITE_URL.replace(/\/$/, '')}/${b.slug}` : ''
+
+  return (
+    <div class="card">
+      <div class="card-h">
+        <h2>Web</h2>
+        <a class="btn" href={`/broadcasts/${b.id}/publishing`}>
+          {b.publishedAt ? 'Manage' : 'Publish'}
+        </a>
+      </div>
+      <div class="card-b">
+        {b.publishedAt ? (
+          <p style="margin:0">
+            Published {fmtDate(b.publishedAt)} at <a href={url}>{url}</a>
+          </p>
+        ) : (
+          <p class="faint" style="margin:0">
+            Not on the public site. Publishing sends nothing — it puts this piece on a page.
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * The publishing screen: the featured image and the post's URL and card copy.
+ *
+ * Deliberately its own page rather than a panel on the broadcast. It works the
+ * same whatever state the broadcast is in — draft, sent, or imported from Kit —
+ * and it holds four separate forms, which no composer screen could.
+ */
+mail.get('/broadcasts/:id/publishing', async (c) => {
+  const db = getDb(c.env)
+  const id = Number(c.req.param('id'))
+  const b = await db.select().from(broadcasts).where(eq(broadcasts.id, id)).get()
+  if (!b) return c.notFound()
+  if (!c.env.SITE_URL) {
+    return c.redirect(`/broadcasts/${id}?flash=No public site is configured.&kind=warn`)
+  }
+
+  // The Unsplash picker is a GET round trip, not a fetch: `?photo_q=` re-renders
+  // this page with results. No JavaScript, and the search survives a refresh
+  // because it is in the URL.
+  const photoQuery = (c.req.query('photo_q') ?? '').trim()
+  let photos: Photo[] = []
+  let photoError: string | null = null
+  if (photoQuery && unsplashConfigured(c.env)) {
+    try {
+      photos = await searchPhotos(c.env, photoQuery)
+    } catch (err) {
+      photoError = err instanceof Error ? err.message : 'Unsplash search failed.'
+    }
+  }
+
+  return c.html(
+    <Layout title={`Publishing · ${b.subject}`} nav="bc">
+      <div class="head">
+        <div>
+          <h1>Publishing</h1>
+          <div class="sub">
+            <a href={`/broadcasts/${id}`}>← {b.subject || 'Untitled'}</a> · {statusPill(b.status)}
+          </div>
+        </div>
+      </div>
+
+      <Flash msg={c.req.query('flash')} kind={c.req.query('kind')} />
+
+      <FeatureImage env={c.env} b={b} photos={photos} query={photoQuery} photoError={photoError} />
+      <Publishing env={c.env} b={b} />
+    </Layout>,
+  )
+})
+
+/**
+ * Picking the picture that fronts the post — on the card, in the OG preview, and
+ * at the top of the page.
+ *
+ * Three plain HTML forms, no JavaScript. Upload posts a file; the Unsplash
+ * search is a GET that re-renders this page with results; choosing one posts the
+ * photo's fields back. They are siblings rather than one form because forms
+ * cannot nest, and the publish form sits right below them.
+ */
+const FeatureImage: FC<{
+  env: Env
+  b: Broadcast
+  photos: Photo[]
+  query: string
+  photoError: string | null
+}> = ({ env, b, photos, query, photoError }) => {
+  if (!env.SITE_URL) return null
+  const stock = unsplashConfigured(env)
+
+  return (
+    <div class="card">
+      <div class="card-h">
+        <h2>Featured image</h2>
+        {b.featureImage ? (
+          <form method="post" action={`/broadcasts/${b.id}/feature-image/clear`}>
+            <button class="btn">Remove</button>
+          </form>
+        ) : null}
+      </div>
+      <div class="card-b">
+        {b.featureImage ? (
+          <figure style="margin:0 0 22px">
+            <img
+              src={b.featureImage}
+              alt=""
+              style="width:100%;max-height:320px;object-fit:cover;border-radius:12px;display:block"
+            />
+            {b.featureImageCredit ? (
+              <figcaption class="faint" style="margin-top:9px;font-size:12.5px">
+                Photo by{' '}
+                <a href={b.featureImageCreditUrl ?? '#'} target="_blank" rel="noopener">
+                  {b.featureImageCredit}
+                </a>{' '}
+                on Unsplash — shown under the image on the post.
+              </figcaption>
+            ) : null}
+          </figure>
+        ) : (
+          <p class="faint" style="margin:0 0 22px">
+            No image set. The post falls back to the first image in the body, and to a text-only
+            card if there isn't one.
+          </p>
+        )}
+
+        <h3>Upload</h3>
+        <form
+          method="post"
+          action={`/broadcasts/${b.id}/feature-image/upload`}
+          enctype="multipart/form-data"
+          style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 28px"
+        >
+          <input type="file" name="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif" required />
+          <button class="btn primary">Upload</button>
+        </form>
+
+        <h3>Unsplash</h3>
+        {stock ? (
+          <>
+            <form
+              method="get"
+              action={`/broadcasts/${b.id}/publishing`}
+              style="display:flex;gap:10px;margin:0 0 18px;flex-wrap:wrap"
+            >
+              <input
+                type="text"
+                name="photo_q"
+                value={query}
+                placeholder="ocean, shorebird, empty desk…"
+                style="flex:1;min-width:200px"
+              />
+              <button class="btn">Search</button>
+            </form>
+
+            {photoError ? <p class="faint">{photoError}</p> : null}
+            {query && !photoError && photos.length === 0 ? (
+              <p class="faint">Nothing found for “{query}”.</p>
+            ) : null}
+
+            <div style="display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(150px,1fr))">
+              {photos.map((p) => (
+                // One form per photo: the button IS the choice, and every field
+                // it needs travels with it. Nothing is held in a session between
+                // the search and the pick.
+                <form method="post" action={`/broadcasts/${b.id}/feature-image/unsplash`}>
+                  <input type="hidden" name="url" value={p.url} />
+                  <input type="hidden" name="credit" value={p.credit} />
+                  <input type="hidden" name="credit_url" value={p.creditUrl} />
+                  <input type="hidden" name="download_location" value={p.downloadLocation} />
+                  <button
+                    type="submit"
+                    title={p.alt || `Photo by ${p.credit}`}
+                    style={`display:block;width:100%;padding:0;border:1px solid rgba(148,190,255,.16);border-radius:10px;overflow:hidden;cursor:pointer;background:${p.color ?? 'transparent'}`}
+                  >
+                    <img
+                      src={p.thumbUrl}
+                      alt={p.alt}
+                      loading="lazy"
+                      style="width:100%;aspect-ratio:3/2;object-fit:cover;display:block"
+                    />
+                    <span
+                      style="display:block;padding:7px 9px;font-size:11.5px;text-align:left;background:rgba(3,10,26,.82);color:#9db2d4"
+                    >
+                      {p.credit}
+                    </span>
+                  </button>
+                </form>
+              ))}
+            </div>
+          </>
+        ) : (
+          <p class="faint" style="margin:0">
+            Set the <code>UNSPLASH_ACCESS_KEY</code> secret to search stock photos here. Upload
+            works without it.
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+mail.post('/broadcasts/:id/feature-image/upload', async (c) => {
+  const db = getDb(c.env)
+  const id = Number(c.req.param('id'))
+
+  const form = await c.req.formData()
+  const file = form.get('file')
+  if (!(file instanceof File)) {
+    return c.redirect(`/broadcasts/${id}/publishing?flash=Pick a file first.&kind=warn`)
+  }
+
+  const stored = await storeMedia(c.env, db, file)
+  if (!stored.ok) {
+    return c.redirect(`/broadcasts/${id}/publishing?flash=${encodeURIComponent(stored.message)}&kind=warn`)
+  }
+
+  // An uploaded image is the operator's own, so no credit line.
+  await setFeatureImage(db, id, { url: stored.url })
+  return c.redirect(`/broadcasts/${id}/publishing?flash=Featured image set.`)
+})
+
+mail.post('/broadcasts/:id/feature-image/unsplash', async (c) => {
+  const db = getDb(c.env)
+  const id = Number(c.req.param('id'))
+  const form = await c.req.formData()
+
+  const url = String(form.get('url') ?? '')
+  // Only Unsplash's own CDN, and only from this form. The field is posted by a
+  // browser, so it is not trustworthy just because we rendered it a moment ago.
+  if (!/^https:\/\/images\.unsplash\.com\//.test(url)) {
+    return c.redirect(`/broadcasts/${id}/publishing?flash=That isn't an Unsplash image.&kind=warn`)
+  }
+
+  await setFeatureImage(db, id, {
+    url,
+    credit: String(form.get('credit') ?? '').trim() || null,
+    creditUrl: String(form.get('credit_url') ?? '').trim() || null,
+  })
+
+  // Required by the API guidelines, and only ever on an actual pick.
+  c.executionCtx.waitUntil(triggerDownload(c.env, String(form.get('download_location') ?? '')))
+
+  return c.redirect(`/broadcasts/${id}?flash=Featured image set.`)
+})
+
+mail.post('/broadcasts/:id/feature-image/clear', async (c) => {
+  const id = Number(c.req.param('id'))
+  await clearFeatureImage(getDb(c.env), id)
+  return c.redirect(`/broadcasts/${id}/publishing?flash=Featured image removed.`)
+})
+
+/**
+ * Put this broadcast on the public site, or take it down.
+ *
+ * Lives on the report view — the screen for mail that has already happened —
+ * rather than in the composer. Writing and publishing are separate acts here on
+ * purpose: the piece goes to the list first, and the web page is a second,
+ * deliberate decision made afterwards. (MCP can publish anything at any point;
+ * this is the screen, not the rule.)
+ */
+const Publishing: FC<{ env: Env; b: Broadcast }> = ({ env, b }) => {
+  // No public site configured means nothing to publish to, so the card would be
+  // a button that does nothing visible.
+  if (!env.SITE_URL) return null
+  const origin = env.SITE_URL.replace(/\/$/, '')
+  const live = Boolean(b.publishedAt)
+  const url = b.slug ? `${origin}/${b.slug}` : ''
+
+  return (
+    <div class="card">
+      <div class="card-h">
+        <h2>{live ? 'Published' : 'Publish to the web'}</h2>
+        {live ? (
+          <form method="post" action={`/broadcasts/${b.id}/unpublish`}>
+            <button class="btn">Take down</button>
+          </form>
+        ) : null}
+      </div>
+      <div class="card-b">
+        {live ? (
+          <p style="margin:0 0 18px">
+            Live at <a href={url}>{url}</a> · published {fmtDate(b.publishedAt)}
+          </p>
+        ) : (
+          <p class="faint" style="margin:0 0 18px">
+            Goes up at <code>{origin}/{b.slug || 'slug-from-the-subject'}</code>. Nothing is mailed
+            and nothing about the send changes.
+          </p>
+        )}
+
+        <form method="post" action={`/broadcasts/${b.id}/publish`} class="stack">
+          <label>
+            <span>URL slug</span>
+            <input type="text" name="slug" value={b.slug ?? ''} placeholder="derived from the subject" />
+          </label>
+          <p class="faint" style="margin:-8px 0 4px;font-size:12.5px">
+            Leave as-is once it's live — changing it breaks every link anyone has shared.
+          </p>
+          <label>
+            <span>Excerpt</span>
+            <textarea name="excerpt" rows={3} placeholder="derived from the first lines of the body">
+              {b.excerpt ?? ''}
+            </textarea>
+          </label>
+          <div>
+            <button class="btn primary">{live ? 'Update' : 'Publish'}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+mail.post('/broadcasts/:id/publish', async (c) => {
+  const db = getDb(c.env)
+  const id = Number(c.req.param('id'))
+  const form = await c.req.formData()
+
+  const post = await publishPost(db, id, {
+    slug: String(form.get('slug') ?? '').trim() || null,
+    excerpt: String(form.get('excerpt') ?? '').trim() || null,
+  })
+
+  return c.redirect(
+    `/broadcasts/${id}/publishing?flash=${encodeURIComponent(`Published at /${post.slug}`)}`,
+  )
+})
+
+mail.post('/broadcasts/:id/unpublish', async (c) => {
+  const db = getDb(c.env)
+  const id = Number(c.req.param('id'))
+  await unpublishPost(db, id)
+  // The slug is kept, so putting it back restores the same URL.
+  return c.redirect(`/broadcasts/${id}/publishing?flash=Taken down.&kind=warn`)
 })
 
 mail.post('/broadcasts/:id/edit', async (c) => {

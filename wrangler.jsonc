@@ -8,7 +8,15 @@
 	],
 	"assets": {
 		"directory": "./public",
-		"binding": "ASSETS"
+		"binding": "ASSETS",
+		// Static assets are served ahead of the Worker on EVERY hostname this
+		// script answers, and `public/robots.txt` disallows all crawling — right
+		// for the admin console, fatal for the public site. Listing the path here
+		// hands it to the Worker first, so `web/site.tsx` can answer "allow" on the
+		// site host while the console keeps the blanket disallow.
+		"run_worker_first": [
+			"/robots.txt"
+		]
 	},
 	"d1_databases": [
 		{
@@ -81,6 +89,13 @@
 		"FROM_EMAIL": "rob@example.com",
 		"FROM_NAME": "Rob Conery",
 		"PUBLIC_URL": "http://localhost:8787",
+		// The public site is dispatched by hostname (see `worker.tsx`). `*.localhost`
+		// resolves to 127.0.0.1, so this one `wrangler dev` serves the console on
+		// localhost:8787 and the blog on site.localhost:8787.
+		"SITE_URL": "http://site.localhost:8787",
+		"SITE_TITLE": "Big Machine",
+		"SITE_TAGLINE": "Essays on code, business and the long way round.",
+		"SITE_AUTHOR": "Rob Conery",
 		// Local only: bypasses the Cloudflare Access check. Never set in production.
 		"DEV_AUTH_BYPASS": "true",
 		// Locally the provider is "console", so an MCP send lands in the Outbox
@@ -99,6 +114,14 @@
 			"routes": [
 				{
 					"pattern": "list.bigmachine.io",
+					"custom_domain": true
+				},
+				// The public site. A second custom domain on the same Worker —
+				// `worker.tsx` splits them by hostname. ⚠️ This hostname must NOT be
+				// covered by the Cloudflare Access application that guards
+				// list.bigmachine.io, or readers get a login page.
+				{
+					"pattern": "a.bigmachine.io",
 					"custom_domain": true
 				}
 			],
@@ -162,6 +185,12 @@
 				// Baked into tracking links and image URLs at send time — a wrong value
 				// ships permanently broken email. Must match the route above.
 				"PUBLIC_URL": "https://list.bigmachine.io",
+				// Must match the second route above exactly: it is the canonical URL,
+				// the feed's self link and every og:url on the site.
+				"SITE_URL": "https://a.bigmachine.io",
+				"SITE_TITLE": "Big Machine",
+				"SITE_TAGLINE": "Essays on code, business and the long way round.",
+				"SITE_AUTHOR": "Rob Conery",
 				"DEV_AUTH_BYPASS": "false",
 				// Admin console identity. Both are required: `web/auth.ts` fails closed
 				// and refuses everyone if either is missing.

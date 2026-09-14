@@ -28,6 +28,7 @@ import { mail } from './web/admin-mail.tsx'
 import { store } from './web/admin-store.tsx'
 import { tagging } from './web/admin-tags.tsx'
 import { requireOperator } from './web/auth.ts'
+import { isSiteHost, site } from './web/site.tsx'
 import { prefs } from './web/prefs.tsx'
 import { seed } from './web/seed.tsx'
 
@@ -58,6 +59,20 @@ app.use('*', (c, next) => {
 
 /** Must match the second entry in `triggers.crons` in wrangler.jsonc exactly. */
 const DAILY_CRON = '17 9 * * *'
+
+/**
+ * The admin console's robots.txt.
+ *
+ * `public/robots.txt` would serve this from the assets layer, except that the
+ * asset is served on every hostname — including the public site's, where a
+ * blanket disallow would de-index the blog. `assets.run_worker_first` lists this
+ * path so each host can answer for itself: the site allows crawling
+ * (`web/site.tsx`), and the console keeps saying no.
+ *
+ * Above `requireOperator` on purpose — a crawler has no Access session, and the
+ * whole point of the file is that it reaches one.
+ */
+app.get('/robots.txt', (c) => c.text('User-agent: *\nDisallow: /\n'))
 
 // Public: preference center, tracking, webhooks, transactional API, signup.
 // Everything else is operator-only (SPEC 8.2).
@@ -103,7 +118,27 @@ app.route('/', help)
 app.route('/', seed)
 
 export default {
-  fetch: app.fetch,
+  /**
+   * Two apps, one Worker, split by hostname.
+   *
+   * `SITE_URL`'s host gets the public blog; every other host gets the admin
+   * console. The split is here at the door rather than inside the router because
+   * the admin app puts `requireOperator` on `*` — mounting public pages into it
+   * would mean a reader's request passing through the operator gate and relying
+   * on route ordering to survive. Two apps means a public request never enters
+   * the guarded router at all, and a new admin route can never accidentally be
+   * exposed by being registered above a line.
+   *
+   * With `SITE_URL` unset (the default) nothing reaches the site app.
+   */
+  fetch(request: Request, env: Env, ctx: ExecutionContext) {
+    if (isSiteHost(request, env)) {
+      return withActivitySource('site', () =>
+        site.fetch(request, env, ctx as unknown as never),
+      )
+    }
+    return app.fetch(request, env, ctx as unknown as never)
+  },
 
   /**
    * Two schedules on one handler.

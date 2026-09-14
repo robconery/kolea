@@ -1,26 +1,12 @@
-import { desc, eq } from 'drizzle-orm'
+import { desc } from 'drizzle-orm'
 import { Hono } from 'hono'
-import { randomToken } from '../core/ids.ts'
+import { deleteMedia, storeMedia } from '../core/media.ts'
 import { getDb } from '../db/index.ts'
 import { media } from '../db/schema.ts'
 import type { Env } from '../types.ts'
 import { requireOperator } from '../web/auth.ts'
 
 export const mediaRoutes = new Hono<{ Bindings: Env }>()
-
-const MAX_BYTES = 10 * 1024 * 1024
-
-// Allowlist rather than blocklist: an uploaded SVG can carry script, and these
-// files are served from our own origin.
-const ALLOWED = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif'])
-
-const EXT: Record<string, string> = {
-  'image/png': 'png',
-  'image/jpeg': 'jpg',
-  'image/gif': 'gif',
-  'image/webp': 'webp',
-  'image/avif': 'avif',
-}
 
 /**
  * Serve an uploaded image out of R2. Public — these URLs go into email, so they
@@ -50,31 +36,10 @@ mediaRoutes.post('/api/media/upload', async (c) => {
   const file = form?.get('file')
   if (!(file instanceof File)) return c.json({ error: 'expected a `file` field' }, 400)
 
-  if (file.size > MAX_BYTES) {
-    return c.json({ error: `file is larger than ${MAX_BYTES / 1024 / 1024}MB` }, 413)
-  }
-  if (!ALLOWED.has(file.type)) {
-    return c.json({ error: `unsupported type ${file.type || 'unknown'}` }, 415)
-  }
+  const result = await storeMedia(c.env, db, file)
+  if (!result.ok) return c.json({ error: result.message }, result.status)
 
-  const ext = EXT[file.type] ?? 'bin'
-  const key = `${new Date().toISOString().slice(0, 7)}/${randomToken(20)}.${ext}`
-  const bytes = await file.arrayBuffer()
-
-  await c.env.MEDIA.put(key, bytes, {
-    httpMetadata: { contentType: file.type, cacheControl: 'public, max-age=31536000, immutable' },
-  })
-
-  await db.insert(media).values({
-    key,
-    filename: file.name || `upload.${ext}`,
-    contentType: file.type,
-    bytes: file.size,
-    createdAt: new Date(),
-  })
-
-  // Absolute URL: this lands in an email, where a relative path is meaningless.
-  return c.json({ url: `${c.env.PUBLIC_URL}/media/${key}`, key })
+  return c.json({ url: result.url, key: result.key })
 })
 
 mediaRoutes.get('/api/media', async (c) => {
@@ -91,9 +56,6 @@ mediaRoutes.get('/api/media', async (c) => {
 })
 
 mediaRoutes.delete('/api/media/:key{.+}', async (c) => {
-  const db = getDb(c.env)
-  const key = c.req.param('key')
-  await c.env.MEDIA.delete(key)
-  await db.delete(media).where(eq(media.key, key))
+  await deleteMedia(c.env, getDb(c.env), c.req.param('key'))
   return c.json({ ok: true })
 })

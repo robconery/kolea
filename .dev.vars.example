@@ -36,3 +36,10 @@ STRIPE_SECRET_KEY=rk_test_xxxxxxxxxxxx
 # endpoint fails closed with a 503 — an endpoint that accepts unsigned bodies is
 # an endpoint anybody can post fake revenue to.
 STRIPE_WEBHOOK_SECRET=whsec_xxxxxxxxxxxx
+
+# ── Unsplash ────────────────────────────────────────────────────────────────
+# Stock photos for a post's featured image, searched from the publishing screen.
+# The "Access Key" of an app at https://unsplash.com/oauth/applications — the
+# demo tier's 50 requests/hour is plenty for one person picking pictures.
+# Unset just hides the picker; uploading your own image still works.
+UNSPLASH_ACCESS_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
