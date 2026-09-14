@@ -323,3 +323,68 @@ onto the screen."* Correct, and worth writing down.
 - The composer's *page* keeps a plain system-sans body on purpose — it is a preview of mail, and
   mail does not render in the admin's typeface.
 
+
+## 2026-09-13 — The public site (a.bigmachine.io)
+
+Kōlea grew a reader-facing half: the newsletter is now also a blog. Built and
+deployed in one session, straight to production.
+
+- **A post IS a broadcast with `published_at` set.** Not a `posts` table. Why: one
+  write becomes one send and one page; the piece is written once. A separate table
+  means a second content lifecycle and everything authored twice, which is the Ghost
+  problem being escaped. Rejected: `posts` with an optional "send this as a
+  broadcast" action — more flexible, and flexibility nobody asked for.
+- **Publishing is orthogonal to the send lifecycle.** `published_at` is nullable and
+  independent of `status`; nothing in `core/posts.ts` writes `status`, the segment,
+  or the send cursor. A sent broadcast can go up months later, come down, and go back
+  up. Rejected: `status: 'published'` — it would have put publishing inside the state
+  machine the send path reads.
+- **No bulk publish. Anywhere.** Not in `core/`, not in the admin, not in MCP. Why:
+  fourteen of the production broadcasts are the imported Kit archive, and "publish
+  everything" would put years of mail on public URLs in one keystroke. Every post is a
+  separate decision.
+- **Hostname dispatch, not a path prefix.** `worker.tsx` splits on the request host
+  before either router runs; the public site is its own Hono app. Why: the admin app
+  puts `requireOperator` on `*`, and the way to be *certain* a public page never
+  passes through the operator gate — and that a future admin route is never exposed by
+  being registered above a line — is for the two never to share a router. Rejected:
+  `/blog` on the admin host — one more Access Bypass app, `/blog` in every URL forever,
+  and public pages living inside the guarded router.
+- **A second renderer, not a flag on the first.** `core/render-web.ts` walks the same
+  TipTap document as `render-doc.ts` and agrees with it on nothing: classes vs inlined
+  styles, no click tracking (there is no message id), no consent footer, merge tags to
+  neutral copy, real `<details>` and iframes. Rejected: `renderDoc(doc, { web: true })`
+  — the flags multiply and the failure mode is an unsubscribe link rendered onto a
+  public page.
+- **⚠️ `public/robots.txt` said `Disallow: /` and the assets layer serves it on every
+  hostname, ahead of the Worker.** The blog would have been born de-indexed. Fixed with
+  `assets.run_worker_first: ["/robots.txt"]` so each host answers for itself. Worth
+  remembering as a class of bug: **anything in `public/` shadows the Worker on all
+  hostnames.**
+- **Unsplash photos are hotlinked, never copied into R2**, and the download endpoint is
+  pinged only on an actual pick, not on search. Why: both are API-guideline
+  requirements, and rehosting breaks the photographer's view counts, which is what the
+  API is given away for. The credit is stored on the broadcast row rather than looked
+  up, so it renders years later with the API offline — a credit that can fail to load
+  is not a credit, and it renders on the public page, not in the admin where only Rob
+  would see it.
+- **Site search is `LIKE` over a stored `search_text` column**, written on publish, not
+  FTS5. Why: a few hundred short rows is one indexless scan in single-digit
+  milliseconds, and it costs one of the 1,000 queries an invocation gets. FTS5 needs a
+  hand-written custom migration; revisit at a few thousand posts. Searching `body_json`
+  directly was never on: `LIKE` over JSON matches attribute names and hex colours as
+  happily as prose.
+- **The publishing controls live on their own page** (`/broadcasts/:id/publishing`),
+  not on the broadcast screen. Why: they have to work for drafts too, a draft opens in
+  the composer, the composer is one full-page form, and forms cannot nest. Found by
+  publishing a draft and discovering it had no controls at all.
+- **Repointed `a.bigmachine.io` from Kit.** It had three unproxied A records at Kit's
+  AWS landing-page IPs; `custom_domain: true` refuses a hostname with existing DNS
+  (`code: 100117`). Deleted them, redeployed, Worker took the hostname. ⚠️ Any link to
+  a Kit landing page on that host, in any email already sent, is now dead.
+- Counts corrected while reconciling, all stale from before this work: **37 tables**
+  (doc said 32), **103 MCP tools** (said 96), `worker.tsx` **248 lines** (said 166).
+
+**Still open, for `/design`:** the public site has no numbered requirements in
+`SPEC.md`. Publishing, slug stability, the consent path from the site's signup box, and
+"unpublished is invisible" are all testable claims that nothing currently pins down.

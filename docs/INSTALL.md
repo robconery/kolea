@@ -188,6 +188,43 @@ Then set the matching vars in the same block:
 }
 ```
 
+#### Optional: the public site, on a second hostname
+
+Kōlea can publish broadcasts as a blog. It runs from the same Worker on its own
+hostname — `worker.tsx` splits on the request host before either router runs —
+so it needs a second route and its own vars:
+
+```jsonc
+"routes": [
+  { "pattern": "list.example.com", "custom_domain": true },
+  { "pattern": "www.example.com",  "custom_domain": true }   // the public site
+],
+"vars": {
+  // …the block above, plus:
+  "SITE_URL": "https://www.example.com",   // ⚠️ must match the second route exactly
+  "SITE_TITLE": "Your Publication",
+  "SITE_TAGLINE": "One line, shown under the masthead and in the feed.",
+  "SITE_AUTHOR": "Your Name",
+  "SITE_FORM_SLUG": "newsletter"           // a `forms.slug`; omit to hide the signup box
+}
+```
+
+**`SITE_URL` unset is the kill switch.** With no value, the public site does not
+exist and every request goes to the admin app. That is the default.
+
+> ### ⚠️ If that hostname already points somewhere
+>
+> `custom_domain: true` refuses to take over a hostname that has existing DNS
+> records, and the deploy fails with `code: 100117`. Delete the old records
+> first — **and know what they were serving.** Repointing a hostname that used to
+> host your previous ESP's landing pages breaks every link to them, in every
+> email you already sent. Export the records before you delete them.
+
+Locally, the two hosts share one `wrangler dev`: `*.localhost` resolves to
+127.0.0.1, so `SITE_URL` of `http://site.localhost:8787` gives you the site on
+`site.localhost:8787` and the console on `localhost:8787`, from one process.
+⚠️ `wrangler dev` does **not** reload `.dev.vars` — restart it after editing.
+
 ### Step 6 — Set up sending, and get the DNS right
 
 Deliverability is the number one risk in self-hosting email. A mailer that lands
@@ -233,6 +270,12 @@ bunx wrangler secret put MCP_PATH_SECRET       --env production
 # Only if you're using Stripe attribution
 bunx wrangler secret put STRIPE_SECRET_KEY     --env production
 bunx wrangler secret put STRIPE_WEBHOOK_SECRET --env production
+
+# Only if you want the Unsplash picker on the publishing screen.
+# The "Access Key" from https://unsplash.com/oauth/applications — NOT the
+# "Secret key" (that one is for OAuth user auth and returns 401 here), and not
+# the numeric Application ID. Unset just hides the picker; upload still works.
+bunx wrangler secret put UNSPLASH_ACCESS_KEY   --env production
 ```
 
 `MCP_PATH_SECRET` must be a **secret, not a var**. Unset means the MCP endpoint
@@ -262,6 +305,20 @@ Presence of the header proves nothing and is never treated as proof.
 
 > ### ⚠️ This is the step people get wrong
 >
+> ### 🚨 If you run the public site, scope this Access app to the admin hostname
+>
+> The public site is a **different hostname**, not a bypassed path — being
+> outside the Access application is the only thing keeping readers off a login
+> screen. An Access app matching `*.example.com` takes the whole blog down, and
+> it will look like a Worker bug. Match `list.example.com` exactly.
+>
+> One more, easy to miss: `public/robots.txt` disallows all crawling and the
+> assets layer serves it on **every** hostname the Worker answers, ahead of your
+> code. `assets.run_worker_first` in `wrangler.jsonc` lists that path so each
+> host can answer for itself — the site allows crawling and links its sitemap,
+> the console keeps the blanket disallow. Anything else you add to `public/`
+> has the same trap waiting.
+
 > Access matches **the most specific path first**, so the Bypass apps take
 > precedence over the hostname-wide Allow. Protecting the whole hostname with a
 > single Allow policy also protects the tracking pixel, the signup forms, the
@@ -459,6 +516,11 @@ them as reference implementations, not as a general-purpose tool.
 | Tracking pixels redirect to a login page | Missing Access **Bypass** app for `/t/*`. See [Step 8](#step-8--lock-the-console-behind-cloudflare-access). |
 | Download links land on a Cloudflare login | Missing Access **Bypass** app for `/d/*` — the exact same mistake, one path over. Happened in production on 2026-09-12. Existing links start working the moment the Bypass app exists; grants point at the form, not at a session, so nothing needs re-sending. |
 | Images in email are broken | `PUBLIC_URL` didn't match the real host at send time. Mail already delivered cannot be fixed. |
+| Deploy fails with `Hostname … already has externally managed DNS records [code: 100117]` | The public site's hostname still has A/CNAME records from whatever served it before. Export them, delete them, redeploy. |
+| The public site shows a Cloudflare login | Its hostname is inside the Access application. Access apps match by hostname; scope the Allow app to the admin host exactly. |
+| The public site is empty, "Nothing published yet" | Correct until you publish something. Publishing is one deliberate act per post, on `/broadcasts/:id/publishing`. There is no bulk publish anywhere, by design. |
+| The blog isn't being indexed | Check `https://yoursite/robots.txt`. If it says `Disallow: /`, the asset is shadowing the Worker — `assets.run_worker_first` needs `/robots.txt`. |
+| The Unsplash picker doesn't appear | `UNSPLASH_ACCESS_KEY` isn't set, or it's the *Secret key* rather than the *Access Key* — the API returns 401 for the wrong one. `wrangler dev` also won't reload `.dev.vars`; restart it. |
 | Editor body silently never saves | A renamed TipTap extension option. Nothing server-side catches this — run `bun run smoke`. |
 | `typecheck` fails only in `src/client` | The browser bundle has its own tsconfig on purpose. workerd's `Response`/`Headers` shadow the DOM ones; the two must never share a config. |
 

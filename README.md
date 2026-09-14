@@ -4,10 +4,10 @@
 
 # Kōlea
 
-**Broadcasts, drip sequences, and transactional email in one Cloudflare Worker.**
+**Broadcasts, drip sequences, transactional email, and a blog — one Cloudflare Worker.**
 
 *A self-hosted replacement for a paid ESP, where the list, the sending,*
-*and the engagement data stay yours.*
+*the engagement data, and the archive stay yours.*
 
 [![CI](https://github.com/robconery/kolea/actions/workflows/ci.yml/badge.svg)](https://github.com/robconery/kolea/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -58,6 +58,11 @@ removes someone outright.
 
 That asymmetry is the reason this exists, and everything else in the codebase is
 arranged so it can't be broken by accident.
+
+**And the mail is also the website.** A post is a broadcast you decided to publish —
+same piece, written once, sent to the list and then put on a page at its own
+readable URL. Not a second CMS bolted on, and not a sync job between two copies of
+your own writing.
 
 ---
 
@@ -158,14 +163,16 @@ goals. `--clean` removes every row of it again.
 
 ```
 src/
-  worker.tsx      fetch + scheduled + queue handlers — the whole entry point, 177 lines
-  core/           domain logic: consent, sending, sequences, segments, rendering,
-                  scoring (signal.ts) and measurement (analytics.ts)
-  db/             Drizzle schema (32 tables) and the D1 client
+  worker.tsx      fetch + scheduled + queue handlers, and the hostname split
+                  between the admin app and the public site — 248 lines
+  core/           domain logic: consent, sending, sequences, segments, publishing,
+                  rendering, scoring (signal.ts) and measurement (analytics.ts)
+  db/             Drizzle schema (37 tables) and the D1 client
   web/            server-rendered admin console (Hono + JSX, no frontend framework),
-                  including the five read-only analytics screens
+                  the five read-only analytics screens, the reader's preference
+                  center, and site.tsx — the public blog
   api/            transactional send API, signup forms, media upload, bearer-key auth
-  mcp/            MCP server — 96 tools, 4 resources, 4 prompts
+  mcp/            MCP server — 103 tools, 4 resources, 4 prompts
   providers/      EmailProvider port + console and Resend adapters
   client/         the only browser JS in the project: the TipTap editor bundle
 migrations/       drizzle-kit generated, applied by wrangler
@@ -173,7 +180,7 @@ scripts/          list importers and the browser smoke test
 docs/             install guide, architecture, spec, and a decision log
 ```
 
-Roughly 30k lines of TypeScript. `bun run typecheck` covers the Worker, the
+Roughly 32k lines of TypeScript. `bun run typecheck` covers the Worker, the
 browser bundle, and the scripts separately, and is clean.
 
 ---
@@ -238,6 +245,14 @@ Apple's Mail Privacy Protection fires opens from proxies, so crediting them hand
 revenue to whoever mailed most recently. Anything with no click in the window is
 `direct`, which is the honest answer for most sales on most lists and is drawn as an
 ordinary result rather than a hole in the data.
+
+**There are two renderers, not one with a flag.** `core/render-doc.ts` emits email
+HTML; `core/render-web.ts` emits web HTML for the public site. They walk the same
+TipTap document and agree on nothing else — inlined styles versus classes, click
+tracking versus none, a consent footer versus none, merge tags resolved per recipient
+versus neutral copy. One function with a `web: true` flag was the obvious move and the
+wrong one: the flags multiply, and the failure mode is an unsubscribe footer rendered
+onto a public page.
 
 **The email HTML renderer is hand-written** (`core/render-doc.ts`) rather than using
 `@tiptap/html`, whose server entry point needs `happy-dom` and doesn't run inside
@@ -304,11 +319,50 @@ just never saves. Nothing server-side can catch that.
 
 ---
 
+## 📰 The public site
+
+Optional, off by default, and one variable to turn on. Set `SITE_URL` to a second
+hostname on the same Worker and the archive becomes a blog:
+
+- Newest-first cards with featured images, full-text search, and human-readable
+  slugs
+- A post page, an RSS feed carrying **the whole post** (owning the list means the
+  reader gets all of it wherever they read), a sitemap, and OG tags
+- A signup box that posts to your ordinary `/f/:slug` form endpoint, so consent
+  arrives by exactly the same path as every other signup — no second implementation
+- Server-rendered, no JavaScript, the same palette as the console
+
+**Publishing is one deliberate act per post.** `published_at` is nullable and
+independent of the send lifecycle: a broadcast can go up months after it was mailed,
+come down, and go back up, and none of that touches `status`, the segment, or the
+send cursor. There is no bulk publish — not in `core/`, not in the admin, not in
+MCP — because an archive imported from a previous ESP is hundreds of `sent` rows and
+"publish everything" is a keystroke you can't take back.
+
+Featured images come from your own upload or from Unsplash search, built into the
+publishing screen. Unsplash photos are hotlinked rather than copied, the download
+endpoint is pinged only on a real pick, and the photographer's credit is stored on
+the row and rendered under the image on the public page — where the reader is, not
+in the admin where only you would see it.
+
+**It is a separate Hono app, dispatched by hostname** before either router runs. The
+admin app puts `requireOperator` on `*`; the way to be certain a reader's request
+never enters it, and that a new admin route can never be exposed by being registered
+above a line, is for the two never to share a router.
+
+```jsonc
+"SITE_URL": "https://www.example.com",   // unset = the site doesn't exist
+"SITE_TITLE": "Your Publication",
+"SITE_FORM_SLUG": "newsletter"           // omit to hide the signup box
+```
+
+---
+
 ## 🤖 Drive it from Claude Code
 
-The Worker serves an MCP server at `POST /mcp/<secret>`: **96 tools** covering the
+The Worker serves an MCP server at `POST /mcp/<secret>`: **103 tools** covering the
 whole mailer, so an agent can cut segments, draft and send broadcasts, build sequences,
-read campaign performance, and reconcile Stripe.
+publish posts, read campaign performance, and reconcile Stripe.
 
 ```bash
 # 1. a path secret (this is what makes the endpoint exist at all)
@@ -419,6 +473,7 @@ whole domain. Soft bounces must *not* suppress; that's what `hardBounce` on
 |---|---|
 | The look | `src/web/layout.tsx` — the whole "Abyssal" design system is one file of CSS tokens |
 | What an email looks like on the wire | `src/core/render-doc.ts` — the hand-written TipTap → email-HTML walker |
+| What a published post looks like | `src/core/render-web.ts` for the body, `src/web/site.tsx` for the page and its stylesheet |
 | Editor blocks | `src/client/extensions/` for the node, **and** a matching branch in `render-doc.ts`, or it renders as nothing in email |
 | Who a segment can target | `SegmentRule` in `src/db/schema.ts`, resolved in `src/core/segments.ts` |
 | What agents can do | `src/mcp/tools/*.ts` — thin wrappers, so add the rule to `core/` first |

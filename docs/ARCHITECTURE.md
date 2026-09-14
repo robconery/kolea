@@ -85,7 +85,7 @@ One Cloudflare Worker. Three entry points, one D1 database, one outbound port.
                          ┌──────────────────────────────────────────┐
    Cloudflare Access ────┤  Kōlea Worker  (src/worker.tsx)          │
    (operator only)       │                                          │
-                         │  fetch()      admin console (Hono + JSX) │
+   list.example.com ─────┤  fetch()      admin console (Hono + JSX) │
    your apps ────────────┤               POST /api/send  (bearer)   │
    your checkout ────────┤               POST /api/sales (bearer)   │
    your website's form ──┤               POST /f/:slug   (public)   │
@@ -93,6 +93,9 @@ One Cloudflare Worker. Three entry points, one D1 database, one outbound port.
    every email opened ───┤               GET  /t/open, /t/click     │
    every reader ─────────┤               GET  /p/:token  (prefs)    │
    agents (MCP) ─────────┤               ALL  /mcp/:secret          │
+                         │                                          │
+   a.example.com ────────┤  fetch()      the public site (web/site) │
+   every reader ─────────┤               GET / · /:slug · /feed.xml │
                          │                                          │
    Cron  */1 * * * * ────┤  scheduled()  sequence tick + broadcasts │
    Cron  17 9 * * * ─────┤               Stripe reconcile + catalog │
@@ -106,6 +109,13 @@ One Cloudflare Worker. Three entry points, one D1 database, one outbound port.
              D1            R2 MEDIA     EmailProvider    Stripe REST
       (system of record)  (image bytes)  (port → Resend)  (read-only)
 ```
+
+**Two hostnames, two apps, one Worker.** `fetch` splits on the request host
+*before* either router runs: `SITE_URL`'s host gets the public site app, every
+other host gets the admin app. They never share a router. The admin app puts
+`requireOperator` on `*`, so a reader's request must never enter it — and a
+future admin route must never be exposed by being registered above a line. See
+[Key decisions](#-key-decisions).
 
 **Everything durable is in D1.** R2 holds image bytes only; `media` rows are the
 catalogue. Stripe and the Neon storefront are mirrored *into* D1 because segment
@@ -122,7 +132,7 @@ across the network at send time.
 
 | File | Responsibility |
 |---|---|
-| `worker.tsx` | Wires `fetch` / `scheduled` / `queue`. Route mount **order matters**: public routes and MCP mount *before* `requireOperator`. 166 lines, no domain logic. |
+| `worker.tsx` | Wires `fetch` / `scheduled` / `queue`. **Hostname dispatch happens first** — `SITE_URL`'s host goes to the public site app, everything else to the admin app. Within the admin app, route mount **order matters**: public routes and MCP mount *before* `requireOperator`. 248 lines, no domain logic. |
 | `types.ts` | The `Env` interface — every binding and var, each commented with what breaks without it. **Read this before touching config.** |
 
 ### `core/` — the domain. All rules live here, exactly once.
@@ -141,6 +151,10 @@ across the network at send time.
 | `events.ts` | `recordEvent` — the single funnel for opens, clicks, and provider events. | Tracking. |
 | `render.ts` | Body precedence (`body_json` wins, `body_md` fallback), merge tags, footer. | What a message says. |
 | `render-doc.ts` | TipTap JSON → **email** HTML. Hand-written walker: inlines every style, emits nested tables for buttons. | Email-client rendering bugs. |
+| `render-web.ts` | TipTap JSON → **web** HTML, for the public site. A sibling of `render-doc.ts`, not a mode of it: classes instead of inlined styles, no click tracking, no consent footer, merge tags resolve to neutral copy. | How a *post* reads. |
+| `posts.ts` | Publishing: a post is a broadcast with `published_at`. Slugs, excerpts, featured images, search, the feed's rows. Never writes `status`, the segment, or the send cursor. | The public site's data. |
+| `media.ts` | `storeMedia` / `deleteMedia` — the R2 upload path and its type allowlist, in one place because two screens upload. | Image uploads. |
+| `unsplash.ts` | Stock photo search for featured images. Hotlinks, never rehosts; pings the download endpoint only on an actual pick. | The photo picker. |
 | `md-to-doc.ts` | Markdown → TipTap JSON, on load only. Never a bulk migration. | Legacy content. |
 | `forms.ts` | Hosted `POST /f/:slug` signup endpoints. | Signup. |
 | `insights.ts` | Dashboard numbers. Each query is scope-annotated; the scoping matters more than any figure. | Dashboard. |
@@ -156,9 +170,9 @@ across the network at send time.
 
 | Dir | Responsibility | Boundary |
 |---|---|---|
-| `web/` | Admin console. Hono + JSX, server-rendered, ~zero client JS. `layout.tsx` holds the whole "Abyssal" design system; `prefs.tsx` is ⭐ the public preference center; `auth.ts` verifies the Access JWT properly. | Calls `core/`. **Never** a provider or raw D1 query. |
+| `web/` | Admin console **and** the public site. Hono + JSX, server-rendered, ~zero client JS. `layout.tsx` holds the whole "Abyssal" design system; `prefs.tsx` is ⭐ the public preference center; ⭐ `site.tsx` is the public blog (its own Hono app + its own stylesheet, dispatched by hostname); `auth.ts` verifies the Access JWT properly. | Calls `core/`. **Never** a provider or raw D1 query. |
 | `api/` | `/api/send`, `/api/sales`, `/f/:slug`, `/webhooks/:provider`, `/t/*`, media. | HTTP shape only. Delegates to `core/`. |
-| `mcp/` | The whole mailer as **96 agent-callable tools**, 4 resources, 4 prompts. | Same boundary as `web/`: thin wrappers, no domain logic. |
+| `mcp/` | The whole mailer as **103 agent-callable tools**, 4 resources, 4 prompts. | Same boundary as `web/`: thin wrappers, no domain logic. |
 | `providers/` | `EmailProvider` port + `console` and `resend` adapters. | Adapter. Only `core/` calls it. |
 | `db/` | Drizzle schema + D1 client. | Only `core/` imports it. |
 | `client/` | The only browser JS: the TipTap editor bundle and the chart runtime. Separate tsconfig — **workerd's `Response`/`Headers` shadow the DOM ones**, so the two must never share one. | Built by `bun run build:client` into `public/`. |
@@ -182,7 +196,7 @@ query tool for analytics questions no fixed tool anticipates.
 
 ## 🗃 Data model
 
-**32 tables, all `STRICT`.** Conventions: snake_case columns under camelCase TS
+**37 tables, all `STRICT`.** Conventions: snake_case columns under camelCase TS
 keys, plural tables, `id` surrogate key, NOT NULL FKs with explicit `onDelete`,
 `text` + CHECK for enums, `integer` epoch-ms timestamps set by the app. This is
 the `sqlite-dev` convention set, so the schema stays Postgres-portable — D1 *is*
@@ -219,6 +233,9 @@ These are the shapes that get "fixed" by someone who didn't read the comment.
 | `subscribers.status = 'unsubscribed'` | Global opt-out | **Broadcast-scoped only.** Sequence sends deliberately ignore it. |
 | `suppressions.email` | Should be a `subscriber_id` FK | Keyed by **address**. Bounced and transactional addresses often have no subscriber row; a status flag would silently miss them. |
 | `broadcasts.segment` (json) | Duplicates `segment_id` | The *truth* at send time. `segment_id` is provenance only. Editing a saved segment must not rewrite who a sent broadcast reached. |
+| `broadcasts.published_at` | Part of the send lifecycle | **Orthogonal to it.** Null means "mail and nothing else". A sent broadcast can go up months later, come down, and go back up, and none of that touches `status`. Nothing is ever published in bulk. |
+| `broadcasts.slug` nullable + UNIQUE | Nulls would collide | SQLite treats NULLs as *distinct* in a unique index, so every unpublished broadcast keeps a null slug. Unpublishing keeps the slug so re-publishing restores the same URL. |
+| `broadcasts.search_text` | Duplicates the body | The body flattened to prose, written on publish. Site search reads this and never `body_json`: `LIKE` over a JSON blob matches attribute names and hex colours as happily as prose. |
 | `broadcasts.cursor_subscriber_id` | Odd bookkeeping | D1's 1,000-query cap means a large broadcast materializes across several cron ticks, resuming here. |
 | `messages.body_md` nullable | Inconsistent | Transactional only. Broadcast/sequence bodies live on the source row so editing a template can't rewrite history. |
 | `attributions.source_id` NOT NULL default 0 | Should be nullable | SQLite (and Postgres) treat NULLs as *distinct* in a unique index — nullable would break dedupe of `manual` touches. |
@@ -329,7 +346,7 @@ failure.
 
 ## 🤖 The MCP surface
 
-`ALL /mcp/<MCP_PATH_SECRET>` — **96 tools**, 4 resources, 4 prompts. Mounted
+`ALL /mcp/<MCP_PATH_SECRET>` — **103 tools**, 4 resources, 4 prompts. Mounted
 *ahead of* the Cloudflare Access gate in `worker.tsx`, because an agent has no
 browser to complete an Access login in. It authenticates itself instead.
 
@@ -353,9 +370,9 @@ single-use, expires in 10 minutes, and carries a `digest` of the previewed
 subject + body + audience — so any edit invalidates it. A `confirm: true` flag
 was rejected: an agent satisfies it in the same breath as the mistake.
 
-Registries live in `mcp/tools/*.ts`, one per domain (audience 8, tags 10,
-segments 6, broadcasts 12, sequences 18, campaigns 9, forms 5, sales 7, stripe 7,
-deliverability 7, ops 7). `mcp/kit.ts` holds `defineTool`, the `ok`/`fail`
+Registries live in `mcp/tools/*.ts`, one per domain (audience 10, tags 10,
+segments 6, broadcasts 12, sequences 18, campaigns 9, forms 6, posts 4, sales 7,
+stripe 7, deliverability 7, ops 7). `mcp/kit.ts` holds `defineTool`, the `ok`/`fail`
 helpers, `clampLimit`, and the audit write.
 
 Resources are `kolea://conventions`, `kolea://merge-tags`, `kolea://schema`,
@@ -389,6 +406,9 @@ catching it in every tool description.
 | Add an MCP tool | `defineTool` in the right `mcp/tools/*.ts`. Zod input schema, `annotations` (`readOnlyHint` / `destructiveHint` / `idempotentHint`), a `description` written for a model. Irreversible? It needs a preflight. |
 | Add an admin screen | A route file in `web/`, mounted in `worker.tsx` **after** `requireOperator`, using `Layout` from `web/layout.tsx`. |
 | Add a public endpoint | Mount **before** `app.use('*', requireOperator)` and carry its own auth. Then add a Cloudflare Access **Bypass** app for the path (see [INSTALL](INSTALL.md)). |
+| Add a page to the public site | A route on the `site` app in `web/site.tsx`. It is a *separate* Hono app reached by hostname, so it never passes through `requireOperator` and needs no Bypass app. ⚠️ Register fixed paths **above** `/:slug`, which matches anything. |
+| Change how a *post* reads | `core/render-web.ts` — classes and a real stylesheet, not inlined styles. Do not reach for `render-doc.ts`: email and web agree on nothing, and merging them puts an unsubscribe footer on a public page. |
+| Serve a path the assets layer already owns | Add it to `assets.run_worker_first` in `wrangler.jsonc`. Static assets are served ahead of the Worker on **every** hostname, so a file like `robots.txt` cannot answer differently per host without this. |
 | Add an email provider | One file in `providers/` implementing `EmailProvider` (`name`, `send`, `sendBatch`, `parseWebhook`), plus a branch in `providerFor()` in `core/sending.ts`. Nothing in `core/` may name a vendor. Skipping `parseWebhook` means bounces never suppress. |
 | Add an editor block | `client/extensions/` for the TipTap node, **and** a matching branch in `core/render-doc.ts`, or it renders as nothing in email. Then extend `scripts/smoke-editor.mjs`. |
 | Change email HTML | `core/render-doc.ts`. Inline every style (Gmail strips `<style>`). Buttons are nested tables (Outlook ignores padding on `<a>`). |
@@ -412,7 +432,18 @@ Things that have already gone wrong, or nearly did.
   `--env production`. Don't work around it.
 - **A single Access Allow policy on the hostname breaks every tracking pixel you
   have ever sent** — permanently, for mail already delivered. `/t`, `/f`, `/p`,
-  `/api`, `/webhooks`, `/mcp` each need a Bypass app.
+  `/d`, `/media`, `/api`, `/webhooks`, `/mcp` each need a Bypass app.
+- **An Access application matching `*.example.com` takes the public site down
+  too.** The site is a *different hostname*, not a bypassed path, and that is the
+  only thing keeping readers out of a login screen. Scope the Access app to the
+  admin hostname exactly.
+- **`public/robots.txt` is served on every hostname, ahead of the Worker.** It
+  disallows everything — correct for the console, and it silently de-indexes the
+  public site. `assets.run_worker_first` lists that path so each host answers for
+  itself. The same trap waits for any other file added to `public/`.
+- **Publishing is per-post and must stay that way.** The archive imported from a
+  previous ESP is hundreds of `sent` broadcasts. There is no bulk publish in
+  `core/posts.ts`, in the admin, or in MCP, on purpose.
 - **`web/auth.ts` fails closed.** Missing `CF_ACCESS_TEAM_DOMAIN` or
   `CF_ACCESS_AUD` locks out everyone including you. That is the correct
   direction to fail. Presence of the `Cf-Access-Jwt-Assertion` header proves
@@ -456,6 +487,10 @@ executable is the highest-value contribution available.
 | **MCP inside the same Worker, stateless** | Ships and deploys with the app; MCP 2026-07-28 dropped session state, so a Worker is the natural shape. | A separate MCP process proxying the HTTP API — another deploy target, a second copy of every rule. |
 | **Preflight tokens for irreversible sends** | An agent can be wrong in one tool call. The token binds a send to a preview a person read, dies on any edit, is single-use. | A `confirm: true` flag — satisfied in the same breath as the mistake. |
 | **Hand-written email HTML renderer** | No DOM in workerd; and *email* HTML needs inlined styles and table buttons, which generic serialization won't produce. | `@tiptap/html` + happy-dom. |
+| **A post is a broadcast with `published_at`** | One write becomes one send and one page. The piece is written once. | A separate `posts` table — a second content lifecycle, and everything authored twice. |
+| **Hostname dispatch for the public site** | Two apps that never share a router, so a reader's request cannot enter the one guarded by `requireOperator` and Access. | A `/blog` path prefix on the admin host — one more Bypass app, permanent `/blog` in every URL, and public pages living inside the guarded router. |
+| **A second renderer for the web, not a flag on the email one** | Email and web agree on nothing: tracking, footers, merge tags, `<details>`, iframes. Flags multiply, and the failure mode is an unsubscribe link on a public page. | `renderDoc(doc, { web: true })`. |
+| **Unsplash photos are hotlinked, never copied into R2** | Rehosting is faster to serve and breaks the photographer's view counts, which is what the API is given away for. Credit is stored on the row so it renders offline from the API, years later. | Mirroring the bytes into R2 on pick. |
 | **Mirror commerce data into D1** | Segment evaluation runs in-Worker under a query cap and can't reach Postgres at send time. | Live cross-database queries. |
 
 ---
