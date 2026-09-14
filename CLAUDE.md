@@ -22,7 +22,6 @@ Domain: email marketing / transactional email.
 |---|---|---|---|
 | `docs/ARCHITECTURE.md` | ⭐ **The agent's reference.** Invariants, system shape, code map, data model, lifecycles, MCP surface, platform limits, recipes, traps. | **Before changing any code.** Start here. | `/design` |
 | `docs/SPEC.md` | Numbered, testable behavioral requirements. The reference for *intended* behavior. | Before changing behavior. Code disagreeing with SPEC is a bug report, not a licence to edit SPEC. | `/design` |
-| `docs/MEMORY.md` | Decision log — what was chosen, what was rejected, and why. | Before "improving" something odd. The odd thing is usually load-bearing. | `/document` (appended by all phases) |
 | `docs/INSTALL.md` | Local setup, full production deploy, integrations, troubleshooting. | Setup, deploy, or config questions. | `/document` |
 | `docs/PROJECT.md` | The problem, who it's for, what's explicitly out of scope. | Before proposing a feature. | `/explore` |
 | `docs/PLAN.md` | What's built, what's verified, what isn't. | Picking up work. | `/plan` |
@@ -47,7 +46,7 @@ shapes in there look wrong and are load-bearing.
 - Async: Cloudflare Queues (send fan-out) + Cron Triggers (scheduling, sequence ticks)
 - Mail: pluggable `EmailProvider` port; Resend is the first adapter
 - Editor: TipTap v3, vanilla — the only browser JS in the project
-- Agents: MCP server in the same Worker — 96 tools, 4 resources, 4 prompts
+- Agents: MCP server in the same Worker — 103 tools, 4 resources, 4 prompts
 - Auth: Cloudflare Access (no app-level login)
 - Package manager: Bun
 

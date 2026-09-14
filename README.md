@@ -59,10 +59,10 @@ removes someone outright.
 That asymmetry is the reason this exists, and everything else in the codebase is
 arranged so it can't be broken by accident.
 
-**And the mail is also the website.** A post is a broadcast you decided to publish —
-same piece, written once, sent to the list and then put on a page at its own
-readable URL. Not a second CMS bolted on, and not a sync job between two copies of
-your own writing.
+**And the mail is also the website.** A post *is* a broadcast — same piece, written
+once, mailed to the list and up on its own readable URL as it goes out, with a "read
+this online" link in the mail that already resolves. Not a second CMS bolted on, and
+not a sync job between two copies of your own writing.
 
 ---
 
@@ -176,7 +176,7 @@ src/
   providers/      EmailProvider port + console and Resend adapters
   client/         the only browser JS in the project: the TipTap editor bundle
 migrations/       drizzle-kit generated, applied by wrangler
-scripts/          list importers and the browser smoke test
+scripts/          list importers, the archive publisher, and the browser smoke test
 docs/             install guide, architecture, spec, and a decision log
 ```
 
@@ -260,9 +260,9 @@ onto a public page.
 (Gmail strips `<style>`) and emits nested tables for buttons (Outlook ignores padding
 on `<a>`), which generic HTML serialization wouldn't do.
 
-📖 The full picture, written to be read by a person *or* an agent, is in
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). The decision log — including the
-alternatives that were rejected and why — is in [`docs/MEMORY.md`](docs/MEMORY.md).
+📖 The full picture, written to be read by a person *or* an agent — including the
+alternatives that were rejected and why — is in
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ---
 
@@ -330,14 +330,49 @@ hostname on the same Worker and the archive becomes a blog:
   reader gets all of it wherever they read), a sitemap, and OG tags
 - A signup box that posts to your ordinary `/f/:slug` form endpoint, so consent
   arrives by exactly the same path as every other signup — no second implementation
-- Server-rendered, no JavaScript, the same palette as the console
+- Server-rendered, no JavaScript, the same palette as the console, and a single
+  column with an 18px gutter on a phone
 
-**Publishing is one deliberate act per post.** `published_at` is nullable and
+**The post goes up as the mail goes out.** `publish_on_send` defaults to on, and it is
+read at exactly one place: the `scheduled → sending` transition, the one moment every
+send passes through whether you clicked Send or the cron picked it up. It happens
+*before* a single message renders, so the "read this online" link in the mail resolves
+the moment it lands instead of 404ing for your fastest reader. A publish failure is
+caught and the send continues — the mail is the point, the page is the bonus.
+
+Reading it in one place is what keeps the blast radius small. An import or a backfill
+writes `status` directly and never comes through that function, so **a restored archive
+stays inert**. A preview never publishes. And unchecking the box in the composer
+sidebar mails something without giving it a public URL, which is what a sales push or a
+note to one segment wants.
+
+**Publishing is still one decision per post.** `published_at` is nullable and otherwise
 independent of the send lifecycle: a broadcast can go up months after it was mailed,
-come down, and go back up, and none of that touches `status`, the segment, or the
-send cursor. There is no bulk publish — not in `core/`, not in the admin, not in
-MCP — because an archive imported from a previous ESP is hundreds of `sent` rows and
-"publish everything" is a keystroke you can't take back.
+come down, and go back up, and none of that touches `status`, the segment, or the send
+cursor. There is no bulk publish — not in `core/`, not in the admin, not in MCP —
+because an archive imported from a previous ESP is hundreds of `sent` rows and "publish
+everything" is a keystroke you can't take back.
+
+For that one case there's an offline script, deliberately kept where nothing reachable
+from the running app can call it:
+
+```bash
+bun scripts/publish-archive.ts --remote --dry-run   # print the plan and stop
+bun scripts/publish-archive.ts --remote             # publish the archive
+bun scripts/publish-archive.ts --remote --unpublish # take it all back down
+```
+
+It sends nothing. It writes `published_at`, `slug`, `excerpt`, `search_text` and
+`feature_image`, and touches nothing else. It's idempotent — anything already published
+is skipped — and `--unpublish` keeps every slug, so the same URLs come back.
+
+**The mail carries "read this online" and a share link**, both built outside the body —
+the only thing click tracking rewrites — so the chrome stays untracked exactly like the
+preference-center and download links. Both are omitted entirely when there is no
+published post (a sequence step, a receipt, a broadcast taken down) rather than pointing
+somewhere that 404s. The post page has a share link too: a plain link to
+`x.com/intent/post`, not an embedded widget — no third-party script, and nothing
+reporting who read what.
 
 Featured images come from your own upload or from Unsplash search, built into the
 publishing screen. Unsplash photos are hotlinked rather than copied, the download
@@ -509,7 +544,6 @@ table, plus the invariants you must not break while doing it.
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 🏗 System design, invariants, code map. **Written for an LLM to read before changing anything** |
 | [`docs/SPEC.md`](docs/SPEC.md) | 📐 Numbered behavioral requirements. The reference for intended behavior |
 | [`docs/PROJECT.md`](docs/PROJECT.md) | 🎯 The problem, who it's for, and what's explicitly out of scope |
-| [`docs/MEMORY.md`](docs/MEMORY.md) | 🧠 Decision log: what was chosen, what was rejected, and why |
 | [`docs/PLAN.md`](docs/PLAN.md) · [`docs/STORIES.md`](docs/STORIES.md) | ✅ Build status and the (thin) backlog |
 
 ---

@@ -550,4 +550,3 @@ bunx wrangler d1 export big-mailer --remote --env production --output backup.sql
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — how it works, and the invariants you must not break
 - [`SPEC.md`](SPEC.md) — numbered behavioral requirements
 - [`PROJECT.md`](PROJECT.md) — the problem, and what is deliberately out of scope
-- [`MEMORY.md`](MEMORY.md) — the decision log

@@ -18,7 +18,6 @@ Five minutes of reading order, in priority:
 | 2 | `CLAUDE.md` (repo root) | Operational rules and the send-safety policy. |
 | 3 | **[Code map](#-code-map)** below | Where the thing you're changing lives. |
 | 4 | [`SPEC.md`](SPEC.md) | Numbered behavioral requirements. **The reference for intended behavior.** When code and SPEC disagree, that's a bug report, not a licence to edit SPEC. |
-| 5 | [`MEMORY.md`](MEMORY.md) | Decision log. Read before "improving" something odd — the odd thing is usually load-bearing and the entry says why. |
 
 **Source-of-truth precedence.** `src/db/schema.ts` is the truth about the
 database — it carries dense comments explaining *why* each column is shaped the
