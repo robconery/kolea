@@ -246,7 +246,7 @@ against the team's live JWKS (cached per isolate, forced refetch on an unknown
 key id), `alg` pinned to `RS256`, plus audience, issuer, `exp` and `nbf`.
 Presence of the header proves nothing and is never treated as proof.
 
-**Create one Allow app**, then **five Bypass apps**:
+**Create one Allow app**, then **eight Bypass apps**:
 
 | App | Path | Policy | Why |
 |---|---|---|---|
@@ -254,6 +254,8 @@ Presence of the header proves nothing and is never treated as proof.
 | Tracking | `list.example.com/t/*` | **Bypass** — everyone | Open pixels and click redirects |
 | Forms | `list.example.com/f/*` | **Bypass** — everyone | Signup posts from your own site |
 | Preferences | `list.example.com/p/*` | **Bypass** — everyone | The reader's preference center |
+| Downloads | `list.example.com/d/*` | **Bypass** — everyone | Lead-magnet files; the grant token is the auth |
+| Media | `list.example.com/media/*` | **Bypass** — everyone | Images embedded in sent mail |
 | API | `list.example.com/api/*` | **Bypass** — everyone | Bearer-key authenticated inside |
 | Webhooks | `list.example.com/webhooks/*` | **Bypass** — everyone | Signature-verified inside |
 | MCP | `list.example.com/mcp/*` | **Bypass** — everyone | Path secret + admin bearer key inside |
@@ -263,11 +265,11 @@ Presence of the header proves nothing and is never treated as proof.
 > Access matches **the most specific path first**, so the Bypass apps take
 > precedence over the hostname-wide Allow. Protecting the whole hostname with a
 > single Allow policy also protects the tracking pixel, the signup forms, the
-> preference center, the webhooks, and MCP. That means **every tracking pixel in
-> every email you have ever sent redirects to a login screen** — permanently,
-> for mail already delivered — and readers who click unsubscribe are asked to
-> log into your Cloudflare account. Each bypassed path carries its own auth or is
-> public by design.
+> preference center, the download links, the embedded images, the webhooks, and
+> MCP. That means **every tracking pixel in every email you have ever sent
+> redirects to a login screen** — permanently, for mail already delivered — and
+> readers who click unsubscribe are asked to log into your Cloudflare account.
+> Each bypassed path carries its own auth or is public by design.
 
 Now put the Access identity into `wrangler.jsonc` under `env.production.vars`:
 
@@ -455,6 +457,7 @@ them as reference implementations, not as a general-purpose tool.
 | Mail dead-lettering en masse | Provider rate limit. `max_concurrency` is pinned to 6 for this reason — one batch is one provider request, so batch concurrency *is* the request rate. |
 | Bounces never suppress anyone | The provider webhook isn't pointed at `/webhooks/:provider`, or `RESEND_WEBHOOK_SECRET` is wrong. |
 | Tracking pixels redirect to a login page | Missing Access **Bypass** app for `/t/*`. See [Step 8](#step-8--lock-the-console-behind-cloudflare-access). |
+| Download links land on a Cloudflare login | Missing Access **Bypass** app for `/d/*` — the exact same mistake, one path over. Happened in production on 2026-09-12. Existing links start working the moment the Bypass app exists; grants point at the form, not at a session, so nothing needs re-sending. |
 | Images in email are broken | `PUBLIC_URL` didn't match the real host at send time. Mail already delivered cannot be fixed. |
 | Editor body silently never saves | A renamed TipTap extension option. Nothing server-side catches this — run `bun run smoke`. |
 | `typecheck` fails only in `src/client` | The browser bundle has its own tsconfig on purpose. workerd's `Response`/`Headers` shadow the DOM ones; the two must never share a config. |
