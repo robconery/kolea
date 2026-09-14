@@ -20,6 +20,26 @@ import { excerptFrom, firstImageFrom, postPlainText } from './render-web.ts'
  * public URL in one keystroke.
  */
 
+/**
+ * A post's public URL. Returns null when there is no public site, or when the
+ * broadcast has no slug yet — callers use that to decide whether to render a
+ * "read this online" link at all, rather than emitting a link to nowhere.
+ */
+export function postUrl(siteUrl: string | undefined, slug: string | null): string | null {
+  if (!siteUrl || !slug) return null
+  return `${siteUrl.replace(/\/$/, '')}/${slug}`
+}
+
+/**
+ * A pre-filled post on X. The reader's own client does the posting — this is a
+ * link, not an integration, so there is no API key, no OAuth, and nothing to
+ * break when the platform changes its mind again.
+ */
+export function shareOnXUrl(url: string, subject: string): string {
+  const params = new URLSearchParams({ text: subject, url })
+  return `https://x.com/intent/post?${params.toString()}`
+}
+
 export interface PostMeta {
   /** Omit to derive from the subject. */
   slug?: string | null

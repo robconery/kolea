@@ -4,6 +4,7 @@ import type { DocNode, SegmentRule } from '../db/schema.ts'
 import { broadcasts, events, messages } from '../db/schema.ts'
 import type { Env } from '../types.ts'
 import { canReceiveBroadcastIn, loadConsentSnapshot } from './consent.ts'
+import { publishPost } from './posts.ts'
 import { resolveSegment } from './segments.ts'
 import { dispatch } from './sending.ts'
 
@@ -184,6 +185,29 @@ export async function dispatchBroadcastPage(
       .update(broadcasts)
       .set({ status: 'sending', startedAt: new Date() })
       .where(eq(broadcasts.id, broadcastId))
+
+    // ⭐ The post goes up as the mail goes out.
+    //
+    // Here, and only here: this is the one transition every send passes through,
+    // whether a person clicked Send or the cron picked up a scheduled one, and it
+    // happens before a single message renders — so the "read this online" link in
+    // the mail resolves the moment it lands rather than 404ing for the fastest
+    // readers.
+    //
+    // Nothing else may publish. An import or a backfill writes `status` directly
+    // and never comes through this function, which is what keeps a restored
+    // archive inert (CLAUDE.md), and `publishOnSend: false` is how a sales push
+    // or a one-segment note gets mailed without getting a public URL.
+    if (b.publishOnSend && !b.publishedAt && env.SITE_URL) {
+      // A publishing failure must not take the send down with it — the mail is
+      // the point, the web page is the bonus. It stays unpublished and visibly
+      // so on the broadcast screen, where it can be published by hand.
+      try {
+        await publishPost(db, broadcastId)
+      } catch {
+        /* left unpublished; the send continues */
+      }
+    }
   }
 
   const candidates = await resolveSegment(db, b.segment ?? {}, b.cursorSubscriberId, PAGE)

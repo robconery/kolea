@@ -476,8 +476,20 @@ mail.get('/broadcasts/:id', async (c) => {
             {c.env.SITE_URL ? (
               <div class="side-sec">
                 <h3>Web</h3>
-                <p class="faint" style="margin:0">
-                  {b.publishedAt ? 'Published' : 'Not published'} ·{' '}
+                {/* Checked by default, and the box is the whole decision: a
+                    broadcast is a post unless it's something you'd rather not
+                    have a public URL — a sales push, a note to one segment. */}
+                <label style="text-transform:none;letter-spacing:0;font-size:13px;color:var(--muted);display:flex;gap:9px;align-items:flex-start;margin:0">
+                  <input
+                    type="checkbox"
+                    name="publish_on_send"
+                    checked={b.publishOnSend}
+                    style="width:auto;margin-top:3px"
+                  />
+                  <span>Publish to the web when this sends</span>
+                </label>
+                <p class="faint" style="margin:10px 0 0">
+                  {b.publishedAt ? 'Published' : 'Not published yet'} ·{' '}
                   <a href={`/broadcasts/${id}/publishing`}>Publishing →</a>
                 </p>
               </div>
@@ -980,6 +992,10 @@ mail.post('/broadcasts/:id/edit', async (c) => {
       ...readEditorBody(form),
       ...audience,
       campaignId: readCampaignId(form),
+      // Only the full-form save writes this. Autosave posts a subset, and an
+      // unchecked checkbox posts nothing at all — so reading it there would
+      // silently switch publishing off every few seconds while you typed.
+      publishOnSend: form.get('publish_on_send') !== null,
     })
     .where(eq(broadcasts.id, id))
 

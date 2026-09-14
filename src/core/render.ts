@@ -1,6 +1,7 @@
 import { marked } from 'marked'
 import type { DocNode } from '../db/schema.ts'
 import { type Scope, formatScope } from './consent.ts'
+import { shareOnXUrl } from './posts.ts'
 import { escapeHtml, mergeFields } from './text.ts'
 import { docIsEmpty, renderDocToEmailHtml, renderDocToText } from './render-doc.ts'
 
@@ -23,6 +24,15 @@ export interface RenderContext {
   trackClicks: boolean
   /** False for transactional mail: a receipt gets no unsubscribe footer. */
   showFooter: boolean
+  /** The subject line, used as the pre-filled text of the share link. */
+  subject?: string
+  /**
+   * The published post this mail corresponds to, when there is one. Null for a
+   * sequence step, a receipt, or a broadcast that isn't on the web — and the
+   * "read online" and share links are omitted entirely rather than pointing
+   * somewhere that 404s.
+   */
+  postUrl?: string | null
   /**
    * Per-message merge values the subscriber row can't supply — today `{{link}}`,
    * a lead magnet's download URL, which is one person's grant token and so
@@ -112,10 +122,24 @@ export function renderEmail(body: EmailBody, ctx: RenderContext): RenderedEmail 
     }
   }
 
-  const html = shell(inner, ctx.showFooter ? footerHtml(ctx, preferenceUrl) : '', pixel)
-  const text = ctx.showFooter
-    ? `${plain}\n\n---\n${footerText(ctx)}\n${preferenceUrl}`
-    : plain
+  // Deliberately built outside the body, which is the only thing `trackLink` and
+  // `rewriteLinks` touch — so the chrome stays untracked, exactly like the
+  // preference and download links.
+  const online = ctx.postUrl ? readOnlineHtml(ctx.postUrl) : ''
+  const share = ctx.postUrl ? shareHtml(ctx.postUrl, ctx.subject ?? '') : ''
+
+  const html = shell(
+    `${online}${inner}${share}`,
+    ctx.showFooter ? footerHtml(ctx, preferenceUrl) : '',
+    pixel,
+  )
+
+  const text = [
+    ctx.postUrl ? `Read this online: ${ctx.postUrl}\n` : '',
+    plain,
+    ctx.postUrl ? `\n\nShare it: ${shareOnXUrl(ctx.postUrl, ctx.subject ?? '')}` : '',
+    ctx.showFooter ? `\n\n---\n${footerText(ctx)}\n${preferenceUrl}` : '',
+  ].join('')
 
   return { html, text, preferenceUrl, oneClickUnsubscribeUrl }
 }
@@ -185,6 +209,24 @@ function footerHtml(ctx: RenderContext, preferenceUrl: string): string {
 
   return `${line}<br />${action} &nbsp;·&nbsp; <a href="${preferenceUrl}" style="color:#5b6470">Manage all your preferences</a>`
 }
+
+/**
+ * "Read this online", above the body and to the right. The oldest affordance in
+ * email and still the useful one: it is the escape hatch for a client that
+ * mangles the layout, and now it is also the link a reader can actually send to
+ * somebody else. A `mailto:` forward is not a shareable thing.
+ */
+function readOnlineHtml(url: string): string {
+  return `<p style="margin:0 0 22px;font:13px/1.5 ${FOOT_FONT};color:#9aa0a8;text-align:right"><a href="${escapeHtml(url)}" style="color:#9aa0a8;text-decoration:underline">Read this online →</a></p>`
+}
+
+/** Share row, under the body and above the consent footer. */
+function shareHtml(url: string, subject: string): string {
+  const x = escapeHtml(shareOnXUrl(url, subject))
+  return `<p style="margin:30px 0 0;padding-top:20px;border-top:1px solid #eeebe6;font:14px/1.6 ${FOOT_FONT};color:#6b7280">Worth passing on? <a href="${x}" style="color:#1f6f5c;font-weight:600">Post it on X</a> &nbsp;·&nbsp; <a href="${escapeHtml(url)}" style="color:#1f6f5c;font-weight:600">copy the link</a></p>`
+}
+
+const FOOT_FONT = `-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif`
 
 function footerText(ctx: RenderContext): string {
   return ctx.scope.kind === 'sequence'

@@ -250,6 +250,19 @@ export const broadcasts = sqliteTable(
     // send lifecycle — a sent broadcast can go up months later, come down, and
     // go back up, and none of that may disturb the row the send path reads.
     publishedAt: ts('published_at'),
+    /**
+     * Publish this one to the web when it goes out. Default ON: a broadcast is a
+     * post, and the mail carries a "read this online" link that has to resolve
+     * the moment it lands.
+     *
+     * Read exactly once, at the `scheduled → sending` transition in
+     * `dispatchBroadcastPage`. That is deliberate — it means an import, a
+     * backfill, or any other path that writes `status` directly can never
+     * publish anything, and turning this off before sending is the way to mail
+     * something (a sales push, a one-segment note) without putting it on a
+     * public URL.
+     */
+    publishOnSend: integer('publish_on_send', { mode: 'boolean' }).notNull().default(true),
     /** URL identity. Unique across published and unpublished alike, so taking a
         post down never frees its slug for something else to claim. */
     slug: text('slug'),

@@ -15,6 +15,7 @@ import {
 } from './consent.ts'
 import { downloadUrl, grantDownload, grantsForMessages } from './downloads.ts'
 import { normalizeEmail } from './ids.ts'
+import { postUrl } from './posts.ts'
 import { BROADCAST_SCOPE_LABEL, type EmailBody, renderEmail } from './render.ts'
 
 /**
@@ -276,7 +277,7 @@ export async function sendMessages(
       continue
     }
 
-    const resolved = resolveSource(msg, bcastById, stepById, seqById)
+    const resolved = resolveSource(msg, bcastById, stepById, seqById, env.SITE_URL)
     if ('missing' in resolved) {
       outcomes.set(msg.id, await markSuppressed(db, msg.id, resolved.missing))
       continue
@@ -305,6 +306,8 @@ export async function sendMessages(
       unsubToken: sub.unsubToken,
       scope: resolved.scope,
       scopeLabel: resolved.scopeLabel,
+      subject: msg.subject,
+      postUrl: resolved.postUrl,
       subscriber: { email: sub.email, name: sub.name },
       trackOpens: isMarketing,
       trackClicks: isMarketing,
@@ -380,7 +383,8 @@ function resolveSource(
   bcastById: Map<number, typeof broadcasts.$inferSelect>,
   stepById: Map<number, typeof sequenceSteps.$inferSelect>,
   seqById: Map<number, typeof sequences.$inferSelect>,
-): { body: EmailBody; scope: Scope; scopeLabel: string } | { missing: string } {
+  siteUrl: string | undefined,
+): { body: EmailBody; scope: Scope; scopeLabel: string; postUrl?: string | null } | { missing: string } {
   if (msg.kind === 'broadcast' && msg.broadcastId) {
     const b = bcastById.get(msg.broadcastId)
     if (!b) return { missing: 'no_broadcast' }
@@ -388,6 +392,10 @@ function resolveSource(
       body: { json: b.bodyJson, md: b.bodyMd },
       scope: { kind: 'broadcast' },
       scopeLabel: BROADCAST_SCOPE_LABEL,
+      // Only when it is actually live. A published_at in the future is not a
+      // thing here, but an *unpublished* broadcast with a slug is — it was taken
+      // down — and linking to it would 404 in every inbox that kept the mail.
+      postUrl: b.publishedAt ? postUrl(siteUrl, b.slug) : null,
     }
   }
 

@@ -1,0 +1,1 @@
+ALTER TABLE `broadcasts` ADD `publish_on_send` integer DEFAULT true NOT NULL;

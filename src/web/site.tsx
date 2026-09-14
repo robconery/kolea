@@ -1,7 +1,14 @@
 import { Hono } from 'hono'
 import type { Context } from 'hono'
 import type { FC, PropsWithChildren } from 'hono/jsx'
-import { type Post, allPostSlugs, getPostBySlug, listPosts, recentPosts } from '../core/posts.ts'
+import {
+  type Post,
+  allPostSlugs,
+  getPostBySlug,
+  listPosts,
+  recentPosts,
+  shareOnXUrl,
+} from '../core/posts.ts'
 import { escapeHtml } from '../core/text.ts'
 import { renderPostHtml } from '../core/render-web.ts'
 import { getDb } from '../db/index.ts'
@@ -212,6 +219,15 @@ site.get('/:slug', async (c) => {
 
         {/* Rendered by `core/render-web.ts`, from content this operator wrote. */}
         <div class="prose" dangerouslySetInnerHTML={{ __html: html }} />
+
+        {/* A link, not an embed. No third-party script, nothing that phones home
+            about who read what, and nothing to break when a platform changes its
+            widget again. */}
+        <p class="share">
+          <a href={shareOnXUrl(`${cfg.origin}/${post.slug}`, post.subject)} rel="noopener nofollow">
+            Post this on X
+          </a>
+        </p>
       </article>
 
       <Subscribe env={c.env} />
@@ -661,6 +677,13 @@ h1,h2,h3{margin:0;font-weight:600;letter-spacing:-.02em}
 .prose .btn:hover{background:rgba(56,189,248,.3);border-color:rgba(125,211,252,.75);color:#fff}
 .prose .align-center{text-align:center}
 .prose .align-right{text-align:right}
+
+.share{margin:52px 0 0;padding-top:24px;position:relative;font-size:14.5px}
+.share::before{content:'';position:absolute;left:0;right:0;top:0;height:1px;background:var(--rule)}
+.share a{display:inline-block;padding:9px 18px;border:1px solid var(--edge);border-radius:999px;
+  color:var(--muted);transition:border-color .35s var(--glide),color .35s var(--glide),
+  background .35s var(--glide)}
+.share a:hover{border-color:rgba(125,211,252,.5);color:var(--ink);background:rgba(56,189,248,.1)}
 
 /* ── signup */
 .subscribe{margin:72px 0 0;padding:34px;background:var(--panel);border:1px solid var(--edge);
