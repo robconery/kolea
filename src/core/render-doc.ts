@@ -1,5 +1,5 @@
 import type { DocNode } from '../db/schema.ts'
-import { escapeHtml } from './render.ts'
+import { escapeHtml } from './text.ts'
 
 /**
  * TipTap/ProseMirror JSON → email-safe HTML.

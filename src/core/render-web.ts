@@ -1,7 +1,7 @@
 import { marked } from 'marked'
 import type { DocNode } from '../db/schema.ts'
 import { docIsEmpty } from './render-doc.ts'
-import { escapeHtml, mergeFields } from './render.ts'
+import { escapeHtml, mergeFields } from './text.ts'
 
 /**
  * TipTap/ProseMirror JSON → HTML for the public web site.

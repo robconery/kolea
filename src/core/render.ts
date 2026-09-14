@@ -1,9 +1,15 @@
 import { marked } from 'marked'
 import type { DocNode } from '../db/schema.ts'
 import { type Scope, formatScope } from './consent.ts'
+import { escapeHtml, mergeFields } from './text.ts'
 import { docIsEmpty, renderDocToEmailHtml, renderDocToText } from './render-doc.ts'
 
 marked.setOptions({ gfm: true, breaks: false })
+
+// Re-exported so `render.ts` stays the one door for the email pipeline, while
+// the definitions live somewhere a web renderer can reach without dragging
+// consent and the database along with them.
+export { escapeHtml, mergeFields }
 
 export interface RenderContext {
   publicUrl: string
@@ -32,21 +38,6 @@ export interface RenderedEmail {
   oneClickUnsubscribeUrl: string
 }
 
-export function mergeFields(
-  body: string,
-  sub: { email: string; name: string | null },
-  extras?: Record<string, string>,
-): string {
-  const first = (sub.name ?? '').trim().split(/\s+/)[0] ?? ''
-  let out = body
-    .replace(/\{\{\s*name\s*\}\}/g, sub.name ?? 'there')
-    .replace(/\{\{\s*first_name\s*\}\}/g, first || 'there')
-    .replace(/\{\{\s*email\s*\}\}/g, sub.email)
-  for (const [field, value] of Object.entries(extras ?? {})) {
-    out = out.replaceAll(`{{${field}}}`, value)
-  }
-  return out
-}
 
 export interface EmailBody {
   /** Rich document — the source of truth when present. */
@@ -241,10 +232,3 @@ function stripMd(md: string): string {
     .trim()
 }
 
-export function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-}

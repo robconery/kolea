@@ -43,5 +43,6 @@ to-do.md
 .cf-token
 .import-kit/
 .import-kit-content/
+.publish-archive/
 .import-neon/
 .seed-production-store/
