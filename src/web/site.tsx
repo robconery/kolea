@@ -499,7 +499,7 @@ const CSS = `
   --spring:cubic-bezier(.32,.72,0,1);
   --glide:cubic-bezier(.22,1,.36,1);
   --radius:14px;
-  --gut:clamp(20px,3.4vw,48px);
+  --gut:clamp(18px,3.4vw,48px);
 }
 html{-webkit-text-size-adjust:100%;scrollbar-color:rgba(148,190,255,.2) transparent}
 body{margin:0;background:var(--abyss);color:var(--ink);
@@ -707,8 +707,30 @@ h1,h2,h3{margin:0;font-weight:600;letter-spacing:-.02em}
 .foot::before{content:'';position:absolute;left:0;right:0;top:0;height:1px;background:var(--rule)}
 .foot p{margin:0}
 
-@media (max-width:560px){
+/* Phones. The page gutter is 18px and everything inside it gives its padding
+   back to the text — on a 390px screen, a 20px gutter plus 22px of card padding
+   was 42px of nothing on each side, which is a tenth of the display spent on
+   margin. One column, tighter insets, same type size. */
+@media (max-width:640px){
+  .wrap{padding-left:18px;padding-right:18px}
+  .cards{grid-template-columns:1fr;gap:18px}
+  .card-b{padding:16px 17px 19px}
+  .card h2{font-size:20px}
+  .subscribe{padding:24px 18px}
+  .subscribe form{gap:9px}
+  .subscribe input{min-width:0;flex-basis:100%}
+  .subscribe button{width:100%}
+  .search{gap:8px}
+  .top{padding:20px 0 18px;margin-bottom:34px}
+  .masthead{margin-bottom:32px}
+  .post-head{margin-bottom:26px}
   .prose{font-size:17px}
-  .subscribe{padding:26px 22px}
+  .prose p,.prose ul,.prose ol,.prose pre,.prose blockquote,.prose figure,
+  .prose .table-wrap{margin-bottom:22px}
+  /* Code and images run to the gutter rather than sitting in their own inset
+     box inside it — a phone has no width to spare for a second frame. */
+  .prose pre{padding:14px 15px}
+  .prose ul,.prose ol{padding-left:21px}
+  .feature{border-radius:10px}
 }
 `
