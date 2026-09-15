@@ -316,6 +316,13 @@ audience.get('/subscribers/:id', async (c) => {
     .where(eq(subscriberTags.subscriberId, id))
     .all()
 
+  // Every tag on the list, minus the ones they already carry — the suggestion
+  // list for the add box. Offering a tag they already have is a dead option.
+  const theirs = new Set(theirTags.map((t) => t.name))
+  const allTags = (await db.select({ name: tags.name }).from(tags).orderBy(asc(tags.name)).all())
+    .map((t) => t.name)
+    .filter((n) => !theirs.has(n))
+
   const history = await db
     .select()
     .from(messages)
@@ -408,8 +415,23 @@ audience.get('/subscribers/:id', async (c) => {
         <div class="card-h">
           <h2>Tags</h2>
           <div class="actions">
+            {/* A datalist, not a <select>: pick an existing tag from the list,
+                or type a name that isn't on it and the POST creates it. Same
+                control the bulk-tag bar uses, and still no browser JS. */}
             <form method="post" action={`/subscribers/${id}/tags`} class="row" style="gap:6px">
-              <input type="text" name="tag" placeholder="add tag" style="min-width:0" />
+              <input
+                type="text"
+                name="tag"
+                list={`tags-${id}`}
+                placeholder="pick or type a tag"
+                autocomplete="off"
+                style="min-width:0"
+              />
+              <datalist id={`tags-${id}`}>
+                {allTags.map((name) => (
+                  <option value={name} />
+                ))}
+              </datalist>
               <button class="btn sm">Add</button>
             </form>
           </div>
@@ -665,8 +687,9 @@ audience.post('/subscribers/:id/tags', async (c) => {
   const id = Number(c.req.param('id'))
   const form = await c.req.formData()
   const name = String(form.get('tag') ?? '').trim()
-  if (name) await addTags(db, id, [await findOrCreateTag(db, name)])
-  return c.redirect(`/subscribers/${id}?flash=Tag added.`)
+  if (!name) return c.redirect(`/subscribers/${id}`)
+  await addTags(db, id, [await findOrCreateTag(db, name)])
+  return c.redirect(`/subscribers/${id}?flash=${encodeURIComponent(`Tagged “${name}”.`)}`)
 })
 
 audience.post('/subscribers/:id/tags/remove', async (c) => {
