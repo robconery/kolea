@@ -295,7 +295,7 @@ store.get('/store', async (c) => {
   const maxChannel = Math.max(1, ...channels.map((ch) => ch.cents))
 
   return c.html(
-    <Layout title="Store overview" charts>
+    <Layout title="Store overview" nav="store" charts>
       <div class="head">
         <div>
           <h1>Store</h1>

@@ -896,6 +896,11 @@ const ICONS: Record<string, string> = {
      as something moving rather than something counted. */
   act: 'M3.2 12.4h4l2.2-6 3.4 12.4 2.4-8.2 1.7 4.6h4.4',
   subs: 'M9.2 11.4a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4ZM3.6 19.4c.4-3.1 2.8-5 5.6-5s5.2 1.9 5.6 5M16.2 5.5a3.1 3.1 0 0 1 0 5.9M17.4 14.8c1.9.6 3.1 2.2 3.4 4.4',
+  /* A hash. Nothing else in the set uses it, and a tag reads as one on sight. */
+  tags: 'M9.4 4.4 7.6 19.6M16.4 4.4l-1.8 15.2M4.8 8.8h15M4 15.2h15',
+  /* Two overlapping circles: a segment is the part of the list that satisfies
+     more than one thing at once. */
+  segs: 'M9.6 19a7 7 0 1 0 0-14 7 7 0 0 0 0 14Zm4.8 0a7 7 0 1 0 0-14 7 7 0 0 0 0 14Z',
   bc: 'M4 12.2 20.2 4.6l-4.4 15.2-3.9-5.9L4 12.2Zm7.9 1.7 4.9-8',
   seq: 'M5.4 6.6h6.2a3.1 3.1 0 0 1 0 6.2H9a3.1 3.1 0 0 0 0 6.2h6.6M14.6 16.6l2.6 2.4-2.6 2.4M14.6 4.2 17.2 6.6l-2.6 2.4',
   out: 'M4 13.6h4.2l1.3 2.5h5l1.3-2.5H20M6.5 4.8h11l2.5 8.8v5.6H4v-5.6l2.5-8.8Z',
@@ -903,6 +908,9 @@ const ICONS: Record<string, string> = {
   forms: 'M6.2 3.8h11.6v16.4H6.2V3.8Zm2.8 4.2h6M9 11.2h3.2M14.8 12.6v5m0 0 2-2m-2 2-2-2',
   camp: 'M12 3.6a8.4 8.4 0 1 0 0 16.8 8.4 8.4 0 0 0 0-16.8Zm0 4.6a3.8 3.8 0 1 0 0 7.6 3.8 3.8 0 0 0 0-7.6Zm0 3.3a.5.5 0 1 0 0 1 .5.5 0 0 0 0-1Z',
   store: 'M5.6 8.2h12.8l1 11.4H4.6l1-11.4Zm3.4 0V6.4a3 3 0 0 1 6 0v1.8',
+  /* A receipt, torn off at the bottom: the line items, after the fact. */
+  sales:
+    'M6.6 3.8h10.8v16.8l-1.8-1.4-1.8 1.4-1.8-1.4-1.8 1.4-1.8-1.4-1.8 1.4V3.8Zm2.8 4.4h5.2M9.4 11.8h5.2',
   /* A target with an arrow in it. */
   goals: 'M12 20.4a8.4 8.4 0 1 0 0-16.8 8.4 8.4 0 0 0 0 16.8Zm0-4.2a4.2 4.2 0 1 0 0-8.4 4.2 4.2 0 0 0 0 8.4Zm0-3a1.2 1.2 0 1 0 0-2.4 1.2 1.2 0 0 0 0 2.4Z',
   /* A funnel narrowing to a drop — sent, opened, clicked, bought. */
@@ -948,6 +956,11 @@ const NAV: ({ grp: string } | { href: string; key: string; label: string })[] = 
   { href: '/', key: 'home', label: 'Dashboard' },
   { grp: 'Audience' },
   { href: '/subscribers', key: 'subs', label: 'Subscribers' },
+  // ⭐ Their own slots rather than tabs off Subscribers. `AudienceTabs` was the
+  // only route in, which made auto-tagging — the thing that turns a click into
+  // an enrollment — effectively undiscoverable.
+  { href: '/tags', key: 'tags', label: 'Tags & automation' },
+  { href: '/segments', key: 'segs', label: 'Segments' },
   // ⭐ Analytics sits directly under the audience, before the mail: you read
   // what happened before you decide what to send next. Five slots rather than
   // one-with-tabs because each is a different question, and burying four of
@@ -971,10 +984,12 @@ const NAV: ({ grp: string } | { href: string; key: string; label: string })[] = 
   // ⭐ Its own slot rather than a tab under Campaigns: a form is where a lead
   // magnet is built and where the file lives, and it was unfindable one level in.
   { href: '/forms', key: 'forms', label: 'Forms' },
+  { href: '/sales', key: 'sales', label: 'Sales' },
   // ⭐ Target first, then the events measured against it, then the catalogue
   // they were sold from: the funnel reads top to bottom in the rail too.
   { href: '/goals', key: 'goals', label: 'Goals' },
   { href: '/conversions', key: 'conv', label: 'Conversions' },
+  { href: '/store', key: 'store', label: 'Store overview' },
   { href: '/store/offers', key: 'offers', label: 'Offers' },
   { href: '/store/customers', key: 'cust', label: 'Customers' },
   { href: '/store/ideas', key: 'ideas', label: 'Segment ideas' },

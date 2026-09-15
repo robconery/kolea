@@ -1218,7 +1218,7 @@ campaignsAdmin.get('/sales', async (c) => {
   const unattributed = rows.filter((r) => !r.sale.campaignId && r.sale.status === 'paid').length
 
   return c.html(
-    <Layout title="Sales" nav="camp">
+    <Layout title="Sales" nav="sales">
       <div class="head">
         <div>
           <h1>Sales</h1>

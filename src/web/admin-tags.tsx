@@ -52,7 +52,7 @@ tagging.get('/tags', async (c) => {
   ])
 
   return c.html(
-    <Layout title="Tags" nav="subs">
+    <Layout title="Tags" nav="tags">
       <div class="head">
         <div>
           <h1>Tags &amp; automation</h1>
@@ -343,7 +343,7 @@ tagging.get('/segments', async (c) => {
   )
 
   return c.html(
-    <Layout title="Segments" nav="subs">
+    <Layout title="Segments" nav="segs">
       <div class="head">
         <div>
           <h1>Segments</h1>
@@ -712,7 +712,7 @@ tagging.get('/segments/new', async (c) => {
     : {}
 
   return c.html(
-    <Layout title="New segment" nav="subs">
+    <Layout title="New segment" nav="segs">
       <div class="head">
         <h1>New segment</h1>
       </div>
@@ -753,7 +753,7 @@ tagging.get('/segments/:id', async (c) => {
   const sample = await resolveSegment(db, seg.rule, 0, 25)
 
   return c.html(
-    <Layout title={seg.name} nav="subs">
+    <Layout title={seg.name} nav="segs">
       <div class="head">
         <div>
           <h1>{seg.name}</h1>
