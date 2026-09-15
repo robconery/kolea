@@ -418,14 +418,18 @@ audience.get('/subscribers/:id', async (c) => {
             {/* A datalist, not a <select>: pick an existing tag from the list,
                 or type a name that isn't on it and the POST creates it. Same
                 control the bulk-tag bar uses, and still no browser JS. */}
-            <form method="post" action={`/subscribers/${id}/tags`} class="row" style="gap:6px">
+            <form
+              method="post"
+              action={`/subscribers/${id}/tags`}
+              style="display:flex;gap:6px;align-items:center"
+            >
               <input
                 type="text"
                 name="tag"
                 list={`tags-${id}`}
                 placeholder="pick or type a tag"
                 autocomplete="off"
-                style="min-width:0"
+                style="width:200px;min-width:0"
               />
               <datalist id={`tags-${id}`}>
                 {allTags.map((name) => (

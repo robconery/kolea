@@ -13,9 +13,13 @@ import {
   createSequence,
   deleteStep,
   enroll,
+  getSequence,
+  reorderSteps,
   sequenceStats,
   setSequenceActive,
+  stepsFor,
   tickSequences,
+  updateSequence,
   updateStep,
 } from '../core/sequences.ts'
 import { BROADCAST_SCOPE_LABEL, footerPreviewHtml, previewHtml } from '../core/render.ts'
@@ -1206,6 +1210,7 @@ mail.get('/sequences/:id', async (c) => {
 
   const enrolled = await db
     .select({
+      subscriberId: subscribers.id,
       email: subscribers.email,
       name: subscribers.name,
       status: sequenceEnrollments.status,
@@ -1216,6 +1221,9 @@ mail.get('/sequences/:id', async (c) => {
     .where(eq(sequenceEnrollments.sequenceId, id))
     .limit(50)
     .all()
+
+  const allTags = await db.select().from(tags).orderBy(asc(tags.name)).all()
+  const allCampaigns = await listCampaigns(db)
 
   return c.html(
     <Layout title={s.name} nav="seq">
@@ -1233,7 +1241,7 @@ mail.get('/sequences/:id', async (c) => {
         </div>
       </div>
 
-      <Flash msg={c.req.query('flash')} />
+      <Flash msg={c.req.query('flash')} kind={c.req.query('kind')} />
 
       <div class="card">
         <div class="card-b flush">
@@ -1255,6 +1263,69 @@ mail.get('/sequences/:id', async (c) => {
               <div class="l">Left this series</div>
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* Everything /sequences/new asked for, asked again — a sequence whose
+          trigger can only be set once is a sequence you rebuild to change. */}
+      <div class="card">
+        <div class="card-h">
+          <h2>Settings</h2>
+        </div>
+        <div class="card-b">
+          <div class="note">
+            The <strong>name</strong> and <strong>description</strong> are shown to subscribers in
+            their preference center, so write them so a reader recognizes what they'd be leaving.
+          </div>
+          <form method="post" action={`/sequences/${id}`}>
+            <div class="field">
+              <label>Name</label>
+              <input type="text" name="name" value={s.name} required />
+            </div>
+            <div class="field">
+              <label>Description (shown to subscribers)</label>
+              <input type="text" name="description" value={s.description ?? ''} />
+            </div>
+            <div class="row">
+              <div class="field">
+                <label>Trigger</label>
+                <select name="trigger">
+                  <option value="subscribe" selected={s.trigger === 'subscribe'}>
+                    When someone subscribes
+                  </option>
+                  <option value="tag_added" selected={s.trigger === 'tag_added'}>
+                    When a tag is added
+                  </option>
+                  <option value="manual" selected={s.trigger === 'manual'}>
+                    Manual only
+                  </option>
+                </select>
+              </div>
+              <div class="field">
+                <label>Trigger tag (for "tag added")</label>
+                <select name="triggerTagId">
+                  <option value="">(none)</option>
+                  {allTags.map((t) => (
+                    <option value={String(t.id)} selected={t.id === s.triggerTagId}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <CampaignPicker
+              all={allCampaigns}
+              value={s.campaignId}
+              hint="Clicks on this series count as a touch for the campaign."
+            />
+            <button class="btn primary">Save settings</button>
+            {s.isActive ? (
+              <p class="faint" style="margin:8px 0 0">
+                This sequence is live. Changing the trigger changes who gets enrolled from here on;
+                it never touches anyone already in it.
+              </p>
+            ) : null}
+          </form>
         </div>
       </div>
 
@@ -1282,10 +1353,11 @@ mail.get('/sequences/:id', async (c) => {
                   <th class="num">#</th>
                   <th>Subject</th>
                   <th>Delay</th>
+                  <th />
                 </tr>
               </thead>
               <tbody>
-                {steps.map((st) => {
+                {steps.map((st, i) => {
                   const href = `/sequences/${id}/steps/${st.id}`
                   return (
                     <tr class="rowlink">
@@ -1304,6 +1376,36 @@ mail.get('/sequences/:id', async (c) => {
                           {formatDelay(st.delayDays)}
                         </a>
                       </td>
+                      {/* Order is the one thing you can't fix from inside the
+                          step editor, since a delay is relative to the step
+                          before it. Two buttons beat retyping every delay. */}
+                      <td style="width:1%;white-space:nowrap;text-align:right">
+                        <form
+                          method="post"
+                          action={`/sequences/${id}/steps/reorder`}
+                          style="display:inline"
+                        >
+                          <input type="hidden" name="stepId" value={String(st.id)} />
+                          <button
+                            class="btn sm"
+                            name="dir"
+                            value="up"
+                            disabled={i === 0}
+                            title="Move earlier"
+                          >
+                            ↑
+                          </button>{' '}
+                          <button
+                            class="btn sm"
+                            name="dir"
+                            value="down"
+                            disabled={i === steps.length - 1}
+                            title="Move later"
+                          >
+                            ↓
+                          </button>
+                        </form>
+                      </td>
                     </tr>
                   )
                 })}
@@ -1317,6 +1419,20 @@ mail.get('/sequences/:id', async (c) => {
         <div class="card-h">
           <h2>Enrollments</h2>
           <div class="actions">
+            <form
+              method="post"
+              action={`/sequences/${id}/enroll`}
+              style="display:flex;gap:6px;align-items:center"
+            >
+              <input
+                type="email"
+                name="email"
+                placeholder="email address"
+                required
+                style="width:200px;min-width:0"
+              />
+              <button class="btn sm">Enroll</button>
+            </form>
             <form method="post" action={`/sequences/${id}/enroll-all`}>
               <button class="btn sm">Enroll every active subscriber</button>
             </form>
@@ -1340,8 +1456,10 @@ mail.get('/sequences/:id', async (c) => {
                 {enrolled.map((e) => (
                   <tr>
                     <td>
-                      <div>{e.name ?? '-'}</div>
-                      <div class="faint mono">{e.email}</div>
+                      <a href={`/subscribers/${e.subscriberId}`}>
+                        <div>{e.name ?? '-'}</div>
+                        <div class="faint mono">{e.email}</div>
+                      </a>
                     </td>
                     <td>{statusPill(e.status)}</td>
                     <td class="faint">{fmtDate(e.nextRunAt)}</td>
@@ -1657,6 +1775,35 @@ mail.get('/sequences/:id/steps/:stepId', async (c) => {
   )
 })
 
+/**
+ * Move one step one place earlier or later. `reorderSteps` takes the full order.
+ *
+ * Declared above `/steps/:stepId` for the same reason the settings route is
+ * declared below `/sequences/tick` — first match registered wins, so `reorder`
+ * would otherwise arrive as a step id.
+ */
+mail.post('/sequences/:id/steps/reorder', async (c) => {
+  const db = getDb(c.env)
+  const id = Number(c.req.param('id'))
+  const form = await c.req.formData()
+  const stepId = Number(form.get('stepId'))
+  const dir = String(form.get('dir') ?? '')
+
+  const order = (await stepsFor(db, id)).map((st) => st.id)
+  const from = order.indexOf(stepId)
+  const to = dir === 'up' ? from - 1 : from + 1
+  if (from < 0 || to < 0 || to >= order.length) return c.redirect(`/sequences/${id}`)
+
+  order[from] = order[to]!
+  order[to] = stepId
+
+  const result = await reorderSteps(db, id, order)
+  if (!result.ok) {
+    return c.redirect(`/sequences/${id}?flash=${encodeURIComponent(result.reason!)}&kind=warn`)
+  }
+  return c.redirect(`/sequences/${id}?flash=Steps reordered.`)
+})
+
 mail.post('/sequences/:id/steps/:stepId', async (c) => {
   const db = getDb(c.env)
   const id = Number(c.req.param('id'))
@@ -1697,6 +1844,40 @@ mail.post('/sequences/:id/steps/:stepId/delete', async (c) => {
   return c.redirect(`/sequences/${id}?flash=Step deleted.`)
 })
 
+mail.post('/sequences/:id/enroll', async (c) => {
+  const db = getDb(c.env)
+  const id = Number(c.req.param('id'))
+  const form = await c.req.formData()
+  const email = String(form.get('email') ?? '')
+    .trim()
+    .toLowerCase()
+
+  const who = await db
+    .select({ id: subscribers.id, status: subscribers.status })
+    .from(subscribers)
+    .where(eq(subscribers.email, email))
+    .get()
+
+  const warn = (msg: string) =>
+    c.redirect(`/sequences/${id}?flash=${encodeURIComponent(msg)}&kind=warn`)
+
+  if (!who) return warn(`Nobody on the list has the address ${email}.`)
+  // Enrolling an unsubscribed person would queue mail for somebody who asked to
+  // stop hearing from us. `enroll` guards this series; status guards the list.
+  if (who.status !== 'active') return warn(`${email} is ${who.status}, so they can't be enrolled.`)
+
+  switch (await enroll(db, id, who.id)) {
+    case 'enrolled':
+      return c.redirect(`/sequences/${id}?flash=${encodeURIComponent(`Enrolled ${email}.`)}`)
+    case 'already':
+      return warn(`${email} is already in this sequence.`)
+    case 'opted_out':
+      return warn(`${email} left this series. Only they can rejoin, from the preference center.`)
+    case 'no_steps':
+      return warn('This sequence has no steps yet, so there is nothing to enroll anyone into.')
+  }
+})
+
 mail.post('/sequences/:id/toggle', async (c) => {
   const db = getDb(c.env)
   const id = Number(c.req.param('id'))
@@ -1733,4 +1914,37 @@ mail.post('/sequences/tick', async (c) => {
   const db = getDb(c.env)
   const n = await tickSequences(c.env, db)
   return c.redirect(`/sequences?flash=${encodeURIComponent(`Sent ${n} message(s).`)}`)
+})
+
+/**
+ * Edit the settings. Registered last on purpose: Hono matches in registration
+ * order, so `/sequences/:id` declared any earlier would swallow the static
+ * `/sequences/tick` above it.
+ */
+mail.post('/sequences/:id', async (c) => {
+  const db = getDb(c.env)
+  const id = Number(c.req.param('id'))
+  const form = await c.req.formData()
+  const triggerTagId = String(form.get('triggerTagId') ?? '')
+
+  const result = await updateSequence(db, id, {
+    name: String(form.get('name') ?? '').trim() || 'Untitled',
+    description: String(form.get('description') ?? '') || null,
+    trigger: String(form.get('trigger') ?? 'manual') as SequenceTrigger,
+    triggerTagId: triggerTagId ? Number(triggerTagId) : null,
+    campaignId: readCampaignId(form),
+  })
+  if (!result.ok) {
+    return c.redirect(`/sequences/${id}?flash=${encodeURIComponent(result.reason!)}&kind=warn`)
+  }
+
+  // A live `tag_added` sequence with no tag would enroll nobody and say nothing
+  // about it, so it's worth a word here rather than a silent no-op later.
+  const s = await getSequence(db, id)
+  if (s?.isActive && s.trigger === 'tag_added' && !s.triggerTagId) {
+    return c.redirect(
+      `/sequences/${id}?flash=${encodeURIComponent('Saved, but this trigger has no tag — nobody will be enrolled until you pick one.')}&kind=warn`,
+    )
+  }
+  return c.redirect(`/sequences/${id}?flash=Settings saved.`)
 })

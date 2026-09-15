@@ -325,6 +325,8 @@ pre.code,.card pre{background:linear-gradient(180deg,rgba(2,8,23,.5),rgba(2,8,23
 .btn:hover{background:rgba(255,255,255,.13);color:#fff;transform:translateY(-1px)}
 .btn:active{transform:scale(.975)}
 .btn:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+/* A disabled button that looks live is a button you click twice and blame. */
+.btn:disabled{opacity:.28;cursor:default;pointer-events:none;box-shadow:none;transform:none}
 .btn.primary{background:var(--beam);color:#03121f;
   box-shadow:0 12px 30px -16px rgba(56,189,248,.95)}
 .btn.primary:hover{color:#03121f;box-shadow:0 18px 40px -16px rgba(56,189,248,1)}
