@@ -87,6 +87,55 @@ export async function updateBroadcast(
   return { ok: true }
 }
 
+/**
+ * Correct a broadcast that has already gone out: subject and body only.
+ *
+ * Nothing is re-sent. This writes neither `status`, the segment, nor the send
+ * cursor, and the tick only ever claims `scheduled` or `sending`, so the fixed
+ * copy reaches people through the web page and nowhere else.
+ *
+ * The as-mailed copy is kept on the first revision (invariant 9) and never
+ * overwritten by later ones. A live post has its search text refreshed so site
+ * search matches what the page now says; its slug, excerpt and date stay put.
+ */
+export async function reviseSentBroadcast(
+  db: Db,
+  id: number,
+  patch: { subject: string; bodyJson: DocNode | null; bodyMd: string },
+): Promise<{ ok: boolean; reason?: string }> {
+  const b = await getBroadcast(db, id)
+  if (!b) return { ok: false, reason: 'no such broadcast' }
+  if (b.status !== 'sent') return { ok: false, reason: `broadcast is ${b.status}, not sent` }
+  if (!patch.subject.trim()) return { ok: false, reason: 'the subject is empty' }
+  if (!patch.bodyJson && !patch.bodyMd.trim()) return { ok: false, reason: 'the body is empty' }
+
+  // `sent` is only written once nothing is queued, but a message body is read
+  // from this row at send time — so check rather than trust it.
+  const queued = await db
+    .select({ n: count() })
+    .from(messages)
+    .where(and(eq(messages.broadcastId, id), eq(messages.status, 'queued')))
+    .get()
+  if ((queued?.n ?? 0) > 0) return { ok: false, reason: 'mail is still queued for this broadcast' }
+
+  const firstRevision = b.revisedAt === null
+  await db
+    .update(broadcasts)
+    .set({
+      subject: patch.subject,
+      bodyJson: patch.bodyJson,
+      bodyMd: patch.bodyMd,
+      revisedAt: new Date(),
+      ...(firstRevision
+        ? { originalSubject: b.subject, originalBodyJson: b.bodyJson, originalBodyMd: b.bodyMd }
+        : {}),
+    })
+    .where(eq(broadcasts.id, id))
+
+  if (b.publishedAt) await publishPost(db, id)
+  return { ok: true }
+}
+
 export async function deleteBroadcast(
   db: Db,
   id: number,

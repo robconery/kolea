@@ -283,6 +283,23 @@ export const broadcasts = sqliteTable(
         and never the document JSON: `LIKE` over a JSON blob matches attribute
         names and hex colours as happily as it matches prose. */
     searchText: text('search_text'),
+
+    // ── Revised after sending.
+    //
+    // A sent broadcast can have its subject and body corrected — a typo, a dead
+    // link — so the web page and anyone coming back to it read the fixed copy.
+    // Nobody is mailed again: the send path only ever claims `scheduled` or
+    // `sending`, and revising never writes `status`.
+    //
+    // What that must not do is rewrite what the archive says went out
+    // (invariant 9). So the first revision copies the as-mailed subject and body
+    // here, once, and later revisions leave them alone. Null means "never
+    // revised": the live columns above are exactly what was sent.
+    originalSubject: text('original_subject'),
+    originalBodyJson: text('original_body_json', { mode: 'json' }).$type<DocNode | null>(),
+    originalBodyMd: text('original_body_md'),
+    /** The latest revision. Non-null exactly when the `original*` columns are set. */
+    revisedAt: ts('revised_at'),
   },
   (t) => [
     index('broadcasts_status_scheduled_idx').on(t.status, t.scheduledAt),

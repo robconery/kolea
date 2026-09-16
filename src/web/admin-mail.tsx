@@ -1,7 +1,12 @@
 import { asc, desc, eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 import type { FC } from 'hono/jsx'
-import { broadcastStats, createBroadcast, startBroadcast } from '../core/broadcasts.ts'
+import {
+  broadcastStats,
+  createBroadcast,
+  reviseSentBroadcast,
+  startBroadcast,
+} from '../core/broadcasts.ts'
 import { listCampaigns } from '../core/campaigns.ts'
 import { storeMedia } from '../core/media.ts'
 import { clearFeatureImage, publishPost, setFeatureImage, unpublishPost } from '../core/posts.ts'
@@ -521,6 +526,17 @@ mail.get('/broadcasts/:id', async (c) => {
     )
   }
 
+  // Only a finished send can be corrected: while it is scheduled or going out,
+  // the body on this row is still what the queue will mail.
+  const revisable = b.status === 'sent'
+  const asMailed = b.revisedAt !== null && c.req.query('as') === 'mailed'
+  // A sent broadcast opens straight into the editor. The as-mailed copy is a
+  // record, so it stays read-only.
+  const revising = revisable && !asMailed
+  const shown = asMailed
+    ? { json: b.originalBodyJson, md: b.originalBodyMd ?? '' }
+    : { json: b.bodyJson, md: b.bodyMd }
+
   return c.html(
     <Layout title={b.subject} nav="bc" editor>
       <div class="head">
@@ -607,19 +623,56 @@ mail.get('/broadcasts/:id', async (c) => {
 
       <WebStatus env={c.env} b={b} />
 
-      <div class="card">
-        <div class="card-h">
-          <h2>Content</h2>
+      {revising ? (
+        // A plain form with an explicit save — no autosave. Every save here
+        // rewrites a live page, so it happens when you say so and not before.
+        <form class="card" method="post" action={`/broadcasts/${id}/revise`}>
+          <div class="card-h">
+            <h2>Content</h2>
+            {b.revisedAt ? (
+              <span class="faint">
+                Edited {fmtDate(b.revisedAt)} ·{' '}
+                <a href={`/broadcasts/${id}?as=mailed`}>show as mailed</a>
+              </span>
+            ) : null}
+            <div class="actions">
+              <button class="btn primary">Save changes</button>
+            </div>
+          </div>
+          <div class="card-b">
+            <div class="note">
+              <strong>This already went out, and saving won't send it again.</strong> The change
+              shows up on the web page and here. The copy as it was mailed is kept.
+            </div>
+            <Subject value={b.subject} />
+            <RichEditor json={b.bodyJson} md={b.bodyMd} bare inline footer={broadcastFooter} />
+          </div>
+        </form>
+      ) : (
+        <div class="card">
+          <div class="card-h">
+            <h2>Content</h2>
+            {asMailed ? (
+              <span class="faint">
+                As mailed · <a href={`/broadcasts/${id}`}>back to editing</a>
+              </span>
+            ) : null}
+          </div>
+          <div class="card-b">
+            {asMailed ? (
+              <p class="faint" style="margin:0 0 18px">
+                Subject as mailed: <strong>{b.originalSubject}</strong>
+              </p>
+            ) : null}
+            <MailReader
+              json={shown.json}
+              md={shown.md}
+              fallback={previewHtml(shown.json, shown.md)}
+              footer={broadcastFooter}
+            />
+          </div>
         </div>
-        <div class="card-b">
-          <MailReader
-            json={b.bodyJson}
-            md={b.bodyMd}
-            fallback={previewHtml(b.bodyJson, b.bodyMd)}
-            footer={broadcastFooter}
-          />
-        </div>
-      </div>
+      )}
     </Layout>,
   )
 })
@@ -1009,6 +1062,27 @@ mail.post('/broadcasts/:id/edit', async (c) => {
     )
   }
   return c.redirect(`/broadcasts/${id}?flash=Saved.`)
+})
+
+/**
+ * Correct a sent broadcast. Writes the subject and body and nothing else — see
+ * `reviseSentBroadcast` for why that can never put anything in an inbox.
+ */
+mail.post('/broadcasts/:id/revise', async (c) => {
+  const db = getDb(c.env)
+  const id = Number(c.req.param('id'))
+  const form = await c.req.formData()
+
+  const result = await reviseSentBroadcast(db, id, {
+    subject: String(form.get('subject') ?? '').trim(),
+    ...readEditorBody(form),
+  })
+  if (!result.ok) {
+    return c.redirect(
+      `/broadcasts/${id}?flash=${encodeURIComponent(`Not saved: ${result.reason}.`)}&kind=warn`,
+    )
+  }
+  return c.redirect(`/broadcasts/${id}?flash=${encodeURIComponent('Saved. Nothing was sent.')}`)
 })
 
 mail.post('/broadcasts/:id/send', async (c) => {
