@@ -961,9 +961,14 @@ const NAV: ({ grp: string } | { href: string; key: string; label: string })[] = 
   // an enrollment — effectively undiscoverable.
   { href: '/tags', key: 'tags', label: 'Tags & automation' },
   { href: '/segments', key: 'segs', label: 'Segments' },
-  // ⭐ Analytics sits directly under the audience, before the mail: you read
-  // what happened before you decide what to send next. Five slots rather than
-  // one-with-tabs because each is a different question, and burying four of
+  // ⭐ Mail sits directly under the audience: who is on the list, then what
+  // goes out to them — the two screens used every day, at the top.
+  { grp: 'Mail' },
+  { href: '/broadcasts', key: 'bc', label: 'Broadcasts' },
+  { href: '/sequences', key: 'seq', label: 'Sequences' },
+  { href: '/outbox', key: 'out', label: 'Outbox' },
+  // ⭐ Analytics follows the mail it measures. Six slots rather than
+  // one-with-tabs because each is a different question, and burying five of
   // them behind a tab strip is how a measurement tool goes unread.
   { grp: 'Analytics' },
   { href: '/analytics', key: 'an', label: 'Overview' },
@@ -975,10 +980,6 @@ const NAV: ({ grp: string } | { href: string; key: string; label: string })[] = 
   { href: '/analytics/broadcasts', key: 'anbc', label: 'Broadcasts' },
   { href: '/analytics/contribution', key: 'ancon', label: 'Contribution' },
   { href: '/analytics/health', key: 'anhl', label: 'List health' },
-  { grp: 'Mail' },
-  { href: '/broadcasts', key: 'bc', label: 'Broadcasts' },
-  { href: '/sequences', key: 'seq', label: 'Sequences' },
-  { href: '/outbox', key: 'out', label: 'Outbox' },
   { grp: 'Money' },
   { href: '/campaigns', key: 'camp', label: 'Campaigns' },
   // ⭐ Its own slot rather than a tab under Campaigns: a form is where a lead
