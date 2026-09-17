@@ -1,3 +1,4 @@
+import type { FC } from 'hono/jsx'
 import { Hono } from 'hono'
 import {
   ACCOUNT_URL,
@@ -14,18 +15,141 @@ import {
 import { previewHtml } from '../core/render.ts'
 import { getDb } from '../db/index.ts'
 import type { Env } from '../types.ts'
-import { EditorHint, Flash, Layout, RichEditor, fmtDate, readEditorBody } from './layout.tsx'
+import {
+  ComposeLayout,
+  EditorHint,
+  Flash,
+  Layout,
+  RichEditor,
+  fmtDate,
+  readEditorBody,
+} from './layout.tsx'
 
 /**
  * Purchase mail — the templates, and the deliberate act of sending one.
  *
  * Its own router rather than another thousand lines in `admin-campaigns.tsx`,
  * and mounted after `requireOperator` like every other admin screen.
+ *
+ * A template is written in the same composer a broadcast is written in: the body
+ * is the page, the metadata sits in the right-hand rail. It is the same job —
+ * writing an email — so it is deliberately not a different-shaped form.
  */
 export const purchaseMailAdmin = new Hono<{ Bindings: Env }>()
 
 const back = (msg: string, kind?: string) =>
   `/purchase-mail?flash=${encodeURIComponent(msg)}${kind ? `&kind=${kind}` : ''}`
+
+/** The big subject field at the top of the sheet, as the broadcast composer has it. */
+const Subject: FC<{ value?: string }> = ({ value }) => (
+  <div class="compose-subject">
+    <label class="hide-vis" for="subject">
+      Subject
+    </label>
+    <input
+      class="subj"
+      id="subject"
+      type="text"
+      name="subject"
+      value={value ?? ''}
+      placeholder="Subject line"
+      autocomplete="off"
+      required
+    />
+  </div>
+)
+
+/** The right-hand rail. Identical on new and edit, so the screen doesn't move under you. */
+const Side: FC<{ offerSlug?: string; name?: string; discord?: string | null; active?: boolean }> = ({
+  offerSlug,
+  name,
+  discord,
+  active = true,
+}) => (
+  <>
+    <div class="side-sec">
+      <h3>Offer</h3>
+      <input
+        type="text"
+        name="offerSlug"
+        value={offerSlug ?? ''}
+        placeholder="cohort"
+        required
+        autocomplete="off"
+      />
+      <p class="faint" style="margin:8px 0 0">
+        The sku on the Stripe product (<span class="mono">metadata.sku</span>) — e.g.{' '}
+        <span class="mono">cohort</span>, <span class="mono">yearly</span>. Use{' '}
+        <span class="mono">*</span> for the template that catches everything else.
+      </p>
+    </div>
+
+    <div class="side-sec">
+      <h3>Name</h3>
+      <input
+        type="text"
+        name="name"
+        value={name ?? ''}
+        placeholder="Cohort welcome"
+        required
+        autocomplete="off"
+      />
+      <p class="faint" style="margin:8px 0 0">
+        Yours, for the list. Never shown to a buyer.
+      </p>
+    </div>
+
+    <div class="side-sec">
+      <h3>Placeholders</h3>
+      <p class="faint" style="margin:0">
+        <span class="mono">{'{{first_name}}'}</span>
+        <br />
+        <span class="mono">{'{{offer_name}}'}</span> — what they bought
+        <br />
+        <span class="mono">{'{{account_url}}'}</span> — {ACCOUNT_URL}
+        <br />
+        <span class="mono">{'{{downloads}}'}</span> — their files, empty when none
+        <br />
+        <span class="mono">{'{{discord_url}}'}</span> — the invite below
+      </p>
+      <p class="faint" style="margin:10px 0 0">
+        These work in the subject line too.
+      </p>
+    </div>
+
+    <div class="side-sec">
+      <h3>Discord</h3>
+      <input
+        type="url"
+        name="discordInviteUrl"
+        value={discord ?? ''}
+        placeholder="https://discord.gg/…"
+        autocomplete="off"
+      />
+      <p class="faint" style="margin:8px 0 0">
+        Optional. Leave it blank and <span class="mono">{'{{discord_url}}'}</span> resolves to
+        nothing.
+      </p>
+    </div>
+
+    <div class="side-sec">
+      <h3>Status</h3>
+      <label style="text-transform:none;letter-spacing:0;font-size:13px;color:var(--muted);display:flex;gap:9px;align-items:flex-start;margin:0">
+        <input type="checkbox" name="isActive" value="1" checked={active} style="width:auto;margin-top:3px" />
+        <span>Active</span>
+      </label>
+      <p class="faint" style="margin:10px 0 0">
+        Inactive falls this offer back to the <span class="mono">*</span> template rather than
+        sending nothing.
+      </p>
+    </div>
+
+    <div class="side-sec">
+      <h3>Writing</h3>
+      <EditorHint />
+    </div>
+  </>
+)
 
 // ───────────────────────────────────────────────── the list
 
@@ -35,12 +159,15 @@ purchaseMailAdmin.get('/purchase-mail', async (c) => {
   const hasFallback = rows.some((r) => r.offerSlug === FALLBACK_SLUG && r.isActive)
 
   return c.html(
-    <Layout title="Purchase mail" nav="sales">
+    <Layout title="Purchase mail" nav="pmail">
       <div class="head">
         <div>
           <h1>Purchase mail</h1>
           <div class="sub">What somebody is told after they buy. One template per offer.</div>
         </div>
+        <a class="btn primary" href="/purchase-mail/new">
+          New template
+        </a>
       </div>
 
       <Flash msg={c.req.query('flash')} kind={c.req.query('kind')} />
@@ -56,8 +183,8 @@ purchaseMailAdmin.get('/purchase-mail', async (c) => {
           </div>
           {hasFallback ? null : (
             <div class="note warn" style="margin-top:12px">
-              There's no active <span class="mono">*</span> template. Any sale whose offer has no
-              template of its own can't be sent at all until one exists.
+              There is no active <span class="mono">*</span> template. Any sale whose offer has no
+              template of its own cannot be sent at all until one exists.
             </div>
           )}
         </div>
@@ -72,7 +199,10 @@ purchaseMailAdmin.get('/purchase-mail', async (c) => {
           {rows.length === 0 ? (
             <div class="empty">
               <p>No templates yet.</p>
-              <p class="faint">Start with the fallback, then add one per offer that needs its own voice.</p>
+              <p class="faint">
+                Start with the <span class="mono">*</span> fallback, then add one per offer that
+                needs its own voice.
+              </p>
             </div>
           ) : (
             <table>
@@ -81,7 +211,6 @@ purchaseMailAdmin.get('/purchase-mail', async (c) => {
                   <th>Offer</th>
                   <th>Name</th>
                   <th>Subject</th>
-                  <th>Discord</th>
                   <th>Updated</th>
                 </tr>
               </thead>
@@ -96,7 +225,6 @@ purchaseMailAdmin.get('/purchase-mail', async (c) => {
                     </td>
                     <td>{t.name}</td>
                     <td class="faint">{t.subject}</td>
-                    <td>{t.discordInviteUrl ? 'yes' : <span class="faint">-</span>}</td>
                     <td class="faint">{fmtDate(t.updatedAt ?? t.createdAt)}</td>
                   </tr>
                 ))}
@@ -105,57 +233,64 @@ purchaseMailAdmin.get('/purchase-mail', async (c) => {
           )}
         </div>
       </div>
-
-      <div class="card">
-        <div class="card-h">
-          <h2>New template</h2>
-        </div>
-        <div class="card-b">
-          <form method="post" action="/purchase-mail">
-            <div class="row">
-              <div class="field">
-                <label>Offer sku</label>
-                <input type="text" name="offerSlug" placeholder="cohort" required />
-              </div>
-              <div class="field">
-                <label>Name</label>
-                <input type="text" name="name" placeholder="Cohort welcome" required />
-              </div>
-            </div>
-            <div class="field">
-              <label>Subject</label>
-              <input type="text" name="subject" placeholder="You're in" required />
-            </div>
-            <button class="btn primary">Create</button>
-          </form>
-          <p class="faint" style="margin:14px 0 0">
-            The sku is the one on the Stripe product (<span class="mono">metadata.sku</span>) —{' '}
-            <span class="mono">cohort</span>, <span class="mono">yearly</span>,{' '}
-            <span class="mono">imposter-second</span>. Use <span class="mono">*</span> for the
-            template that catches everything else.
-          </p>
-        </div>
-      </div>
     </Layout>,
   )
 })
 
+// ───────────────────────────────────────────────── new
+
+purchaseMailAdmin.get('/purchase-mail/new', (c) =>
+  c.html(
+    <ComposeLayout
+      title="New purchase mail"
+      nav="pmail"
+      action="/purchase-mail"
+      back="/purchase-mail"
+      backLabel="Back to purchase mail"
+      heading="New purchase mail"
+      sub={<>nothing is sent until you press the button on a sale</>}
+      actions={<button class="btn primary">Save</button>}
+      side={<Side />}
+      foot={
+        <>
+          <FootNote msg={c.req.query('flash')} kind={c.req.query('kind')} />
+          <button class="btn primary">Save</button>
+        </>
+      }
+    >
+      <Subject />
+      <RichEditor bare />
+    </ComposeLayout>,
+  ),
+)
+
+const FootNote = ({ msg, kind }: { msg?: string; kind?: string }) =>
+  msg ? <span class={kind === 'warn' ? 'foot-warn' : 'faint'}>{msg}</span> : null
+
 purchaseMailAdmin.post('/purchase-mail', async (c) => {
   const db = getDb(c.env)
   const form = await c.req.formData()
+  const { bodyJson, bodyMd } = readEditorBody(form)
 
   const id = await createTemplate(db, {
     offerSlug: String(form.get('offerSlug') ?? ''),
     name: String(form.get('name') ?? ''),
     subject: String(form.get('subject') ?? ''),
+    bodyJson,
+    bodyMd,
+    discordInviteUrl: String(form.get('discordInviteUrl') ?? ''),
+    isActive: form.get('isActive') === '1',
   })
 
   if (!id) {
     return c.redirect(
-      back('That didn’t save. Either a field was empty, or that offer already has a template.', 'warn'),
+      back(
+        'That did not save. Either the offer, name or subject was empty, or that offer already has a template.',
+        'warn',
+      ),
     )
   }
-  return c.redirect(`/purchase-mail/${id}?flash=${encodeURIComponent('Created. Now write it.')}`)
+  return c.redirect(`/purchase-mail/${id}?flash=${encodeURIComponent('Saved.')}`)
 })
 
 // ───────────────────────────────────────────────── one template
@@ -167,126 +302,47 @@ purchaseMailAdmin.get('/purchase-mail/:id', async (c) => {
   if (!t) return c.notFound()
 
   return c.html(
-    <Layout title={t.name} nav="sales">
-      <div class="head">
-        <div>
-          <h1>{t.name}</h1>
-          <div class="sub">
-            <span class="mono">{t.offerSlug === FALLBACK_SLUG ? '* (fallback)' : t.offerSlug}</span>
-          </div>
-        </div>
-        <a class="btn" href="/purchase-mail">
-          All templates
-        </a>
-      </div>
-
-      <Flash msg={c.req.query('flash')} kind={c.req.query('kind')} />
-
-      <div class="card">
-        <div class="card-h">
-          <h2>The mail</h2>
-        </div>
-        <div class="card-b">
-          <form method="post" action={`/purchase-mail/${id}`}>
-            <div class="row">
-              <div class="field">
-                <label>Offer sku</label>
-                <input type="text" name="offerSlug" value={t.offerSlug} required />
-              </div>
-              <div class="field">
-                <label>Name</label>
-                <input type="text" name="name" value={t.name} required />
-              </div>
-            </div>
-
-            <div class="field">
-              <label>Subject</label>
-              <input type="text" name="subject" value={t.subject} required />
-            </div>
-
-            <div class="field">
-              <label>Discord invite</label>
-              <input
-                type="url"
-                name="discordInviteUrl"
-                value={t.discordInviteUrl ?? ''}
-                placeholder="https://discord.gg/..."
-              />
-              <p class="faint" style="margin:8px 0 0">
-                Merged as <span class="mono">{'{{discord_url}}'}</span>. Make it an invite that
-                grants the right role on join, and the role rule is this field.
-              </p>
-            </div>
-
-            <div class="field">
-              <label>Body</label>
-              <RichEditor bare inline json={t.bodyJson} md={t.bodyMd ?? ''} />
-              <EditorHint />
-            </div>
-
-            <div class="field">
-              <label>
-                <input type="checkbox" name="isActive" value="1" checked={t.isActive} /> Active
-              </label>
-              <p class="faint" style="margin:8px 0 0">
-                Inactive falls this offer back to the <span class="mono">*</span> template rather
-                than sending nothing.
-              </p>
-            </div>
-
-            <button class="btn primary">Save</button>
-          </form>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="card-h">
-          <h2>Placeholders</h2>
-        </div>
-        <div class="card-b">
-          <table>
-            <tbody>
-              <tr>
-                <td class="mono">{'{{first_name}}'}</td>
-                <td class="faint">Their first name, or "there".</td>
-              </tr>
-              <tr>
-                <td class="mono">{'{{offer_name}}'}</td>
-                <td class="faint">What they bought, named as Stripe names it.</td>
-              </tr>
-              <tr>
-                <td class="mono">{'{{account_url}}'}</td>
-                <td class="faint">
-                  <span class="mono">{ACCOUNT_URL}</span>
-                </td>
-              </tr>
-              <tr>
-                <td class="mono">{'{{downloads}}'}</td>
-                <td class="faint">
-                  The files this purchase grants. Empty when it grants none, so it's safe to leave
-                  in a shared template.
-                </td>
-              </tr>
-              <tr>
-                <td class="mono">{'{{discord_url}}'}</td>
-                <td class="faint">The invite above. Empty when there isn't one.</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="card-b">
-          <form method="post" action={`/purchase-mail/${id}/delete`}>
-            <button class="btn danger sm">Delete template</button>
-          </form>
-          <p class="faint" style="margin:10px 0 0">
-            Mail already sent from it is unaffected — every body is snapshotted onto its message.
-          </p>
-        </div>
-      </div>
-    </Layout>,
+    <ComposeLayout
+      title={t.name}
+      nav="pmail"
+      action={`/purchase-mail/${id}`}
+      recordId={id}
+      back="/purchase-mail"
+      backLabel="Back to purchase mail"
+      heading={t.name || 'Untitled'}
+      sub={
+        <>
+          <span class="mono">
+            {t.offerSlug === FALLBACK_SLUG ? '* (fallback)' : t.offerSlug}
+          </span>
+          {t.isActive ? null : ' · inactive'}
+        </>
+      }
+      actions={<button class="btn primary">Save</button>}
+      side={
+        <Side
+          offerSlug={t.offerSlug}
+          name={t.name}
+          discord={t.discordInviteUrl}
+          active={t.isActive}
+        />
+      }
+      foot={
+        <>
+          <FootNote msg={c.req.query('flash')} kind={c.req.query('kind')} />
+          <button class="btn danger sm" form="delete-template">
+            Delete
+          </button>
+          <button class="btn primary">Save</button>
+        </>
+      }
+      // Deleting posts somewhere else, so it is its own form reached by id —
+      // forms cannot nest.
+      extra={<form id="delete-template" method="post" action={`/purchase-mail/${id}/delete`} hidden />}
+    >
+      <Subject value={t.subject} />
+      <RichEditor bare json={t.bodyJson} md={t.bodyMd ?? ''} />
+    </ComposeLayout>,
   )
 })
 
@@ -370,9 +426,11 @@ purchaseMailAdmin.get('/sales/:id/thanks', async (c) => {
                         {planned.plan.template.name}
                       </a>{' '}
                       <span class="faint mono">
-                        ({planned.plan.matchedSlug === FALLBACK_SLUG
+                        (
+                        {planned.plan.matchedSlug === FALLBACK_SLUG
                           ? 'fallback'
-                          : planned.plan.matchedSlug})
+                          : planned.plan.matchedSlug}
+                        )
                       </span>
                     </td>
                   </tr>
@@ -385,8 +443,7 @@ purchaseMailAdmin.get('/sales/:id/thanks', async (c) => {
                     <td>
                       {items.map((i) => (
                         <div>
-                          {i.title}{' '}
-                          <span class="faint mono">{i.sku ?? 'no sku'}</span>
+                          {i.title} <span class="faint mono">{i.sku ?? 'no sku'}</span>
                           {i.file ? <span class="faint"> · has a download</span> : null}
                         </div>
                       ))}

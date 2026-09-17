@@ -986,6 +986,9 @@ const NAV: ({ grp: string } | { href: string; key: string; label: string })[] = 
   // magnet is built and where the file lives, and it was unfindable one level in.
   { href: '/forms', key: 'forms', label: 'Forms' },
   { href: '/sales', key: 'sales', label: 'Sales' },
+  // Directly under Sales, because that is where it is used from: a sale is the
+  // thing you press the button on, and this is what the button says.
+  { href: '/purchase-mail', key: 'pmail', label: 'Purchase mail' },
   // ⭐ Target first, then the events measured against it, then the catalogue
   // they were sold from: the funnel reads top to bottom in the rail too.
   { href: '/goals', key: 'goals', label: 'Goals' },
