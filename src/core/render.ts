@@ -1,5 +1,5 @@
 import { marked } from 'marked'
-import type { DocNode } from '../db/schema.ts'
+import type { DocNode, MergeExtra, MergeExtras } from '../db/schema.ts'
 import { type Scope, formatScope } from './consent.ts'
 import { shareOnXUrl } from './posts.ts'
 import { escapeHtml, mergeFields } from './text.ts'
@@ -34,11 +34,42 @@ export interface RenderContext {
    */
   postUrl?: string | null
   /**
-   * Per-message merge values the subscriber row can't supply — today `{{link}}`,
-   * a lead magnet's download URL, which is one person's grant token and so
-   * cannot be baked into the body the operator wrote.
+   * Per-message merge values the subscriber row can't supply — a lead magnet's
+   * download URL, a buyer's offer name and download links — which are one
+   * person's and so cannot be baked into the body the operator wrote.
+   *
+   * A value may be one string for both surfaces, or a `{ html, text }` pair when
+   * they differ (a list of links being the case that forces it). See
+   * `MergeExtras` in the schema.
    */
-  extras?: Record<string, string>
+  extras?: MergeExtras
+}
+
+/** The HTML form of a merge extra. */
+function extraHtml(value: MergeExtra): string {
+  return typeof value === 'string' ? value : value.html
+}
+
+/** The plaintext form of a merge extra. */
+function extraText(value: MergeExtra): string {
+  return typeof value === 'string' ? value : value.text
+}
+
+/**
+ * Collapse extras down to one surface's strings.
+ *
+ * Done here rather than by widening `mergeFields` and `mergeFieldValue`, because
+ * those two are surface-blind by design — `mergeFields` is also the neutralizer
+ * the *web* renderer uses, and giving it an opinion about HTML would be how an
+ * email-shaped value ends up on a public page.
+ */
+function flattenExtras(
+  extras: MergeExtras | undefined,
+  surface: 'html' | 'text',
+): Record<string, string> | undefined {
+  if (!extras) return undefined
+  const pick = surface === 'html' ? extraHtml : extraText
+  return Object.fromEntries(Object.entries(extras).map(([k, v]) => [k, pick(v)]))
 }
 
 export interface RenderedEmail {
@@ -83,21 +114,29 @@ export function renderEmail(body: EmailBody, ctx: RenderContext): RenderedEmail 
     return `${ctx.publicUrl}/t/click/${ctx.messageId}?u=${encodeURIComponent(url)}`
   }
 
-  const mergeValue = (field: string): string => mergeFieldValue(field, ctx.subscriber, ctx.extras)
+  // Two flattenings, because a `{{downloads}}` list is markup in one surface and
+  // a numbered list in the other. The walker resolves merge-tag *nodes* during
+  // the walk, so it has to be handed the right surface up front — the second
+  // pass further down only catches literal `{{…}}` text that survived.
+  const htmlExtras = flattenExtras(ctx.extras, 'html')
+  const textExtras = flattenExtras(ctx.extras, 'text')
+  const htmlMergeValue = (field: string): string =>
+    mergeFieldValue(field, ctx.subscriber, htmlExtras)
+  const textMergeValue = (field: string): string =>
+    mergeFieldValue(field, ctx.subscriber, textExtras)
 
   let inner: string
   let plain: string
 
   if (body.json && !docIsEmpty(body.json)) {
-    const o = { trackLink, mergeValue }
-    inner = renderDocToEmailHtml(body.json, o)
-    plain = renderDocToText(body.json, o)
+    inner = renderDocToEmailHtml(body.json, { trackLink, mergeValue: htmlMergeValue })
+    plain = renderDocToText(body.json, { trackLink, mergeValue: textMergeValue })
   } else {
     // Legacy markdown path.
-    const merged = mergeFields(body.md, ctx.subscriber, ctx.extras)
-    inner = marked.parse(merged, { async: false }) as string
+    const mergedHtml = mergeFields(body.md, ctx.subscriber, htmlExtras)
+    inner = marked.parse(mergedHtml, { async: false }) as string
     if (ctx.trackClicks) inner = rewriteLinks(inner, ctx)
-    plain = stripMd(merged)
+    plain = stripMd(mergeFields(body.md, ctx.subscriber, textExtras))
   }
 
   const pixel = ctx.trackOpens
@@ -110,13 +149,18 @@ export function renderEmail(body: EmailBody, ctx: RenderContext): RenderedEmail 
   // put the token wherever it reads best without learning which places work.
   for (const [field, value] of Object.entries(ctx.extras ?? {})) {
     const token = `{{${field}}}`
-    inner = inner.replaceAll(token, value)
-    plain = plain.replaceAll(token, value)
+    const html = extraHtml(value)
+    const text = extraText(value)
+    inner = inner.replaceAll(token, html)
+    plain = plain.replaceAll(token, text)
     // A link href goes through `trackLink` first, which percent-encodes the whole
     // target into `?u=` — so by the time we get here the braces are `%7B%7B…`.
     // Substituting that form too is what makes a click-tracked download button work.
+    // Only the plain form is ever a usable href, so a `{ html, text }` pair is
+    // skipped here: a list of links is not a link target, and encoding its markup
+    // into a `?u=` parameter would produce a tracking URL that redirects nowhere.
     const wrapped = encodeURIComponent(token)
-    if (wrapped !== token) {
+    if (wrapped !== token && typeof value === 'string') {
       inner = inner.replaceAll(wrapped, encodeURIComponent(value))
       plain = plain.replaceAll(wrapped, encodeURIComponent(value))
     }

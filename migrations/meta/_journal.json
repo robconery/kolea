@@ -141,6 +141,13 @@
       "when": 1789611128690,
       "tag": "0019_elite_kronos",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1789676150363,
+      "tag": "0020_next_argent",
+      "breakpoints": true
     }
   ]
 }

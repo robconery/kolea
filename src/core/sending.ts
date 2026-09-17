@@ -300,6 +300,17 @@ export async function sendMessages(
     const grantToken =
       msg.kind === 'form' && msg.formId ? grants.get(`${msg.formId}:${msg.subscriberId}`) : undefined
 
+    // Two sources, and they never overlap. `msg.extras` was frozen onto the row
+    // when the message was queued (purchase mail); `{{link}}` is looked up live
+    // because a grant token never expires and the lookup is already batched.
+    const extras =
+      msg.extras || grantToken
+        ? {
+            ...(msg.extras ?? {}),
+            ...(grantToken ? { link: downloadUrl(env.PUBLIC_URL, grantToken) } : {}),
+          }
+        : undefined
+
     const rendered = renderEmail(resolved.body, {
       publicUrl: env.PUBLIC_URL,
       messageId: msg.id,
@@ -312,9 +323,9 @@ export async function sendMessages(
       trackOpens: isMarketing,
       trackClicks: isMarketing,
       showFooter: isMarketing,
-      // `{{link}}` is this one reader's download URL, which is why it cannot be
-      // written into the body the operator authored.
-      extras: grantToken ? { link: downloadUrl(env.PUBLIC_URL, grantToken) } : undefined,
+      // Values this one reader's copy needs and the authored body cannot carry —
+      // their download URL, the offer they just bought, their Discord invite.
+      extras,
     })
 
     pending.push({

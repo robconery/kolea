@@ -2,9 +2,20 @@ import type { McpServer } from '@modelcontextprotocol/server'
 import { desc, eq, isNull } from 'drizzle-orm'
 import * as z from 'zod/v4'
 import { getCampaign, getCampaignBySlug, touchesFor } from '../../core/campaigns.ts'
+import {
+  FALLBACK_SLUG,
+  createTemplate,
+  getTemplateBySlug,
+  listTemplates,
+  planPurchaseMail,
+  purchasedItems,
+  sendPurchaseMail,
+  updateTemplate,
+} from '../../core/purchase-mail.ts'
 import { listSales, recordSale, revenueTotals } from '../../core/sales.ts'
 import { campaigns, sales, subscribers } from '../../db/schema.ts'
 import { type Ctx, clampLimit, defineTool, fail, money, ok } from '../kit.ts'
+import { SEND_DISABLED, sendingAllowed } from '../preflight.ts'
 
 export function registerSales(server: McpServer, ctx: Ctx): void {
   defineTool(
@@ -282,6 +293,135 @@ export function registerSales(server: McpServer, ctx: Ctx): void {
           .sort((a, b) => b.cents - a.cents)
           .map((t) => ({ ...t, total: money(t.cents, t.currency) })),
       )
+    },
+  )
+
+  // ─────────────────────────────────────────── purchase mail
+
+  defineTool(
+    server,
+    ctx,
+    'purchase_template_list',
+    {
+      description:
+        'The post-purchase email templates, one per offer sku. The template with slug "*" is the fallback used when a sale’s offer has none of its own.',
+      inputSchema: z.object({}),
+      annotations: { readOnlyHint: true },
+    },
+    async () => {
+      const rows = await listTemplates(ctx.db)
+      return ok(
+        rows.map((t) => ({
+          id: t.id,
+          offerSlug: t.offerSlug,
+          isFallback: t.offerSlug === FALLBACK_SLUG,
+          name: t.name,
+          subject: t.subject,
+          hasBody: Boolean(t.bodyJson) || Boolean(t.bodyMd?.trim()),
+          discordInviteUrl: t.discordInviteUrl,
+          isActive: t.isActive,
+          updatedAt: t.updatedAt ?? t.createdAt,
+        })),
+      )
+    },
+  )
+
+  defineTool(
+    server,
+    ctx,
+    'purchase_template_upsert',
+    {
+      description:
+        'Create or update the post-purchase template for one offer sku. The sku is the one on the Stripe product (metadata.sku) — "cohort", "yearly", "imposter-second" — or "*" for the fallback. Body is markdown. Placeholders: {{first_name}}, {{offer_name}}, {{account_url}}, {{downloads}}, {{discord_url}}. This only writes the template; it never sends anything.',
+      inputSchema: z.object({
+        offer_slug: z.string(),
+        name: z.string(),
+        subject: z.string(),
+        body_md: z.string().optional(),
+        discord_invite_url: z.string().nullable().optional(),
+        is_active: z.boolean().optional(),
+      }),
+      annotations: { idempotentHint: true },
+    },
+    async (input) => {
+      const existing = await getTemplateBySlug(ctx.db, input.offer_slug.trim().toLowerCase())
+
+      if (existing) {
+        await updateTemplate(ctx.db, existing.id, {
+          name: input.name,
+          subject: input.subject,
+          // Only overwrite the body when one was supplied, so a metadata-only
+          // update cannot silently blank what the operator wrote in the editor.
+          ...(input.body_md === undefined ? {} : { bodyMd: input.body_md, bodyJson: null }),
+          discordInviteUrl: input.discord_invite_url,
+          isActive: input.is_active,
+        })
+        return ok({ id: existing.id, offerSlug: existing.offerSlug, created: false })
+      }
+
+      const id = await createTemplate(ctx.db, {
+        offerSlug: input.offer_slug,
+        name: input.name,
+        subject: input.subject,
+        bodyMd: input.body_md ?? null,
+        discordInviteUrl: input.discord_invite_url ?? null,
+        isActive: input.is_active,
+      })
+      if (!id) return fail('Could not create that template. Offer slug, name and subject are all required.')
+      return ok({ id, offerSlug: input.offer_slug, created: true })
+    },
+  )
+
+  defineTool(
+    server,
+    ctx,
+    'purchase_mail_preview',
+    {
+      description:
+        'What the post-purchase email for a sale would say, without sending it. Shows which template matched, what the buyer bought, the resolved merge values, and whether this sale was already thanked. Always run this before purchase_mail_send.',
+      inputSchema: z.object({ sale_id: z.number().int() }),
+      annotations: { readOnlyHint: true },
+    },
+    async ({ sale_id }) => {
+      const planned = await planPurchaseMail(ctx.db, sale_id)
+      if (!planned.ok) return fail(planned.reason)
+      const items = await purchasedItems(ctx.db, sale_id)
+
+      return ok({
+        saleId: sale_id,
+        to: planned.plan.to,
+        subject: planned.plan.subject,
+        template: { id: planned.plan.template.id, name: planned.plan.template.name },
+        matchedSlug: planned.plan.matchedSlug,
+        usedFallback: planned.plan.matchedSlug === FALLBACK_SLUG,
+        bought: items,
+        extras: planned.plan.extras,
+        alreadySentMessageId: planned.plan.alreadySentMessageId,
+      })
+    },
+  )
+
+  defineTool(
+    server,
+    ctx,
+    'purchase_mail_send',
+    {
+      description:
+        'Send the post-purchase email for one sale. A real send to a real buyer. Idempotent per sale — refuses a second send unless resend is true. Transactional: no unsubscribe footer, no tracking, and only a hard bounce or spam complaint can stop it.',
+      inputSchema: z.object({
+        sale_id: z.number().int(),
+        resend: z
+          .boolean()
+          .optional()
+          .describe('Send again even though this sale was already thanked. Deliberate, never a default.'),
+      }),
+      annotations: { destructiveHint: true },
+    },
+    async ({ sale_id, resend }) => {
+      if (!sendingAllowed(ctx.env)) return fail(SEND_DISABLED)
+      const result = await sendPurchaseMail(ctx.env, ctx.db, sale_id, { resend })
+      if (!result.ok) return fail(result.reason)
+      return ok({ messageId: result.messageId, to: result.to, status: 'queued' })
     },
   )
 }

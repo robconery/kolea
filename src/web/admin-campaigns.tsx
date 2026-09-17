@@ -1356,6 +1356,7 @@ campaignsAdmin.get('/sales', async (c) => {
                   <th>Campaign</th>
                   <th class="num">Amount</th>
                   <th>When</th>
+                  <th />
                 </tr>
               </thead>
               <tbody>
@@ -1378,6 +1379,13 @@ campaignsAdmin.get('/sales', async (c) => {
                       {sale.status === 'refunded' ? <div class="faint">refunded</div> : null}
                     </td>
                     <td class="faint">{fmtDate(sale.occurredAt)}</td>
+                    <td>
+                      {sale.status === 'paid' ? (
+                        <a class="btn sm" href={`/sales/${sale.id}/thanks`}>
+                          Thank-you
+                        </a>
+                      ) : null}
+                    </td>
                   </tr>
                 ))}
               </tbody>

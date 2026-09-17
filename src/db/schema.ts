@@ -21,6 +21,18 @@ export interface DocNode {
   text?: string
 }
 
+/**
+ * Per-message merge values, resolved at queue time (see `messages.extras`).
+ *
+ * A value is either one string used on both surfaces, or a `{ html, text }` pair
+ * when the two genuinely differ. A list of download links is the case that
+ * forces the pair: `<ul><li><a…` is right in the HTML part and unreadable in the
+ * plaintext one, and substituting the same string into both is how transactional
+ * mail ends up showing markup to anyone reading in plaintext.
+ */
+export type MergeExtra = string | { html: string; text: string }
+export type MergeExtras = Record<string, MergeExtra>
+
 // ─────────────────────────────────────────────────────────── subscribers
 
 export const subscribers = sqliteTable(
@@ -787,6 +799,56 @@ export const purchaseStats = sqliteTable(
 
 // ─────────────────────────────────────────────────────────── sending
 
+/**
+ * ⭐ What somebody is told after they buy — one template per offer.
+ *
+ * Keyed by `offer_slug`, which is the **sku on the Stripe product**
+ * (`stripe_products.metadata.sku`), not `offers.id`. That is the only key the
+ * two catalogs already agree on: a sale arrives as line items carrying a Stripe
+ * product, and the sku is what maps it to the thing Rob sells. Keying on
+ * `offers.id` would mean a join through a mirror that is allowed to disagree
+ * (see the `offers` vs `stripe_products` note above).
+ *
+ * The fallback template is the literal slug `'*'` rather than a NULL, so a plain
+ * UNIQUE index enforces "exactly one default". SQLite treats NULLs as *distinct*
+ * in a unique index, so a nullable column would happily accept five defaults and
+ * pick one at random — the same trap `attributions.source_id` documents.
+ *
+ * This is deliberately shaped like a form's delivery reply, not like a sequence
+ * step: it goes out on a deliberate act under the transactional consent rule,
+ * with the body snapshotted onto the message so editing the template afterwards
+ * cannot rewrite what already went out (invariant 9).
+ *
+ * `discord_invite_url` is the whole "role rule" for now. A Discord invite can be
+ * configured to grant a role on join, so one invite per offer expresses the
+ * mapping without a second table. When roles need to outgrow that, they get
+ * their own table — not a JSON blob here.
+ */
+export const purchaseTemplates = sqliteTable(
+  'purchase_templates',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    /** A `stripe_products.metadata.sku`, or `'*'` for the fallback. */
+    offerSlug: text('offer_slug').notNull(),
+    /** What the operator calls this template. Never shown to a buyer. */
+    name: text('name').notNull(),
+    subject: text('subject').notNull(),
+    bodyJson: text('body_json', { mode: 'json' }).$type<DocNode | null>(),
+    bodyMd: text('body_md'),
+    /** Merged as `{{discord_url}}`. Null means this offer has no Discord. */
+    discordInviteUrl: text('discord_invite_url'),
+    /**
+     * Off switch. An inactive template is never selected — and because selection
+     * falls back to `'*'`, deactivating one quietly reverts that offer to the
+     * generic mail rather than sending nothing.
+     */
+    isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
+    createdAt: ts('created_at').notNull(),
+    updatedAt: ts('updated_at'),
+  },
+  (t) => [uniqueIndex('purchase_templates_offer_slug_key').on(t.offerSlug)],
+)
+
 export const messages = sqliteTable(
   'messages',
   {
@@ -804,6 +866,10 @@ export const messages = sqliteTable(
     // mail it already sent. Only used to find the recipient's download grant at
     // render time — the body itself is snapshotted below.
     formId: integer('form_id').references(() => forms.id, { onDelete: 'set null' }),
+    // `set null`, not cascade: deleting a sale must not erase the record of the
+    // mail it caused. Set on purchase mail so "did I already thank them for this
+    // order?" is one indexed lookup rather than a guess at a time window.
+    saleId: integer('sale_id').references(() => sales.id, { onDelete: 'set null' }),
     toEmail: text('to_email').notNull(),
     subject: text('subject').notNull(),
     // Transactional and form-delivery mail only — broadcast and sequence bodies
@@ -813,6 +879,21 @@ export const messages = sqliteTable(
     // time and what went out stays what went out (invariant 9).
     bodyMd: text('body_md'),
     bodyJson: text('body_json', { mode: 'json' }).$type<DocNode | null>(),
+    /**
+     * Per-message merge values the body cannot carry, resolved when the message
+     * was queued and frozen here — `{{offer_name}}`, `{{downloads}}`,
+     * `{{discord_url}}` and friends.
+     *
+     * Stored rather than recomputed at send time for two reasons. It is the only
+     * record of what a buyer was actually handed (invariant 7: a download link
+     * that expired is still a question somebody asks next quarter), and
+     * recomputing would let an edit to the catalog silently change what a sent
+     * mail claims to contain (invariant 9).
+     *
+     * Not to be confused with a form's `{{link}}`, which stays a live lookup
+     * against `download_grants` because that token never expires.
+     */
+    extras: text('extras', { mode: 'json' }).$type<MergeExtras | null>(),
     status: text('status', { enum: ['queued', 'sent', 'failed', 'suppressed'] })
       .notNull()
       .default('queued'),
@@ -828,6 +909,8 @@ export const messages = sqliteTable(
   (t) => [
     index('messages_broadcast_idx').on(t.broadcastId),
     index('messages_subscriber_idx').on(t.subscriberId),
+    // "Has this sale already been thanked?" — asked before every purchase send.
+    index('messages_sale_idx').on(t.saleId),
     index('messages_status_idx').on(t.status),
     uniqueIndex('messages_idempotency_key')
       .on(t.idempotencyKey)
