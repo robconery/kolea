@@ -541,6 +541,35 @@ export const forms = sqliteTable(
 )
 
 /**
+ * How often a form was *shown*, one row per form per UTC day.
+ *
+ * A counter rather than a row per view, deliberately. The view pixel sits on
+ * every page a form is embedded in, so a row per render would make this the
+ * busiest table in the database for the least interesting fact in it — and D1
+ * writes are single-threaded. Nobody needs to know which second a form was
+ * rendered; they need views over submits, by day.
+ *
+ * `day` is `YYYY-MM-DD` text rather than an epoch so the upsert key is exact and
+ * the charts group without date arithmetic. Cascade, because views of a form
+ * that no longer exists answer no question.
+ *
+ * Starts at zero on the day the pixel shipped. Submits predate it, so any rate
+ * must count submits only from a form's first recorded view (see
+ * `formViewStats`), or every old form reads as converting at 400%.
+ */
+export const formViews = sqliteTable(
+  'form_views',
+  {
+    formId: integer('form_id')
+      .notNull()
+      .references(() => forms.id, { onDelete: 'cascade' }),
+    day: text('day').notNull(),
+    views: integer('views').notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.formId, t.day] })],
+)
+
+/**
  * One person's link to one form's file: `/d/:token`.
  *
  * Per-person rather than one shared URL, because "who actually opened the
@@ -827,6 +856,9 @@ export const events = sqliteTable(
   },
   (t) => [
     index('events_message_type_idx').on(t.messageId, t.type),
+    // The activity pulse: "what got opened this week". Without it every
+    // windowed engagement query walks the whole table, which grows ~20k a month.
+    index('events_occurred_idx').on(t.occurredAt),
     uniqueIndex('events_dedupe_key').on(t.dedupeKey).where(sql`dedupe_key is not null`),
   ],
 )

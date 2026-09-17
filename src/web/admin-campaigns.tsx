@@ -16,6 +16,7 @@ import {
   createForm,
   deleteForm,
   formDeliveryCount,
+  formViewStats,
   formTagList,
   getForm,
   listForms,
@@ -394,14 +395,15 @@ campaignsAdmin.post('/campaigns/:id/delete', async (c) => {
 
 campaignsAdmin.get('/forms', async (c) => {
   const db = getDb(c.env)
-  const rows = await listForms(db)
+  const [rows, viewStats] = await Promise.all([listForms(db), formViewStats(db, 30)])
+  const viewsById = new Map(viewStats.map((v) => [v.id, v]))
 
   return c.html(
     <Layout title="Forms" nav="forms">
       <div class="head">
         <div>
           <h1>Forms</h1>
-          <div class="sub">A named POST endpoint. No embed script, no hosted landing page.</div>
+          <div class="sub">A named POST endpoint. No embed script, no hosted landing page. A pixel counts views.</div>
         </div>
         <div class="actions">
           <a class="btn primary" href="/forms/new">
@@ -429,6 +431,7 @@ campaignsAdmin.get('/forms', async (c) => {
                   <th>Starts</th>
                   <th>Sends back</th>
                   <th>Campaign</th>
+                  <th class="num">Views, 30d</th>
                   <th class="num">Submits</th>
                 </tr>
               </thead>
@@ -467,6 +470,14 @@ campaignsAdmin.get('/forms', async (c) => {
                       )}
                     </td>
                     <td>{campaignName ?? <span class="faint">-</span>}</td>
+                    <td class="num">
+                      {viewsById.get(form.id)?.views ?? 0}
+                      <div class="faint">
+                        {viewsById.get(form.id)?.rate != null
+                          ? `${((viewsById.get(form.id)?.rate ?? 0) * 100).toFixed(1)}% submit`
+                          : '-'}
+                      </div>
+                    </td>
                     <td class="num">
                       {form.submitCount}
                       <div class="faint">{fmtDate(form.lastSubmittedAt)}</div>
@@ -855,13 +866,15 @@ campaignsAdmin.get('/forms/:id', async (c) => {
   const form = await getForm(db, id)
   if (!form) return c.notFound()
 
-  const [seqs, allCampaigns, theirTags, stats, replied] = await Promise.all([
+  const [seqs, allCampaigns, theirTags, stats, replied, viewStats] = await Promise.all([
     db.select().from(sequences).orderBy(asc(sequences.name)).all(),
     listCampaigns(db),
     formTagList(db, id),
     fileStats(db, id),
     formDeliveryCount(db, id),
+    formViewStats(db, 30),
   ])
+  const seen = viewStats.find((v) => v.id === id)
 
   const endpoint = `${c.env.PUBLIC_URL}/f/${form.slug}`
   const seq = seqs.find((s) => s.id === form.sequenceId)
@@ -874,9 +887,15 @@ campaignsAdmin.get('/forms/:id', async (c) => {
     <input type="text" name="${TRAP_FIELD}" tabindex="-1" autocomplete="off">
   </div>
   <button type="submit">Subscribe</button>
+  <!-- counts views; the form works without it -->
+  <img src="${endpoint}/v.gif" alt="" width="1" height="1" style="position:absolute;left:-9999px">
 </form>`
 
-  const js = `await fetch('${endpoint}', {
+  const js = `// when the form is shown — counts a view
+new Image().src = '${endpoint}/v.gif'
+
+// when it's submitted
+await fetch('${endpoint}', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ email, name })
@@ -945,6 +964,15 @@ campaignsAdmin.get('/forms/:id', async (c) => {
               <div class="l">Submissions</div>
             </div>
             <div class="stat">
+              <div class="n">{seen?.views ?? 0}</div>
+              <div class="l">Views, 30 days</div>
+              <div class="h">
+                {seen?.rate != null
+                  ? `${(seen.rate * 100).toFixed(1)}% submitted`
+                  : 'needs the pixel in the snippet'}
+              </div>
+            </div>
+            <div class="stat">
               <div class="n" style="font-size:15px;padding-top:6px">
                 {fmtDate(form.lastSubmittedAt)}
               </div>
@@ -976,7 +1004,8 @@ campaignsAdmin.get('/forms/:id', async (c) => {
         </div>
         <div class="card-b">
           <p class="muted">
-            Plain HTML, no JavaScript, no library. It works from a static site, a Ghost theme, or
+            Plain HTML, no JavaScript, no library. The image at the bottom counts how often the
+            form is shown; leave it out and the form still works, it just reads as zero views. It works from a static site, a Ghost theme, or
             anywhere else you can put a <span class="mono">&lt;form&gt;</span>.
           </p>
           <pre class="mono code">

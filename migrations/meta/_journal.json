@@ -134,6 +134,13 @@
       "when": 1789585991752,
       "tag": "0018_married_captain_cross",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1789611128690,
+      "tag": "0019_elite_kronos",
+      "breakpoints": true
     }
   ]
 }

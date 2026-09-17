@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { getFormBySlug, submitForm } from '../core/forms.ts'
+import { getFormBySlug, recordFormView, submitForm } from '../core/forms.ts'
 import { getDb } from '../db/index.ts'
 import type { Env } from '../types.ts'
 import { PublicLayout } from '../web/layout.tsx'
@@ -27,6 +27,29 @@ const CORS = {
 
 formsApi.options('/f/:slug', (c) => c.body(null, 204, CORS))
 
+/** A transparent 1×1 GIF. */
+const PIXEL = Uint8Array.from(
+  atob('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'),
+  (ch) => ch.charCodeAt(0),
+)
+
+/**
+ * The view counter: a pixel inside the embed snippet.
+ *
+ * An image rather than a script, so the snippet stays what it has always been —
+ * plain HTML that works with JavaScript off. Every render of the page fetches
+ * it, which is exactly the "the form was shown" event. `no-store` so a browser
+ * or CDN cache doesn't swallow the second visit.
+ */
+formsApi.get('/f/:slug/v.gif', async (c) => {
+  await recordFormView(getDb(c.env), c.req.param('slug'), c.req.header('User-Agent') ?? '')
+  return c.body(PIXEL as unknown as ArrayBuffer, 200, {
+    'Content-Type': 'image/gif',
+    'Cache-Control': 'no-store, max-age=0',
+    'Access-Control-Allow-Origin': '*',
+  })
+})
+
 /**
  * A bare fallback page, so a form slug is something you can open and test in a
  * browser before wiring it into your own site's markup.
@@ -35,6 +58,7 @@ formsApi.get('/f/:slug', async (c) => {
   const db = getDb(c.env)
   const form = await getFormBySlug(db, c.req.param('slug'))
   if (!form || !form.isActive) return c.notFound()
+  await recordFormView(db, form.slug, c.req.header('User-Agent') ?? '')
 
   return c.html(
     <PublicLayout title={form.name}>

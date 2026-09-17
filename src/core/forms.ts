@@ -65,6 +65,123 @@ export async function formTagList(db: Db, formId: number) {
     .all()
 }
 
+// ───────────────────────────────────────────────── views
+
+/**
+ * Things that fetch an image without a person looking at it. Link unfurlers
+ * and crawlers render embedded pages too, and every one of them would read as
+ * a reader who saw the form and walked away.
+ */
+const NOT_A_READER = /bot|crawl|spider|slurp|preview|facebookexternalhit|embedly|headless/i
+
+/**
+ * Count one render of a form. One upsert, no read first.
+ *
+ * Never throws: this sits behind a pixel on somebody's web page, and a failed
+ * counter must never become a broken image. Unknown and closed forms count
+ * nothing — a closed form still embedded somewhere isn't being offered.
+ */
+export async function recordFormView(db: Db, slug: string, userAgent = ''): Promise<void> {
+  if (NOT_A_READER.test(userAgent)) return
+  try {
+    await db.run(sql`
+      insert into form_views (form_id, day, views)
+      select id, date('now'), 1 from forms where slug = ${slug} and is_active = 1
+      on conflict (form_id, day) do update set views = views + 1
+    `)
+  } catch {
+    /* the pixel matters more than the datapoint */
+  }
+}
+
+export interface FormViewStat {
+  id: number
+  slug: string
+  name: string
+  isActive: boolean
+  /** Renders inside the window. */
+  views: number
+  /** Submits inside the window, from the activity log. */
+  submits: number
+  /**
+   * Submits over views, counting only submits on or after the form's first
+   * recorded view. Null until there are views to divide by — a form embedded
+   * before the pixel existed has submits and no views, and that is not a rate.
+   */
+  rate: number | null
+}
+
+/**
+ * Views, submits and the rate between them, per form, over the last `days`.
+ * Two grouped queries however many forms exist.
+ */
+export async function formViewStats(db: Db, days = 30): Promise<FormViewStat[]> {
+  const since = new Date(Date.now() - days * 86_400_000)
+  const sinceDay = since.toISOString().slice(0, 10)
+
+  const views = (await db.all(sql`
+    select f.id, f.slug, f.name, f.is_active,
+           coalesce(sum(v.views), 0) as views,
+           min(v.day) as first_day
+    from forms f
+    left join form_views v on v.form_id = f.id and v.day >= ${sinceDay}
+    group by f.id
+  `)) as {
+    id: number
+    slug: string
+    name: string
+    is_active: number
+    views: number
+    first_day: string | null
+  }[]
+
+  // `import` excluded, as everywhere the activity log is counted.
+  const submits = (await db.all(sql`
+    select cast(json_extract(meta, '$.formId') as integer) as id,
+           date(occurred_at / 1000, 'unixepoch') as day,
+           count(*) as n
+    from activities
+    where type = 'form_submitted' and source <> 'import'
+      and occurred_at >= ${since.getTime()}
+    group by 1, 2
+  `)) as { id: number; day: string; n: number }[]
+
+  return views
+    .map((f) => {
+      const mine = submits.filter((s) => Number(s.id) === f.id)
+      const all = mine.reduce((n, s) => n + Number(s.n), 0)
+      const tracked = f.first_day
+        ? mine.filter((s) => s.day >= (f.first_day as string)).reduce((n, s) => n + Number(s.n), 0)
+        : 0
+      const v = Number(f.views)
+      return {
+        id: f.id,
+        slug: f.slug,
+        name: f.name,
+        isActive: !!f.is_active,
+        views: v,
+        submits: all,
+        rate: v ? tracked / v : null,
+      }
+    })
+    .sort((a, b) => b.views - a.views || b.submits - a.submits)
+}
+
+/** Views per day for one form, oldest first. Feeds the form's own page. */
+export async function formViewsByDay(
+  db: Db,
+  formId: number,
+  days = 30,
+): Promise<{ day: string; views: number }[]> {
+  const sinceDay = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10)
+  const rows = (await db.all(sql`
+    select day, views from form_views
+    where form_id = ${formId} and day >= ${sinceDay}
+    order by day
+  `)) as { day: string; views: number }[]
+  return rows.map((r) => ({ day: r.day, views: Number(r.views) }))
+}
+
 // ───────────────────────────────────────────────── writing
 
 async function uniqueSlug(db: Db, name: string, exceptId?: number): Promise<string> {
