@@ -148,7 +148,8 @@ complained, unsubscribed.
 
 6.2 A sequence triggers on subscribe, on a tag being added, or manually.
 
-6.3 A subscriber is enrolled in a given sequence at most once.
+6.3 A subscriber is enrolled in a given sequence at most once. A `cancelled` or
+`completed` enrollment still counts: no trigger, chain, or exit re-enrolls them.
 
 6.4 Only active sequences enroll. Deactivating a sequence stops future enrollment and
 halts pending steps for existing enrollments.
@@ -164,6 +165,43 @@ all active enrollments; a **broadcast** unsubscribe cancels none.
 6.9 Every sequence email's unsubscribe link is scoped to that sequence (per 2a.3).
 
 6.8 Editing a sequence does not retroactively re-send steps already delivered.
+
+### 6a. Leaving a sequence, and what happens next
+
+6.10 A sequence may name one **next sequence**. When a subscriber is sent the last step,
+they are enrolled in the next sequence in the same tick, subject to every rule that
+governs enrollment: 6.3, 6.4, sequence opt-outs (2.3), and 6.14.
+
+6.11 Chaining happens only at the moment the last step is sent. Setting or changing the
+next sequence never enrolls anyone who finished earlier. An enrollment that completes
+because its step or subscriber was deleted does not chain.
+
+6.12 A sequence cannot name itself as its next sequence or as the target of an exit.
+A longer loop is permitted and is inert, per 6.3.
+
+6.13 A sequence may have **exits**, each a tag with an optional target sequence. When
+that tag is added to a subscriber with an active enrollment, the enrollment is
+`cancelled`, the reason is recorded, and they are enrolled in the target if one is set
+and it is active. A subscriber with no active enrollment is unaffected, and is not
+enrolled in the target.
+
+6.14 A subscriber holding any of a sequence's exit tags is refused enrollment in it, by
+every enrollment path.
+
+6.15 An exit is not an opt-out. It writes no sequence opt-out, no suppression, and no
+status change, and it touches no other sequence.
+
+6.16 A tag cannot be both the trigger tag and an exit tag of the same sequence.
+
+6.17 Opt-out, global unsubscribe, hard bounce, and complaint end an enrollment
+regardless of configuration (6.7, section 2). No exit or chain setting can disable them.
+
+6.18 Every cancelled enrollment records why: `sequence_optout`, `suppressed`,
+`status:<status>`, `exit_tag`, or `purchase`.
+
+6.19 The sequence editor states, on one screen, where finishers go, which tags pull
+people out and where each leads, the exits that always apply, and which sequences feed
+into this one.
 
 ## 7. Transactional API
 

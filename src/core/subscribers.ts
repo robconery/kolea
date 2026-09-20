@@ -3,7 +3,7 @@ import type { Db } from '../db/index.ts'
 import { subscriberTags, subscribers, tags } from '../db/schema.ts'
 import { logActivity } from './activity.ts'
 import { isValidEmail, normalizeEmail, randomToken, slugify } from './ids.ts'
-import { enrollOnSubscribe, enrollOnTag } from './sequences.ts'
+import { enrollOnSubscribe, enrollOnTag, exitOnTag } from './sequences.ts'
 
 export interface UpsertInput {
   email: string
@@ -167,6 +167,8 @@ export async function addTags(db: Db, subscriberId: number, tagIds: number[]): P
       // events. Keyed on the moment, not the pair.
       dedupeKey: `tagged:${subscriberId}:${tagId}:${now.getTime()}`,
     })
+    // Out before in: one tag can end the pitch and start onboarding.
+    await exitOnTag(db, subscriberId, tagId)
     await enrollOnTag(db, subscriberId, tagId)
     added++
   }

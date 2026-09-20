@@ -141,7 +141,7 @@ across the network at send time.
 | ⭐ `consent.ts` | Scoped consent: the three levels, the preference-center actions, `canSend` checks. | Anything about who may receive what. **Read the whole file first.** |
 | `sending.ts` | Render → consent re-check → provider call → record. Preview sends. | The send path, or preview safety. |
 | `broadcasts.ts` | Materialize recipients (cursored), enqueue, status machine. | Broadcast lifecycle. |
-| `sequences.ts` | Steps, enrollment, the minutely tick, day-delay math. | Drip logic. |
+| `sequences.ts` | Steps, enrollment, the minutely tick, day-delay math, chaining to a next sequence, tag exits. | Drip logic, and how people leave it. |
 | `segments.ts` | `SegmentRule` → SQL. `resolveSegment` and `countSegment` share one WHERE builder so the shown count can't drift from the actual audience. | Audience predicates. |
 | `subscribers.ts` | `upsertSubscriber` (⚠️ fires sequences), tags on create. | Person creation. Mind invariant 5. |
 | `tagging.ts` | Tag CRUD, merge, and the event→tag rule engine. Sits on the open/click hot path — must stay cheap and must never throw. | Auto-tagging. |
@@ -211,7 +211,7 @@ as a 500 — see `leaveSequence`, reachable from the public preference center.
 **Audience** — `subscribers`, `tags`, `subscriber_tags`, `segments`, `tag_rules`
 
 **Mail** — `broadcasts`, `sequences`, `sequence_steps`, `sequence_enrollments`,
-⭐ `sequence_optouts`, `messages`, `events`, `suppressions`, `dev_outbox`, `media`
+⭐ `sequence_optouts`, `sequence_exits`, `messages`, `events`, `suppressions`, `dev_outbox`, `media`
 
 **Growth & money** — `campaigns`, ⭐ `attributions`, `forms`, `form_tags`,
 `sales`, `sale_items`
@@ -236,6 +236,8 @@ These are the shapes that get "fixed" by someone who didn't read the comment.
 | `broadcasts.slug` nullable + UNIQUE | Nulls would collide | SQLite treats NULLs as *distinct* in a unique index, so every unpublished broadcast keeps a null slug. Unpublishing keeps the slug so re-publishing restores the same URL. |
 | `broadcasts.search_text` | Duplicates the body | The body flattened to prose, written on publish. Site search reads this and never `body_json`: `LIKE` over a JSON blob matches attribute names and hex colours as happily as prose. |
 | `broadcasts.cursor_subscriber_id` | Odd bookkeeping | D1's 1,000-query cap means a large broadcast materializes across several cron ticks, resuming here. |
+| `sequence_exits` vs `sequence_optouts` | Two ways to say "left" | **Opposite meanings.** An opt-out is the person's standing choice and only they can undo it. An exit is operator automation ("got tag X"): it cancels the enrollment, logs `exit_tag`, and writes no consent record. Never implement one with the other. |
+| `sequences.next_sequence_id` | FK with `ON DELETE SET NULL` | The live column is **NO ACTION**. It arrived by `ALTER TABLE`, and SQLite cannot attach a delete action that way. `deleteSequence` clears the pointers itself. Read once, when the last step is sent — never swept. |
 | `messages.body_md` nullable | Inconsistent | Transactional only. Broadcast/sequence bodies live on the source row so editing a template can't rewrite history. |
 | `attributions.source_id` NOT NULL default 0 | Should be nullable | SQLite (and Postgres) treat NULLs as *distinct* in a unique index — nullable would break dedupe of `manual` touches. |
 | `purchases` vs `sales` | Same thing | **Never sum them together.** `sales` = revenue attributed to mail this system sent. `purchases` = ten years of storefront history with no attribution. 21,403 buyers vs 13,766 subscribers. |
@@ -321,6 +323,29 @@ Trigger (`subscribe` / `tag_added` / `manual`) → `sequence_enrollments` row wi
 enrollments, checks consent, creates a message, and advances to the next step.
 Delays are in **whole days** (clamped to a year); step 1 defaults to 0 (arrives
 on join), later steps to 1. Every enrollment path gates on `sequences.is_active`.
+
+**How an enrollment ends.** All of it lives in `core/sequences.ts` and
+`core/consent.ts`, and every `cancelled` writes a `sequence_cancelled` activity
+row with a `reason`, because the status column alone cannot tell a buyer from a bounce.
+
+| Ending | Trigger | Status | Opt-out row? | Then |
+|---|---|---|---|---|
+| Finished | Tick sends the last step | `completed` | No | Enrolled in `next_sequence_id`, if set and active |
+| Exit tag | `addTags` → `exitOnTag` matches a `sequence_exits` row | `cancelled` (`exit_tag`) | **No** | Enrolled in the exit's `then_sequence_id`, if set and active |
+| Purchase | A sale recorded with `end_sequence` | `cancelled` (`purchase`) | **No** | Nothing |
+| Opt-out | Footer link, preference center, `sequence_remove_person` | `cancelled` | **Yes** | Nothing |
+| Global unsubscribe | Preference center | `cancelled`, every sequence | Suppression instead | Nothing |
+| Bounce / complaint | Consent re-check at send time | `cancelled` (`suppressed`, `status:…`) | No | Nothing |
+| Editing accident | Step or subscriber deleted mid-enrollment | `completed` (`no_next_step`, `step_or_person_gone`) | No | **Does not chain** |
+
+`addTags` runs `exitOnTag` **before** `enrollOnTag`, so one tag can end the pitch
+and start onboarding in that order. `enroll()` and the batched `enrollMany()`
+apply identical refusals: target inactive, no steps, opted out, already enrolled
+in any status, or holding one of the target's exit tags.
+
+Chaining runs **once per tick, after the loop**, in a fixed number of queries per
+target sequence. A single-step series can finish 200 people in one tick, and
+`enroll()` per person would exhaust the D1 budget.
 
 ### Transactional
 
@@ -411,6 +436,7 @@ catching it in every tool description.
 | Add an email provider | One file in `providers/` implementing `EmailProvider` (`name`, `send`, `sendBatch`, `parseWebhook`), plus a branch in `providerFor()` in `core/sending.ts`. Nothing in `core/` may name a vendor. Skipping `parseWebhook` means bounces never suppress. |
 | Add an editor block | `client/extensions/` for the TipTap node, **and** a matching branch in `core/render-doc.ts`, or it renders as nothing in email. Then extend `scripts/smoke-editor.mjs`. |
 | Change email HTML | `core/render-doc.ts`. Inline every style (Gmail strips `<style>`). Buttons are nested tables (Outlook ignores padding on `<a>`). |
+| Change how people leave a sequence, or where they go next | `exitSequence`, `exitOnTag`, `chainFinished` and `sequenceFlow` in `core/sequences.ts`. The editor card in `web/admin-mail.tsx` and `sequence_update` / `sequence_get` in MCP are thin wrappers over them. A new automatic ending also needs a line in the editor's "Always" list. |
 | Change what a reader sees about consent | `web/prefs.tsx` + `core/consent.ts`. Re-read the invariants first. |
 
 ---
@@ -448,6 +474,17 @@ Things that have already gone wrong, or nearly did.
   direction to fail. Presence of the `Cf-Access-Jwt-Assertion` header proves
   nothing — the signature, `alg`, audience, issuer, `exp` and `nbf` are all
   verified against live JWKS.
+- **A sequence chain must never be swept.** `chainFinished` acts only on the
+  people who were sent a last step *in this tick*. A query for "completed but
+  not yet in the next sequence" looks like a harmless catch-up and would mail
+  every historical finisher the moment an operator links an old sequence to a
+  new one.
+- **An exit is not an opt-out.** `exitSequence` cancels; `leaveSequence` records
+  consent. `sequence_remove_person` is the consent one, so automation must never
+  call it. See the table under *A sequence*.
+- **`exitOnTag` is on the click hot path too**, through tag rules → `addTags`.
+  It is one indexed lookup on `sequence_exits.tag_id` when nothing matches. Keep
+  it that way.
 - **Tag rules run on the open/click hot path.** `core/tagging.ts` must stay cheap
   and must never throw at its caller.
 - **Renaming a TipTap extension option fails silently in the browser** and the

@@ -1,5 +1,14 @@
 import { sql } from 'drizzle-orm'
-import { index, integer, primaryKey, real, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
+import {
+  type AnySQLiteColumn,
+  index,
+  integer,
+  primaryKey,
+  real,
+  sqliteTable,
+  text,
+  uniqueIndex,
+} from 'drizzle-orm/sqlite-core'
 
 // Conventions (see `sqlite-dev` skill): snake_case column names under camelCase
 // TS keys, plural tables, `id` surrogate key, NOT NULL FKs with explicit onDelete,
@@ -340,6 +349,16 @@ export const sequences = sqliteTable(
     // nullable-fk: see `broadcasts.campaignId`.
     campaignId: integer('campaign_id').references(() => campaigns.id, { onDelete: 'set null' }),
     isActive: integer('is_active', { mode: 'boolean' }).notNull().default(false),
+    // nullable-fk: "when this sequence ends, add them to that one". Null means
+    // the series simply ends. Read at ONE moment only — when the tick sends the
+    // last step — and never swept afterwards: pointing an old sequence at a new
+    // one must not enroll everybody who ever finished it.
+    // ⚠️ `set null` is the intent, but this column arrived by ALTER TABLE and
+    // SQLite cannot attach an ON DELETE action that way — the live column is
+    // NO ACTION. `deleteSequence` clears these pointers itself for that reason.
+    nextSequenceId: integer('next_sequence_id').references((): AnySQLiteColumn => sequences.id, {
+      onDelete: 'set null',
+    }),
     createdAt: ts('created_at').notNull(),
 
     // ── Imported engagement totals (Kit history). Same contract as
@@ -409,6 +428,42 @@ export const sequenceEnrollments = sqliteTable(
   (t) => [
     uniqueIndex('sequence_enrollments_key').on(t.sequenceId, t.subscriberId),
     index('sequence_enrollments_due_idx').on(t.status, t.nextRunAt),
+  ],
+)
+
+/**
+ * A configured way OUT of a sequence: "when they get this tag, stop mailing them
+ * this series" — and optionally "then put them in that one".
+ *
+ * Tags are the only exit kind on purpose. A purchase already lands as tags on
+ * the sale, a link click already lands as a tag through `tag_rules`, so one
+ * mechanism covers "they bought", "they clicked" and "I tagged them by hand".
+ *
+ * ⚠️ An exit is NOT an opt-out. It cancels the enrollment and writes no
+ * `sequence_optouts` row — that row means "this person chose to leave", and
+ * being tagged is not that choice. The automatic exits (opt-out, unsubscribe
+ * from everything, bounce, complaint) are not rows here; they are invariants
+ * and cannot be configured away.
+ */
+export const sequenceExits = sqliteTable(
+  'sequence_exits',
+  {
+    sequenceId: integer('sequence_id')
+      .notNull()
+      .references(() => sequences.id, { onDelete: 'cascade' }),
+    tagId: integer('tag_id')
+      .notNull()
+      .references(() => tags.id, { onDelete: 'cascade' }),
+    // nullable-fk: null means "they just leave". Otherwise where they go next.
+    thenSequenceId: integer('then_sequence_id').references(() => sequences.id, {
+      onDelete: 'set null',
+    }),
+    createdAt: ts('created_at').notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.sequenceId, t.tagId] }),
+    // The hot path is `addTags` asking "does anything exit on this tag?".
+    index('sequence_exits_tag_idx').on(t.tagId),
   ],
 )
 
@@ -1273,6 +1328,7 @@ export type Broadcast = typeof broadcasts.$inferSelect
 export type Sequence = typeof sequences.$inferSelect
 export type SequenceTemplateRow = typeof sequenceTemplates.$inferSelect
 export type SequenceStep = typeof sequenceSteps.$inferSelect
+export type SequenceExit = typeof sequenceExits.$inferSelect
 export type SequenceEnrollment = typeof sequenceEnrollments.$inferSelect
 export type Message = typeof messages.$inferSelect
 export type Event = typeof events.$inferSelect

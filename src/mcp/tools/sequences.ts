@@ -15,7 +15,10 @@ import {
   getSequence,
   listSequences,
   reorderSteps,
+  removeExit,
+  sequenceFlow,
   sequenceStats,
+  setExit,
   setSequenceActive,
   stepsFor,
   tickSequences,
@@ -62,7 +65,8 @@ export function registerSequences(server: McpServer, ctx: Ctx): void {
     ctx,
     'sequence_get',
     {
-      description: 'One sequence with its ordered steps (including delays and bodies) and stats.',
+      description:
+        'One sequence with its ordered steps (including delays and bodies), stats, and its flow: where finishers go next, which tags pull people out early, and which sequences feed into it.',
       inputSchema: z.object({ id: z.number().int() }),
       annotations: { readOnlyHint: true },
     },
@@ -79,6 +83,7 @@ export function registerSequences(server: McpServer, ctx: Ctx): void {
         triggerTag: triggerTag?.name ?? null,
         steps: await stepsFor(ctx.db, id),
         stats: await sequenceStats(ctx.db, id),
+        flow: await sequenceFlow(ctx.db, id),
       })
     },
   )
@@ -96,6 +101,12 @@ export function registerSequences(server: McpServer, ctx: Ctx): void {
         trigger: z.enum(TRIGGERS),
         trigger_tag_id: z.number().int().nullable().optional(),
         campaign_id: z.number().int().nullable().optional(),
+        next_sequence_id: z
+          .number()
+          .int()
+          .nullable()
+          .optional()
+          .describe('When someone finishes the last step, enroll them in this sequence.'),
       }),
     },
     async (args) => {
@@ -108,6 +119,7 @@ export function registerSequences(server: McpServer, ctx: Ctx): void {
         trigger: args.trigger,
         triggerTagId: args.trigger_tag_id ?? null,
         campaignId: args.campaign_id ?? null,
+        nextSequenceId: args.next_sequence_id ?? null,
       })
       return ok({ id, isActive: false, next: 'Add steps with step_add, then sequence_activate.' })
     },
@@ -118,7 +130,8 @@ export function registerSequences(server: McpServer, ctx: Ctx): void {
     ctx,
     'sequence_update',
     {
-      description: 'Change a sequence’s name, description, trigger or campaign. Not its steps.',
+      description:
+        'Change a sequence’s name, description, trigger or campaign, and how people leave it. next_sequence_id: finishers of the last step are enrolled there (null ends the chain; applies only to people who finish from now on, and only while that sequence is live). exits_set: tags that pull someone out early, each optionally leading into another sequence. An exit cancels the enrollment and records why; it is NOT an opt-out and writes no consent record. It also keeps holders of that tag from being enrolled. Opt-outs, unsubscribe-from-everything, bounces and complaints always end an enrollment and cannot be configured. Not its steps.',
       inputSchema: z.object({
         id: z.number().int(),
         name: z.string().min(1).optional(),
@@ -126,6 +139,17 @@ export function registerSequences(server: McpServer, ctx: Ctx): void {
         trigger: z.enum(TRIGGERS).optional(),
         trigger_tag_id: z.number().int().nullable().optional(),
         campaign_id: z.number().int().nullable().optional(),
+        next_sequence_id: z.number().int().nullable().optional(),
+        exits_set: z
+          .array(
+            z.object({
+              tag_id: z.number().int(),
+              then_sequence_id: z.number().int().nullable().optional(),
+            }),
+          )
+          .optional()
+          .describe('Add these exits, or change where an existing one leads.'),
+        exits_remove: z.array(z.number().int()).optional().describe('Tag ids whose exit to remove.'),
       }),
     },
     async (args) => {
@@ -135,8 +159,16 @@ export function registerSequences(server: McpServer, ctx: Ctx): void {
         ...(args.trigger !== undefined ? { trigger: args.trigger } : {}),
         ...(args.trigger_tag_id !== undefined ? { triggerTagId: args.trigger_tag_id } : {}),
         ...(args.campaign_id !== undefined ? { campaignId: args.campaign_id } : {}),
+        ...(args.next_sequence_id !== undefined ? { nextSequenceId: args.next_sequence_id } : {}),
       })
-      return result.ok ? ok({ updated: true }) : failed(result)
+      if (!result.ok) return failed(result)
+
+      for (const tagId of args.exits_remove ?? []) await removeExit(ctx.db, args.id, tagId)
+      for (const x of args.exits_set ?? []) {
+        const set = await setExit(ctx.db, args.id, x.tag_id, x.then_sequence_id ?? null)
+        if (!set.ok) return failed(set)
+      }
+      return ok({ updated: true, flow: await sequenceFlow(ctx.db, args.id) })
     },
   )
 
@@ -361,7 +393,7 @@ export function registerSequences(server: McpServer, ctx: Ctx): void {
     'sequence_enroll',
     {
       description:
-        'Enroll one subscriber. Refused if they previously left this sequence — leaving is a standing preference and only they can undo it, from the preference center.',
+        'Enroll one subscriber. Refused if they previously left this sequence — leaving is a standing preference and only they can undo it, from the preference center. Also refused (has_exit_tag) if they hold one of the sequence’s exit tags.',
       inputSchema: z.object({
         sequence_id: z.number().int(),
         subscriber_id: z.number().int().optional(),

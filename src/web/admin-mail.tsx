@@ -20,8 +20,12 @@ import {
   deleteStep,
   enroll,
   getSequence,
+  listSequences,
+  removeExit,
   reorderSteps,
+  sequenceFlow,
   sequenceStats,
+  setExit,
   setSequenceActive,
   stepsFor,
   tickSequences,
@@ -1320,6 +1324,8 @@ mail.get('/sequences/:id', async (c) => {
 
   const allTags = await db.select().from(tags).orderBy(asc(tags.name)).all()
   const allCampaigns = await listCampaigns(db)
+  const flow = (await sequenceFlow(db, id))!
+  const otherSequences = (await listSequences(db)).filter((o) => o.id !== id)
 
   return c.html(
     <Layout title={s.name} nav="seq">
@@ -1516,6 +1522,148 @@ mail.get('/sequences/:id', async (c) => {
               </tbody>
             </table>
           )}
+        </div>
+      </div>
+
+      {/* The other half of the trigger: the trigger says how people get in, this
+          says how they get out and where they go. Configured exits are editable;
+          the automatic ones are listed as facts, because they are consent and
+          deliverability rules and no setting here can switch them off. */}
+      <div class="card">
+        <div class="card-h">
+          <h2>Leaving, and what happens next</h2>
+        </div>
+        <div class="card-b">
+          <form method="post" action={`/sequences/${id}/next`}>
+            <div class="row" style="align-items:flex-end">
+              <div class="field">
+                <label>When someone finishes the last step, add them to</label>
+                <select name="nextSequenceId">
+                  <option value="">(nothing — the series just ends)</option>
+                  {otherSequences.map((o) => (
+                    <option value={String(o.id)} selected={o.id === s.nextSequenceId}>
+                      {o.name}
+                      {o.isActive ? '' : ' (paused)'}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div class="field" style="flex:0 0 auto">
+                <button class="btn">Save</button>
+              </div>
+            </div>
+          </form>
+          {flow.next && !flow.next.isActive ? (
+            <p class="faint" style="margin:0 0 12px">
+              <strong>{flow.next.name}</strong> is paused, so finishers are not added to it. Nobody
+              is enrolled retroactively when it goes live.
+            </p>
+          ) : null}
+          <p class="faint" style="margin:0 0 16px">
+            Applies to people who finish from now on. Anyone who left that series, is already in it,
+            or holds one of its exit tags is skipped.
+          </p>
+
+          <label>Pulled out early when they get a tag</label>
+          {flow.exits.length === 0 ? (
+            <p class="faint" style="margin:4px 0 12px">
+              No exits configured. A purchase or a link click can tag somebody, so a tag is how you
+              say "stop pitching people who already bought".
+            </p>
+          ) : (
+            <table style="margin:4px 0 12px">
+              <thead>
+                <tr>
+                  <th>When they get</th>
+                  <th>Then</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {flow.exits.map((x) => (
+                  <tr>
+                    <td>
+                      <span class="pill">{x.tag}</span>
+                    </td>
+                    <td>
+                      {x.then ? (
+                        <span>
+                          add them to <a href={`/sequences/${x.then.id}`}>{x.then.name}</a>
+                          {x.then.isActive ? '' : ' (paused — nobody is added)'}
+                        </span>
+                      ) : (
+                        <span class="faint">they just leave</span>
+                      )}
+                    </td>
+                    <td style="text-align:right">
+                      <form method="post" action={`/sequences/${id}/exits/${x.tagId}/delete`}>
+                        <button class="btn sm">Remove</button>
+                      </form>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          <form method="post" action={`/sequences/${id}/exits`}>
+            <div class="row" style="align-items:flex-end">
+              <div class="field">
+                <label>When they get the tag</label>
+                <select name="tagId" required>
+                  <option value="">(pick a tag)</option>
+                  {allTags.map((t) => (
+                    <option value={String(t.id)}>{t.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div class="field">
+                <label>Then</label>
+                <select name="thenSequenceId">
+                  <option value="">they just leave</option>
+                  {otherSequences.map((o) => (
+                    <option value={String(o.id)}>
+                      add them to {o.name}
+                      {o.isActive ? '' : ' (paused)'}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div class="field" style="flex:0 0 auto">
+                <button class="btn">Add exit</button>
+              </div>
+            </div>
+          </form>
+          <p class="faint" style="margin:0 0 16px">
+            An exit is not an unsubscribe. It stops this series for that person and records why. It
+            also keeps anyone who already has the tag from being enrolled.
+          </p>
+
+          <label>Always, whatever is set above</label>
+          <ul class="faint" style="margin:4px 0 0;padding-left:18px">
+            <li>They leave this series from the footer link or their preference center.</li>
+            <li>They unsubscribe from everything.</li>
+            <li>Their address hard-bounces, or they mark a mail as spam.</li>
+            <li>
+              A sale is recorded with <span class="mono">end_sequence</span> naming this series.
+            </li>
+            <li>
+              Unsubscribing from the newsletter does <strong>not</strong> pull anyone out.
+            </li>
+          </ul>
+
+          {flow.feeders.length > 0 ? (
+            <p class="faint" style="margin:16px 0 0">
+              People arrive here from{' '}
+              {flow.feeders.map((f, i) => (
+                <span>
+                  {i > 0 ? ', ' : ''}
+                  <a href={`/sequences/${f.id}`}>{f.name}</a> (
+                  {f.how === 'finished' ? 'on finishing' : 'on an exit'})
+                </span>
+              ))}
+              , as well as from the trigger above.
+            </p>
+          ) : null}
         </div>
       </div>
 
@@ -1979,6 +2127,8 @@ mail.post('/sequences/:id/enroll', async (c) => {
       return warn(`${email} is already in this sequence.`)
     case 'opted_out':
       return warn(`${email} left this series. Only they can rejoin, from the preference center.`)
+    case 'has_exit_tag':
+      return warn(`${email} already has one of this sequence's exit tags, so they were not enrolled.`)
     case 'no_steps':
       return warn('This sequence has no steps yet, so there is nothing to enroll anyone into.')
   }
@@ -2027,6 +2177,37 @@ mail.post('/sequences/tick', async (c) => {
  * order, so `/sequences/:id` declared any earlier would swallow the static
  * `/sequences/tick` above it.
  */
+mail.post('/sequences/:id/next', async (c) => {
+  const db = getDb(c.env)
+  const id = Number(c.req.param('id'))
+  const raw = String((await c.req.formData()).get('nextSequenceId') ?? '')
+  const result = await updateSequence(db, id, { nextSequenceId: raw ? Number(raw) : null })
+  if (!result.ok) {
+    return c.redirect(`/sequences/${id}?flash=${encodeURIComponent(result.reason!)}&kind=warn`)
+  }
+  return c.redirect(`/sequences/${id}?flash=Saved.`)
+})
+
+mail.post('/sequences/:id/exits', async (c) => {
+  const db = getDb(c.env)
+  const id = Number(c.req.param('id'))
+  const form = await c.req.formData()
+  const tagId = Number(form.get('tagId') ?? 0)
+  const then = String(form.get('thenSequenceId') ?? '')
+  const result = await setExit(db, id, tagId, then ? Number(then) : null)
+  if (!result.ok) {
+    return c.redirect(`/sequences/${id}?flash=${encodeURIComponent(result.reason!)}&kind=warn`)
+  }
+  return c.redirect(`/sequences/${id}?flash=Exit saved.`)
+})
+
+mail.post('/sequences/:id/exits/:tagId/delete', async (c) => {
+  const db = getDb(c.env)
+  const id = Number(c.req.param('id'))
+  await removeExit(db, id, Number(c.req.param('tagId')))
+  return c.redirect(`/sequences/${id}?flash=Exit removed.`)
+})
+
 mail.post('/sequences/:id', async (c) => {
   const db = getDb(c.env)
   const id = Number(c.req.param('id'))

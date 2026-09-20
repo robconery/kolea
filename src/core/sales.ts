@@ -1,9 +1,10 @@
 import { and, desc, eq, sql } from 'drizzle-orm'
 import type { Db } from '../db/index.ts'
-import { campaigns, sales, sequenceEnrollments, sequences, subscribers } from '../db/schema.ts'
+import { campaigns, sales, sequences, subscribers } from '../db/schema.ts'
 import { logActivity } from './activity.ts'
 import { getCampaignBySlug, lastTouch, recordTouch } from './campaigns.ts'
 import { isValidEmail, normalizeEmail } from './ids.ts'
+import { exitSequence } from './sequences.ts'
 import { addTags, findOrCreateTag, upsertSubscriber } from './subscribers.ts'
 
 export interface SaleInput {
@@ -274,30 +275,15 @@ async function upsertBuyer(db: Db, email: string, name: string | null) {
  *
  * Cancels the enrollment only. It deliberately does *not* write a
  * `sequence_optout` — that row means "this person chose to leave", and a
- * purchase is not that choice. They can be enrolled again later.
+ * purchase is not that choice.
  */
 async function endSequenceFor(db: Db, subscriberId: number, slug: string): Promise<boolean> {
   const seq = await db.select({ id: sequences.id }).from(sequences).where(eq(sequences.slug, slug)).get()
   if (!seq) return false
 
-  const enrollment = await db
-    .select({ id: sequenceEnrollments.id })
-    .from(sequenceEnrollments)
-    .where(
-      and(
-        eq(sequenceEnrollments.sequenceId, seq.id),
-        eq(sequenceEnrollments.subscriberId, subscriberId),
-        eq(sequenceEnrollments.status, 'active'),
-      ),
-    )
-    .get()
-  if (!enrollment) return false
-
-  await db
-    .update(sequenceEnrollments)
-    .set({ status: 'cancelled', nextRunAt: null })
-    .where(eq(sequenceEnrollments.id, enrollment.id))
-  return true
+  // Logged with its reason — without it a buyer pulled out on purpose is
+  // indistinguishable from a bounce in the exits panel.
+  return await exitSequence(db, subscriberId, seq.id, 'purchase')
 }
 
 // ───────────────────────────────────────────────── reading
