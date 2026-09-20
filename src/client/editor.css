@@ -541,7 +541,7 @@
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
-   The AI-text dial (`ai-scan.ts`).
+   The slop dial (`slop-panel.ts`) and the underlines (`extensions/slop-lint.ts`).
 
    A strip of the toolbar's own dark chrome between the tools and the paper, so
    the reading sits *in* the editor without ever being mistaken for part of the
@@ -567,7 +567,7 @@
   --arc: var(--e-ui-muted);
   position: relative;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 26px;
   padding: 20px 26px 22px;
   background: rgba(8, 19, 44, 0.94);
@@ -582,9 +582,24 @@
   height: 1px;
   background: linear-gradient(90deg, transparent, rgba(148, 190, 255, 0.17) 6%, rgba(148, 190, 255, 0.17) 94%, transparent);
 }
-.bm-scan[data-band='human'] { --arc: #2dd4bf; }
-.bm-scan[data-band='mixed'] { --arc: #a855f7; }
-.bm-scan[data-band='ai'] { --arc: #fb7185; }
+.bm-scan[data-band='clean'] { --arc: #2dd4bf; }
+.bm-scan[data-band='some'] { --arc: #a855f7; }
+.bm-scan[data-band='heavy'] { --arc: #fb7185; }
+
+/* The chip in the toolbar: the live score, always in the corner of your eye. */
+.bm-scan-btn b {
+  min-width: 22px;
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  font: 600 11px/1 var(--e-ui);
+  font-variant-numeric: tabular-nums;
+  color: var(--e-ui-ink);
+}
+.bm-scan-btn[data-band='clean'] b { background: rgba(45, 212, 191, 0.2); color: #99f6e4; }
+.bm-scan-btn[data-band='some'] b { background: rgba(168, 85, 247, 0.26); color: #e9d5ff; }
+.bm-scan-btn[data-band='heavy'] b { background: rgba(251, 113, 133, 0.26); color: #fecdd3; }
+.bm-scan-btn.on { background: rgba(255, 255, 255, 0.1); color: #fff; }
 
 .bm-scan-dial { position: relative; flex: none; width: 148px; }
 .bm-scan-dial svg { display: block; width: 100%; overflow: visible; }
@@ -639,6 +654,33 @@
 .bm-scan-say p { margin: 6px 0 0; font: 13px/1.55 var(--e-ui); color: var(--e-ui-muted); }
 .bm-scan-say .bm-scan-why { color: var(--e-ui-faint); font-style: italic; }
 
+/* The tells, by name. Each row selects its words in the draft. */
+.bm-scan-hits { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.bm-scan-hits:empty { display: none; }
+.bm-scan-hits button,
+.bm-scan-hits .note {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  max-width: 100%;
+  padding: 5px 11px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--e-ui-ink);
+  font: 500 12px/1.3 var(--e-ui);
+}
+.bm-scan-hits button { cursor: pointer; transition: background-color 0.35s cubic-bezier(0.22, 1, 0.36, 1); }
+.bm-scan-hits button:hover { background: rgba(255, 255, 255, 0.13); }
+.bm-scan-hits q { color: var(--e-ui-muted); font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bm-scan-hits .note { color: var(--e-ui-muted); cursor: help; }
+
+.bm-scan-second { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+.bm-scan-second span { font: 12.5px/1.5 var(--e-ui); color: var(--e-ui-muted); }
+.bm-scan-second span.stale { opacity: 0.45; }
+.bm-scan-second span.stale::after { content: ' (the text has changed since)'; }
+.bm-scan-act:disabled { opacity: 0.5; cursor: default; }
+
 .bm-scan-acts { display: flex; gap: 8px; margin-top: 14px; }
 .bm-scan-acts[hidden] { display: none; }
 .bm-scan-act {
@@ -655,24 +697,6 @@
 .bm-scan-act:hover { background: rgba(255, 255, 255, 0.14); }
 .bm-scan-act.primary { background: var(--e-beam); color: #03121f; }
 
-/* A reading of words that have since changed: still there, plainly old. */
-.bm-scan.stale .bm-scan-dial,
-.bm-scan.stale .bm-scan-say > :not(.bm-scan-why) { opacity: 0.42; }
-.bm-scan.stale .bm-scan-band::after {
-  content: ' · the text has changed since';
-  font-weight: 400;
-  color: var(--e-ui-muted);
-}
-
-/* While the detector is out, the needle sweeps — transform only. */
-.bm-scan[data-state='busy'] .bm-scan-needle {
-  transition: none;
-  animation: bm-scan-seek 1.6s cubic-bezier(0.22, 1, 0.36, 1) infinite alternate;
-}
-@keyframes bm-scan-seek {
-  from { transform: rotate(8deg); }
-  to { transform: rotate(172deg); }
-}
 @keyframes bm-scan-in {
   from { opacity: 0; transform: translateY(-6px); }
   to { opacity: 1; transform: none; }
@@ -683,8 +707,38 @@
   .bm-scan-btn span { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .bm-scan,
-  .bm-scan[data-state='busy'] .bm-scan-needle { animation: none; }
+  .bm-scan { animation: none; }
   .bm-scan-arc,
   .bm-scan-needle { transition: none; }
 }
+
+/* Underlines on the paper. Wavy, like a spell-checker, because that is the
+   contract the writer already knows: this is a suggestion, and the text is
+   still yours. Weight carries in the line as well as the colour — a heavier
+   tell gets a thicker line — so the difference survives without hue. */
+.bm-prose .bm-slop {
+  text-decoration: underline wavy #c084fc;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  text-decoration-skip-ink: none;
+  cursor: help;
+}
+.bm-prose .bm-slop-w2 { text-decoration-color: #e879a6; text-decoration-thickness: 1.4px; }
+.bm-prose .bm-slop-w3 { text-decoration-color: #f43f5e; text-decoration-thickness: 2px; background: rgba(244, 63, 94, 0.07); }
+
+.bm-slop-tip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 60;
+  max-width: 320px;
+  padding: 11px 14px 12px;
+  border-radius: 12px;
+  background: rgba(10, 24, 52, 0.97);
+  box-shadow: 0 22px 50px -22px rgba(0, 0, 0, 0.9);
+  font: 12.5px/1.5 var(--e-ui);
+  color: var(--e-ui-muted);
+  pointer-events: none;
+}
+.bm-slop-tip[hidden] { display: none; }
+.bm-slop-tip b { display: block; margin-bottom: 3px; font-weight: 600; color: var(--e-ui-ink); }

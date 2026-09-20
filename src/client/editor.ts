@@ -34,9 +34,10 @@ import yaml from 'highlight.js/lib/languages/yaml'
 import { EmailButton } from './extensions/email-button.ts'
 import { MergeTag } from './extensions/merge-tag.ts'
 import { SlashMenu, pickAndUploadImage, uploadImage } from './extensions/slash-menu.ts'
+import { SlopLint, type SlopState } from './extensions/slop-lint.ts'
 import { buildBubbleMenu } from './bubble-menu.ts'
-import { attachScan } from './ai-scan.ts'
 import { attachComposer, markDirty } from './composer.ts'
+import { attachSlopPanel } from './slop-panel.ts'
 
 // A curated language set rather than lowlight's `common`, which drags in ~40
 // grammars and roughly doubles the bundle. One line per language to add more.
@@ -75,6 +76,10 @@ function mount(host: HTMLElement): void {
   editorEl.className = 'bm-editor'
   host.append(editorEl)
 
+  // The slop reader starts with the editor, and the panel it reports to is
+  // built just after — so its readings go through a slot filled in below.
+  let reportSlop: (state: SlopState) => void = () => {}
+
   const toolbar = document.createElement('div')
   toolbar.className = 'bm-bubble'
   document.body.append(toolbar)
@@ -97,6 +102,8 @@ function mount(host: HTMLElement): void {
       DragHandle.configure({ render: renderDragHandle }),
       NodeRange,
       SlashMenu,
+      // Only where the page asks for it: a receipt needs no writing coach.
+      SlopLint.configure({ enabled: Boolean(form?.dataset.scan), onReport: (s) => reportSlop(s) }),
       BubbleMenu.configure({
         element: toolbar,
         // Hide over code blocks and images, where inline formatting is meaningless.
@@ -144,7 +151,8 @@ function mount(host: HTMLElement): void {
       if (hidden) hidden.value = JSON.stringify(editor.getJSON())
     }
     attachComposer(form, sync)
-    attachScan(host, form, editor, sync)
+    const panel = attachSlopPanel(host, form, editor, sync)
+    if (panel) reportSlop = panel.onReport
   }
 
   // Belt and braces: sync on submit too, in case a command mutated the doc

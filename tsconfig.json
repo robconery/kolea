@@ -21,5 +21,7 @@
   },
   "include": ["src/**/*.ts", "src/**/*.tsx", "drizzle.config.ts"],
   // The browser bundle has its own config — see src/client/tsconfig.json.
-  "exclude": ["src/client"]
+  // Test files import `bun:test`, which the Worker's type set doesn't know;
+  // `bun test` checks them as it runs them.
+  "exclude": ["src/client", "src/**/*.test.ts"]
 }
