@@ -1449,6 +1449,13 @@ export const ComposeLayout: FC<
     autosave?: string
     /** Endpoint the preview dialog posts to. */
     preview?: string
+    /**
+     * Puts the "Scan for AI text" dial in the editor. `true` means a detector is
+     * configured, so Save also takes a reading on the way out; `false` leaves
+     * the button, which answers with how to turn it on. Absent means no dial —
+     * a receipt is not the kind of writing anyone needs coaching on.
+     */
+    scan?: boolean
     /** The row being edited, or null for one that autosave will create. */
     recordId?: number | null
     back: string
@@ -1466,6 +1473,7 @@ export const ComposeLayout: FC<
   action,
   autosave,
   preview,
+  scan,
   recordId,
   back,
   backLabel,
@@ -1506,6 +1514,8 @@ export const ComposeLayout: FC<
         class="compose"
         data-autosave={autosave}
         data-preview={preview}
+        data-scan={scan === undefined ? undefined : '/ai-scan'}
+        data-scan-on-save={scan ? '1' : undefined}
         data-record-id={recordId ? String(recordId) : undefined}
       >
         {/* Autosave posts the form as-is, so the row it should write has to be

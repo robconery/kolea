@@ -35,6 +35,7 @@ import { EmailButton } from './extensions/email-button.ts'
 import { MergeTag } from './extensions/merge-tag.ts'
 import { SlashMenu, pickAndUploadImage, uploadImage } from './extensions/slash-menu.ts'
 import { buildBubbleMenu } from './bubble-menu.ts'
+import { attachScan } from './ai-scan.ts'
 import { attachComposer, markDirty } from './composer.ts'
 
 // A curated language set rather than lowlight's `common`, which drags in ~40
@@ -139,9 +140,11 @@ function mount(host: HTMLElement): void {
   // Autosave and the preview dialog live on the form, not the editor; all they
   // need from here is a way to flush the document into the field they post.
   if (form) {
-    attachComposer(form, () => {
+    const sync = () => {
       if (hidden) hidden.value = JSON.stringify(editor.getJSON())
-    })
+    }
+    attachComposer(form, sync)
+    attachScan(host, form, editor, sync)
   }
 
   // Belt and braces: sync on submit too, in case a command mutated the doc

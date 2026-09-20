@@ -43,3 +43,10 @@ STRIPE_WEBHOOK_SECRET=whsec_xxxxxxxxxxxx
 # demo tier's 50 requests/hour is plenty for one person picking pictures.
 # Unset just hides the picker; uploading your own image still works.
 UNSPLASH_ACCESS_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+# ── Pangram ─────────────────────────────────────────────────────────────────
+# The "Scan for AI text" dial in the composer. An API key from
+# https://www.pangram.com (developer plan, billed per word scanned).
+# Scanning posts the draft's prose to Pangram. Unset turns the scan off and
+# nothing leaves the Worker.
+PANGRAM_API_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx

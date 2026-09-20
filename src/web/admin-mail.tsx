@@ -10,6 +10,7 @@ import {
 import { listCampaigns } from '../core/campaigns.ts'
 import { storeMedia } from '../core/media.ts'
 import { clearFeatureImage, publishPost, setFeatureImage, unpublishPost } from '../core/posts.ts'
+import { aiScanConfigured, scanDoc } from '../core/ai-scan.ts'
 import { type Photo, searchPhotos, triggerDownload, unsplashConfigured } from '../core/unsplash.ts'
 import { countSegment, describeRule, listSegments } from '../core/segments.ts'
 import {
@@ -219,6 +220,7 @@ mail.get('/broadcasts/new', async (c) => {
       nav="bc"
       action="/broadcasts"
       autosave="/broadcasts/autosave"
+      scan={aiScanConfigured(c.env)}
       preview="/broadcasts/preview"
       back="/broadcasts"
       backLabel="Back to broadcasts"
@@ -395,6 +397,16 @@ mail.post('/broadcasts/autosave', async (c) => {
   return c.json({ ok: true, id, url: `/broadcasts/${id}`, action: `/broadcasts/${id}/edit` })
 })
 
+/**
+ * The AI-text dial, for every composer that has one. It reads the posted form
+ * rather than a saved row, so the score is for the words on screen — including
+ * a draft that has never been saved. Writes nothing.
+ */
+mail.post('/ai-scan', async (c) => {
+  const { bodyJson, bodyMd } = readEditorBody(await c.req.formData())
+  return c.json(await scanDoc(c.env, bodyJson, bodyMd))
+})
+
 /** One copy to the operator's own address, answered in JSON for the dialog. */
 mail.post('/broadcasts/preview', async (c) => {
   const db = getDb(c.env)
@@ -444,6 +456,7 @@ mail.get('/broadcasts/:id', async (c) => {
         nav="bc"
         action={`/broadcasts/${id}/edit`}
         autosave="/broadcasts/autosave"
+        scan={aiScanConfigured(c.env)}
         preview="/broadcasts/preview"
         recordId={id}
         back="/broadcasts"
@@ -1681,6 +1694,7 @@ mail.get('/sequences/:id/steps/new', async (c) => {
       nav="seq"
       action={`/sequences/${id}/steps`}
       autosave={`/sequences/${id}/steps/autosave`}
+      scan={aiScanConfigured(c.env)}
       preview={`/sequences/${id}/steps/preview`}
       back={`/sequences/${id}`}
       backLabel="Back to sequence"
@@ -1813,6 +1827,7 @@ mail.get('/sequences/:id/steps/:stepId', async (c) => {
       nav="seq"
       action={`/sequences/${id}/steps/${stepId}`}
       autosave={`/sequences/${id}/steps/autosave`}
+      scan={aiScanConfigured(c.env)}
       preview={`/sequences/${id}/steps/preview`}
       recordId={stepId}
       back={`/sequences/${id}`}
