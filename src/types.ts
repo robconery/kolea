@@ -63,13 +63,6 @@ export interface Env {
    */
   UNSPLASH_ACCESS_KEY?: string
 
-  /**
-   * Pangram API key, for the composer's "Scan for AI text" dial. A secret, not a
-   * var. Unset means the scan answers "not set up" and no draft text ever leaves
-   * the Worker.
-   */
-  PANGRAM_API_KEY?: string
-
   RESEND_API_KEY?: string
   RESEND_WEBHOOK_SECRET?: string
 

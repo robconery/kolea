@@ -675,12 +675,6 @@
 .bm-scan-hits q { color: var(--e-ui-muted); font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bm-scan-hits .note { color: var(--e-ui-muted); cursor: help; }
 
-.bm-scan-second { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
-.bm-scan-second span { font: 12.5px/1.5 var(--e-ui); color: var(--e-ui-muted); }
-.bm-scan-second span.stale { opacity: 0.45; }
-.bm-scan-second span.stale::after { content: ' (the text has changed since)'; }
-.bm-scan-act:disabled { opacity: 0.5; cursor: default; }
-
 .bm-scan-acts { display: flex; gap: 8px; margin-top: 14px; }
 .bm-scan-acts[hidden] { display: none; }
 .bm-scan-act {

@@ -5,45 +5,15 @@ import type { LocatedHit, SlopState } from './extensions/slop-lint.ts'
 /**
  * The slop dial.
  *
- * Two readings of the same draft, and they are deliberately not the same kind
- * of thing:
+ * The reading is ours (`src/slop/`), free, and live. It is on the dial, it
+ * moves as you type, and every point of it is a phrase underlined in the draft
+ * with a reason attached. Nothing leaves the browser.
  *
- *  - **The slop score** is ours (`src/slop/`), free, and live. It is on the
- *    dial, it moves as you type, and every point of it is a phrase underlined
- *    in the draft with a reason attached. This is the coach.
- *  - **The detector** is a second opinion from outside (`core/ai-scan.ts`),
- *    billed by the word, so it is only ever asked: by the button, or once when
- *    Save is *clicked*. Never on autosave.
- *
- * It is a coach, not a gate. A reading that comes back clean lets the Save
- * through untouched; anything else holds it until the writer has seen the
- * number and chosen — once. The same words are never questioned twice, and a
- * detector that is down, slow or unconfigured never costs anybody their Save.
- * Autosave wrote the draft long before any of this, so nothing is at risk
- * while they decide.
+ * It is a coach, not a gate. A clean draft saves untouched; a sloppy one is
+ * held until the writer has seen the number and chosen — once. The same words
+ * are never questioned twice. Autosave is never held at all, and it wrote the
+ * draft long before Save was clicked, so nothing is at risk while they decide.
  */
-
-type DetectorBand = 'human' | 'mixed' | 'ai'
-
-interface Detection {
-  score: number
-  band: DetectorBand
-  headline: string
-  ai: number
-  assisted: number
-  human: number
-  words: number
-}
-
-type DetectOutcome = { ok: true; result: Detection } | { ok: false; reason: string }
-
-/** What this tab remembers about one exact text. */
-interface Memory {
-  key: string
-  detection?: Detection
-  /** The writer saw a bad reading of these words and saved anyway. */
-  accepted?: boolean
-}
 
 const STORE = 'bm-slop'
 const OPEN = 'bm-slop-open'
@@ -53,12 +23,6 @@ const BANDS: Record<Band, string> = {
   clean: 'Reads like a person wrote it',
   some: 'Some slop in here',
   heavy: 'Heavy slop',
-}
-
-const DETECTOR_BANDS: Record<DetectorBand, string> = {
-  human: 'reads like a person',
-  mixed: 'partly reads like a machine',
-  ai: 'reads like a machine',
 }
 
 const CATEGORIES: Record<Category, [one: string, many: string]> = {
@@ -84,11 +48,9 @@ export function attachSlopPanel(
   host: HTMLElement,
   form: HTMLFormElement,
   editor: Editor,
-  sync: () => void,
 ): SlopPanel | null {
-  const url = form.dataset.scan
   const bar = host.querySelector<HTMLElement>('.bm-toolbar')
-  if (!url || !bar) return null
+  if (!form.dataset.slop || !bar) return null
 
   const button = document.createElement('button')
   button.type = 'button'
@@ -112,13 +74,10 @@ export function attachSlopPanel(
     verdict: q<HTMLElement>('[data-verdict]'),
     detail: q<HTMLElement>('[data-detail]'),
     hits: q<HTMLOListElement>('[data-hits]'),
-    detect: q<HTMLButtonElement>('[data-detect]'),
-    detected: q<HTMLElement>('[data-detected]'),
     acts: q<HTMLElement>('[data-acts]'),
   }
 
   let current: SlopState | null = null
-  let detecting = false
 
   const textKey = () => hash(editor.getText())
 
@@ -159,58 +118,7 @@ export function attachSlopPanel(
     if (hits.length > SHOWN) {
       els.hits.append(noteRow(`and ${hits.length - SHOWN} more`, 'Every one is underlined in the draft. Hover it to see why.'))
     }
-
-    // A detector reading belongs to the words it was taken from.
-    const kept = recall()
-    if (kept?.detection && kept.key === textKey()) paintDetection({ ok: true, result: kept.detection })
-    else if (!detecting && els.detected.dataset.key) {
-      els.detected.classList.add('stale')
-    }
   }
-
-  /* ─────────────────────────────────────────────────── the second opinion */
-
-  const paintDetection = (o: DetectOutcome) => {
-    els.detected.classList.remove('stale')
-    if (!o.ok) {
-      delete els.detected.dataset.key
-      els.detected.textContent = o.reason
-      return
-    }
-    const r = o.result
-    els.detected.dataset.key = textKey()
-    els.detected.textContent =
-      `Detector: ${r.score}/100, ${DETECTOR_BANDS[r.band]}. ` +
-      `${pct(r.human)} human · ${pct(r.assisted)} AI-assisted · ${pct(r.ai)} AI.`
-  }
-
-  const detect = async (): Promise<DetectOutcome> => {
-    detecting = true
-    els.detect.disabled = true
-    els.detected.classList.remove('stale')
-    els.detected.textContent = 'Asking the detector… a few seconds.'
-    const key = textKey()
-    let outcome: DetectOutcome
-    try {
-      sync()
-      const res = await fetch(url, { method: 'POST', body: new FormData(form) })
-      outcome = ((await res.json().catch(() => null)) as DetectOutcome | null) ?? {
-        ok: false,
-        reason: 'The detector did not answer.',
-      }
-    } catch {
-      outcome = { ok: false, reason: 'The request never reached the server.' }
-    }
-    detecting = false
-    els.detect.disabled = false
-    if (outcome.ok) remember({ key, detection: outcome.result })
-    paintDetection(outcome)
-    // The draft may have moved on while the detector was thinking.
-    if (outcome.ok && textKey() !== key) els.detected.classList.add('stale')
-    return outcome
-  }
-
-  els.detect.addEventListener('click', () => void detect())
 
   wireTooltip(editor)
 
@@ -223,43 +131,28 @@ export function attachSlopPanel(
   let cleared = false
   form.addEventListener('submit', (e) => {
     const submitter = (e as SubmitEvent).submitter as HTMLButtonElement | null
-    if (cleared || detecting || submitter?.name || !current) return
+    if (cleared || submitter?.name || !current) return
+    if (current.report.band === 'clean') return
 
+    // Saved anyway once already: these words are not questioned again.
     const key = textKey()
-    const kept = recall()
-    const known = kept?.key === key ? kept : null
-    if (known?.accepted) return
-
-    const askDetector = Boolean(form.dataset.scanOnSave) && !known?.detection && current.report.words >= 50
-    const sloppy = current.report.band !== 'clean'
-    if (!sloppy && !askDetector && (!known?.detection || known.detection.band === 'human')) return
+    if (accepted() === key) return
 
     e.preventDefault()
-    const go = () => {
+    setOpen(true)
+    strip.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    els.acts.hidden = false
+    q<HTMLButtonElement>('[data-save]').onclick = () => {
+      accept(key)
       cleared = true
       form.requestSubmit(submitter ?? undefined)
     }
-    const hold = () => {
-      setOpen(true)
-      strip.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-      els.acts.hidden = false
-      q<HTMLButtonElement>('[data-save]').onclick = () => {
-        remember({ ...(recall()?.key === key ? recall() : null), key, accepted: true })
-        go()
-      }
-      q<HTMLButtonElement>('[data-keep]').onclick = () => {
-        els.acts.hidden = true
-        const first = current?.hits[0]
-        if (first) select(editor, first)
-        else editor.commands.focus()
-      }
+    q<HTMLButtonElement>('[data-keep]').onclick = () => {
+      els.acts.hidden = true
+      const first = current?.hits[0]
+      if (first) select(editor, first)
+      else editor.commands.focus()
     }
-
-    if (!askDetector) return hold()
-    void detect().then((o) => {
-      const flagged = o.ok && o.result.band !== 'human'
-      return sloppy || flagged ? hold() : go()
-    })
   })
 
   return { onReport: paint }
@@ -348,8 +241,6 @@ function setDial(
   els.num.textContent = score === null ? '–' : String(score)
 }
 
-const pct = (n: number) => `${Math.round(n * 100)}%`
-
 const GAUGE_ICON =
   '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" ' +
   'stroke-linecap="round" aria-hidden="true"><path d="M4 17a8 8 0 1 1 16 0"/><path d="M12 17l4-6"/></svg>'
@@ -371,10 +262,6 @@ const STRIP =
   '<p data-detail></p>' +
   `<p class="bm-scan-why">${REMINDER}</p>` +
   '<ol class="bm-scan-hits" data-hits></ol>' +
-  '<div class="bm-scan-second">' +
-  '<button type="button" class="bm-scan-act" data-detect>Ask the AI detector</button>' +
-  '<span data-detected></span>' +
-  '</div>' +
   '<div class="bm-scan-acts" data-acts hidden>' +
   '<button type="button" class="bm-scan-act primary" data-keep>Keep writing</button>' +
   '<button type="button" class="bm-scan-act" data-save>Save anyway</button>' +
@@ -383,17 +270,18 @@ const STRIP =
 
 /* ───────────────────────────────────────────────────────────────── memory */
 
-function remember(m: Memory): void {
+/** Remember, for this tab, the text the writer chose to save as it is. */
+function accept(key: string): void {
   try {
-    sessionStorage.setItem(STORE, JSON.stringify(m))
+    sessionStorage.setItem(STORE, key)
   } catch {
-    // Private window, storage off. The dial still works; it just forgets.
+    // Private window, storage off. They may be asked once more after a reload.
   }
 }
 
-function recall(): Memory | null {
+function accepted(): string | null {
   try {
-    return JSON.parse(sessionStorage.getItem(STORE) ?? 'null') as Memory | null
+    return sessionStorage.getItem(STORE)
   } catch {
     return null
   }

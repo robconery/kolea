@@ -103,7 +103,7 @@ function mount(host: HTMLElement): void {
       NodeRange,
       SlashMenu,
       // Only where the page asks for it: a receipt needs no writing coach.
-      SlopLint.configure({ enabled: Boolean(form?.dataset.scan), onReport: (s) => reportSlop(s) }),
+      SlopLint.configure({ enabled: Boolean(form?.dataset.slop), onReport: (s) => reportSlop(s) }),
       BubbleMenu.configure({
         element: toolbar,
         // Hide over code blocks and images, where inline formatting is meaningless.
@@ -151,7 +151,7 @@ function mount(host: HTMLElement): void {
       if (hidden) hidden.value = JSON.stringify(editor.getJSON())
     }
     attachComposer(form, sync)
-    const panel = attachSlopPanel(host, form, editor, sync)
+    const panel = attachSlopPanel(host, form, editor)
     if (panel) reportSlop = panel.onReport
   }
 
