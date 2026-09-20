@@ -51,16 +51,27 @@
 - [x] Delays in days (first step 0, later steps 1), clamped 0–365
 - [x] Local `Fast-forward the clock` so day-scale sequences are testable
 - [x] Browser smoke test, 33 checks (`bun run smoke`)
+- [x] Cloudflare Access JWT verified properly — signature, `alg`, audience, issuer,
+      `exp`/`nbf` against live JWKS; fails closed when unconfigured (`src/web/auth.ts`)
+
+## Tests (2026-09-20)
+
+- [x] `docs/STORIES.md` sliced from SPEC — 23 stories across 8 epics, Given/When/Then
+- [x] Server-side suite, `tests/specs/` — 20 Features, one per story, `bun test`
+- [x] A faithful `D1Database` over `bun:sqlite`, running the real `migrations/*.sql`,
+      so specs exercise production SQL, foreign keys and Drizzle codecs
+- [x] Every Feature drives a deployed entry point — `fetch`, `scheduled` or `queue`
+- [x] Browser suite, `tests/ui/` — Playwright against its own `wrangler dev` + its own D1
+- [x] `bun run typecheck` covers the tests too (fourth pass)
+- [ ] Commerce, Stripe and revenue attribution have no specs yet — their own epic
+- [ ] Non-functional targets (SPEC 9.1, 9.5) need a load harness, not a spec file
 
 ## Not done
 
-- [ ] **Server-side tests.** `bun run smoke` covers the editor only; `docs/SPEC.md` is written
-      to feed the `bdd-specs` skill.
 - [ ] Media library UI (the `/api/media` list endpoint exists; nothing consumes it)
 - [ ] Sequence step reordering (positions are append-only; editing and deleting work)
 - [ ] Image alt-text / link editing from the bubble menu
 - [ ] Orphan-media sweep (uploads removed from a draft stay in R2)
-- [ ] **Verify the Cloudflare Access JWT** (`src/web/auth.ts` checks presence only) — deploy blocker
 - [ ] API key management UI (keys exist in the DB; only the seed mints one)
 - [ ] Scheduled-broadcast UI (the model and cron path support it; there's no date picker)
 - [ ] Double opt-in — still an open question in SPEC §1

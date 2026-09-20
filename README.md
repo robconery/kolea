@@ -177,11 +177,14 @@ src/
   client/         the only browser JS in the project: the TipTap editor bundle
 migrations/       drizzle-kit generated, applied by wrangler
 scripts/          list importers, the archive publisher, and the browser smoke test
-docs/             install guide, architecture, spec, and a decision log
+tests/            specs/ — the behavioral spec, executable (bun:test)
+                  ui/    — browser tests against a real server (Playwright)
+                  support/ — a D1 implementation over bun:sqlite, and factories
+docs/             install guide, architecture, spec, stories, and a decision log
 ```
 
 Roughly 32k lines of TypeScript. `bun run typecheck` covers the Worker, the
-browser bundle, and the scripts separately, and is clean.
+browser bundle, the scripts and the tests separately, and is clean.
 
 ---
 
@@ -520,18 +523,75 @@ table, plus the invariants you must not break while doing it.
 
 ---
 
+## 🧪 Tests
+
+```bash
+bun test            # 436 server-side tests. No server, no network, ~2 seconds
+bun run test:ui     # 15 browser tests. Starts its own server on :8788
+bun run typecheck   # Worker, browser bundle, scripts, tests — four passes
+bun run test:all    # all of the above, in that order
+```
+
+**The suite is [`docs/SPEC.md`](docs/SPEC.md) made executable.** Every test traces
+back to a numbered requirement through a story in
+[`docs/STORIES.md`](docs/STORIES.md) — 23 stories, 8 epics — and each spec file is
+one story:
+
+```
+Feature      one file, one user story
+  Scenario   one situation; arranges all its data once, in beforeAll
+    it()     exactly one assertion
+```
+
+Happy paths first and exhaustively, failure cases segregated into their own
+blocks below them, and **every Feature drives a deployed entry point** —
+`worker.fetch`, `worker.scheduled` or `worker.queue` — rather than an internal
+function underneath it. Mocks define test reality; only the entry point defines
+production reality.
+
+### Almost nothing is mocked
+
+`tests/support/d1.ts` is a working `D1Database` on top of `bun:sqlite` — foreign
+keys enforced, `last_row_id` populated, bound values coerced the way the D1 wire
+does it — and the tests apply the real `migrations/*.sql`. D1 *is* SQLite, so a
+spec runs the production SQL, the production Drizzle codecs, the real routers and
+the real renderer. The only fakes are at the platform edge: R2 in memory, no queue
+binding (so `dispatch()` takes the inline fallback it already has for
+`wrangler dev`), and `EMAIL_PROVIDER=console`.
+
+> ⚠️ **Nothing in the suite can reach the wire.** The console provider is
+> hard-coded in `createWorld()`; mail lands in `dev_outbox` and the spec reads it
+> back. There are real people in the production database and exactly one thing
+> standing between a test run and all of them.
+
+The browser tests run a real `wrangler dev` on port 8788 with a database of its
+own under `.wrangler/ui-test-state`, reset and reseeded per run, so they never
+touch your ordinary dev data. They cover the three things a server-side test
+structurally cannot reach: whether the preference page leads a reader to the
+narrow choice (with JavaScript off, too), whether the TipTap composer actually
+persists what it shows, and whether the sequence editor states the whole flow on
+one screen.
+
+📖 [`tests/README.md`](tests/README.md) — the conventions, the harness, and the
+places where a spec deliberately records behaviour that diverges from SPEC.
+
+---
+
 ## ▶️ Commands
 
 | | |
 |---|---|
 | `bun run dev` | Build the client bundle, then serve on :8787 |
 | `bun run watch:client` | Rebuild the editor bundle on change (alongside `dev`) |
-| `bun run smoke` | Browser smoke test of the editor. Needs `dev` running |
+| `bun test` | The server-side suite — `docs/SPEC.md`, executable |
+| `bun run test:ui` | Browser tests (Playwright). Starts its own server on :8788 |
+| `bun run test:all` | Typecheck, then both suites |
+| `bun run smoke` | Deeper browser smoke test of the editor. Needs `dev` running |
 | `bun scripts/seed-analytics-demo.ts` | Fill the analytics screens with local demo data (`--clean` to undo) |
 | `bun run db:migrate` | Apply migrations to local D1 |
 | `bun run db:generate` | Generate a migration after editing `src/db/schema.ts` |
 | `bun run db:studio` | Drizzle Studio against the local database |
-| `bun run typecheck` | Worker, browser bundle and scripts, separately |
+| `bun run typecheck` | Worker, browser bundle, scripts and tests, separately |
 | `bun run deploy` | Build, then `wrangler deploy --env production`. Read [INSTALL](docs/INSTALL.md) first |
 
 ---
@@ -551,9 +611,12 @@ table, plus the invariants you must not break while doing it.
 ## 🤝 Contributing
 
 Bug reports, correctness fixes, and email-client rendering fixes are very welcome.
-The highest-value contribution available is **making [`docs/SPEC.md`](docs/SPEC.md)
-executable** — it's written as numbered, testable requirements precisely so it can
-become a test suite.
+Start with the test suite: `bun test` runs the server-side specs and
+`bun run test:ui` the browser ones — see [`tests/README.md`](tests/README.md) for
+how they are organized. Every spec traces back to a numbered requirement in
+[`docs/SPEC.md`](docs/SPEC.md) through a story in
+[`docs/STORIES.md`](docs/STORIES.md), so a change that alters behaviour should
+change all three.
 
 Multi-tenancy, a drag-and-drop builder, and self-run SMTP are out of scope on purpose.
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) before opening a PR, and

@@ -19,11 +19,18 @@ jobs:
       - name: Install
         run: bun install --frozen-lockfile
 
-      # Two passes: the Worker (workers-types) and the browser bundle (DOM lib).
-      # They must not share a tsconfig — workerd's Response/Headers shadow the
-      # DOM ones and silently resolve the wrong overloads.
+      # Four passes: the Worker (workers-types), the browser bundle (DOM lib),
+      # the scripts, and the tests. They must not share a tsconfig — workerd's
+      # Response/Headers shadow the DOM ones and silently resolve the wrong
+      # overloads, and the tests need both workers-types and bun-types at once.
       - name: Typecheck
         run: bun run typecheck
+
+      # The server-side suite runs the real Worker against a SQLite-backed D1.
+      # No server, no network, no browser — EMAIL_PROVIDER is `console`, so
+      # nothing here is capable of putting mail on the wire.
+      - name: Test
+        run: bun test tests/specs
 
       - name: Build the editor bundle
         run: bun run build:client

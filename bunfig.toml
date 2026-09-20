@@ -1,0 +1,6 @@
+# `bun test` with no arguments should run the server-side suite and nothing
+# else. Without this it would also pick up `tests/ui/*.spec.ts`, which are
+# Playwright tests and cannot run under bun:test — a confusing first failure
+# for anyone who has just cloned the repo.
+[test]
+root = "tests/specs"

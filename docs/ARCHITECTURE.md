@@ -496,14 +496,26 @@ Things that have already gone wrong, or nearly did.
 ## ✅ Verifying a change
 
 ```bash
-bun run typecheck   # three passes: Worker, browser bundle, scripts
+bun run typecheck   # four passes: Worker, browser bundle, scripts, tests
+bun test            # the server-side suite — SPEC, executable
+bun run test:ui     # Playwright; starts its own wrangler dev on :8788
 bun run dev         # :8787, EMAIL_PROVIDER=console — nothing leaves the machine
 bun run smoke       # 33 real-Chromium checks against the editor; needs dev running
 ```
 
-There is **no server-side test suite yet**. [`SPEC.md`](SPEC.md) is written as
-numbered, testable requirements shaped to feed the `bdd-specs` skill — making it
-executable is the highest-value contribution available.
+**The suite is the executable form of [`SPEC.md`](SPEC.md).** `tests/specs/` runs
+the real Worker (`fetch`, `scheduled`, `queue`) against the real migrations on a
+SQLite-backed `D1Database`, with `EMAIL_PROVIDER=console` so nothing can reach the
+wire; `tests/ui/` drives a real browser against a real `wrangler dev`. One Feature
+per story in [`STORIES.md`](STORIES.md), and each file names the SPEC clauses it
+covers. Read [`tests/README.md`](../tests/README.md) before adding to it — in
+particular, every Feature has to drive a deployed entry point, not just an internal
+function.
+
+⚠️ Two behaviours diverge from SPEC and are recorded as such in
+`tests/specs/sending-a-broadcast.spec.ts` (broadcast completion lands on the *next*
+pass; a mid-send joiner is picked up by the cursor). Reconcile code and SPEC before
+changing either.
 
 **Per CLAUDE.md: do not report something as fixed if you have not compiled it.**
 

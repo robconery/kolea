@@ -67,12 +67,16 @@ Two implementations of one rule is how consent gets broken.
 
 - Install: `bun install`
 - Dev: `bun run dev` (builds the client bundle, then `wrangler dev` on :8787)
-- Typecheck: `bun run typecheck` — Worker, browser bundle, and scripts, separately
+- Typecheck: `bun run typecheck` — Worker, browser bundle, scripts, and tests, separately
 - Migrations: `bun run db:generate` (drizzle-kit) → `bun run db:migrate`. Never hand-write one
+- Tests: `bun test` — the server-side suite (`tests/specs/`, one Feature per user story)
+- Browser tests: `bun run test:ui` — Playwright; starts its own `wrangler dev` on :8788
+  with its own D1, so it never touches your local dev data
 - Smoke test: `bun run smoke` — real Chromium against the editor; needs `dev` running
 - Deploy: `bun run deploy`. **Always `--env production`** — top-level vars carry
   `DEV_AUTH_BYPASS=true`
-- Server-side tests: none yet. `docs/SPEC.md` is written to be made executable
+- `bun run test:all` — typecheck, server suite, browser suite. Run it before a PR.
+  See `tests/README.md` for the suite's shape and what is real vs. faked in it
 
 ## ⚠️ Platform limits that bite
 

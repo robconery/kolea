@@ -29,6 +29,14 @@ yarn-error.log*
 .dev.vars.*
 !.dev.vars.example
 
+# Playwright: run artefacts only. `playwright.config.ts` and `tests/` are
+# checked in; the browser state under .wrangler/ui-test-state is covered by the
+# .wrangler/ rule above.
+test-results/
+playwright-report/
+blob-report/
+.playwright/
+
 # client bundle build output
 public/editor.js
 public/editor.css

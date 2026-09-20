@@ -36,13 +36,25 @@ in-app Outbox instead.
 ## Before you open a PR
 
 ```bash
-bun run typecheck      # Worker and browser bundle, separately — must be clean
-bun run smoke          # browser smoke test of the editor; needs `bun run dev` running
+bun run test:all       # typecheck (4 passes), server-side specs, browser tests
 ```
 
-There is no server-side test suite yet. [`docs/SPEC.md`](docs/SPEC.md) is written as
-numbered, testable requirements and is the reference for intended behavior — if you
-change behavior, change the matching SPEC clause in the same PR.
+or, one at a time:
+
+```bash
+bun run typecheck      # Worker, browser bundle, scripts, tests — must be clean
+bun test               # the server-side suite; no server needed
+bun run test:ui        # Playwright; starts its own wrangler dev on :8788
+bun run smoke          # deeper editor smoke test; needs `bun run dev` running
+```
+
+**A behaviour change is three files, not one.** The numbered requirement in
+[`docs/SPEC.md`](docs/SPEC.md) is the reference for intended behavior; the story in
+[`docs/STORIES.md`](docs/STORIES.md) turns it into acceptance criteria; the spec in
+`tests/specs/` makes it executable. Change behaviour, change all three in the same PR.
+[`tests/README.md`](tests/README.md) explains the shape a spec has to take — one
+Feature per story, one assertion per `it`, and at least one Scenario driving a
+deployed entry point.
 
 ## Conventions
 
