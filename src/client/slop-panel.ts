@@ -1,18 +1,28 @@
 import type { Editor } from '@tiptap/core'
-import type { Band, Category } from '../slop/index.ts'
+import type { Band } from '../slop/index.ts'
 import type { LocatedHit, SlopState } from './extensions/slop-lint.ts'
 
 /**
- * The slop dial.
+ * The slop dial, and the to-do list under it.
  *
- * The reading is ours (`src/slop/`), free, and live. It is on the dial, it
- * moves as you type, and every point of it is a phrase underlined in the draft
- * with a reason attached. Nothing leaves the browser.
+ * The reading is ours (`src/slop/`), free, and live. It moves as you type, and
+ * every point of it is a phrase underlined in the draft with a reason attached.
+ * Nothing leaves the browser.
  *
- * It is always there. Not behind a button, not only while drafting: a sent
- * broadcast shows its reading too, because the number is worth seeing next to
- * the open rate. In the read-only view there is no Save to hold, so it only
- * reads.
+ * It lives at the head of the composer's right-hand panel, above who the mail
+ * goes to — always there, never behind a button. Views with no side panel (a
+ * sent broadcast, the read-only "as mailed" sheet) carry it under the toolbar
+ * or at the head of the sheet instead.
+ *
+ * ⭐ The list is the point. The common way to write a newsletter now is to have
+ * a model draft it, paste that in, and rewrite. A score tells that writer they
+ * have a problem; a list tells them what to do about it. So every kind of tell
+ * in the draft becomes one job, worst first, and a click walks the draft from
+ * one occurrence to the next. When the last one is gone the job ticks itself
+ * off and stays on the list, done — the rewrite has somewhere to get to.
+ *
+ * A big paste starts a fresh list and marks where the score began, so the
+ * number that matters is the distance travelled.
  *
  * It is a coach, not a gate. A clean draft saves untouched; a sloppy one is
  * held until the writer has seen the number and chosen — once. The same words
@@ -21,7 +31,12 @@ import type { LocatedHit, SlopState } from './extensions/slop-lint.ts'
  */
 
 const STORE = 'bm-slop'
-const SHOWN = 8
+
+/** A paste this long is a draft arriving, not a quote being dropped in. */
+const PASTE_WORDS = 60
+
+/** The top of the `clean` band: where the list is trying to get the draft to. */
+const GOAL = 15
 
 const BANDS: Record<Band, string> = {
   clean: 'Reads like a person wrote it',
@@ -29,36 +44,41 @@ const BANDS: Record<Band, string> = {
   heavy: 'Heavy slop',
 }
 
-const CATEGORIES: Record<Category, [one: string, many: string]> = {
-  punctuation: ['em-dash', 'em-dashes'],
-  'lead-in': ['lead-in', 'lead-ins'],
-  frame: ['stock frame', 'stock frames'],
-  'mic-drop': ['mic drop', 'mic drops'],
-  filler: ['filler phrase', 'filler phrases'],
-  vocabulary: ['model word', 'model words'],
-  flourish: ['flourish', 'flourishes'],
-  structure: ['structural tell', 'structural tells'],
-  rhythm: ['rhythm tell', 'rhythm tells'],
-}
-
 /** The whole reason the dial exists, said once, where it will be read. */
 const REMINDER = 'People who read slop just turn it off.'
+
+/** One line on the to-do list: every occurrence of one kind of tell. */
+interface Task {
+  rule: string
+  fix: string
+  why: string
+  weight: number
+  /** Where they are, in document order. Empty for a whole-document note. */
+  hits: LocatedHit[]
+  /** Still to do. A note counts as one; a finished job is zero. */
+  count: number
+}
 
 export interface SlopPanel {
   onReport(state: SlopState): void
 }
 
 /**
- * `form` is the composer's form, and is what Save hangs off. Leave it out for a
- * read-only view: the dial reads, and holds nothing.
+ * `form` is the composer's form: Save hangs off it, and its side panel is where
+ * the dial prefers to live. Leave it out for a read-only view — the dial reads,
+ * and holds nothing.
  */
 export function attachSlopPanel(host: HTMLElement, editor: Editor, form?: HTMLFormElement | null): SlopPanel {
   const strip = document.createElement('div')
   strip.className = 'bm-scan'
   strip.innerHTML = STRIP
-  // Under the toolbar where there is one; otherwise at the head of the sheet.
+
+  const side = form?.querySelector<HTMLElement>('[data-slop-panel]')
   const bar = host.querySelector<HTMLElement>('.bm-toolbar')
-  if (bar) bar.after(strip)
+  if (side) {
+    strip.classList.add('side')
+    side.append(strip)
+  } else if (bar) bar.after(strip)
   else host.prepend(strip)
 
   const q = <T extends Element>(sel: string) => strip.querySelector<T>(sel) as T
@@ -68,36 +88,114 @@ export function attachSlopPanel(host: HTMLElement, editor: Editor, form?: HTMLFo
     num: q<HTMLElement>('[data-num]'),
     verdict: q<HTMLElement>('[data-verdict]'),
     detail: q<HTMLElement>('[data-detail]'),
-    hits: q<HTMLOListElement>('[data-hits]'),
+    tasks: q<HTMLOListElement>('[data-tasks]'),
+    prompt: q<HTMLButtonElement>('[data-prompt]'),
     acts: q<HTMLElement>('[data-acts]'),
   }
 
   let current: SlopState | null = null
+  /** Every job this draft has had since it arrived, so a finished one can stay, ticked. */
+  const seen = new Map<string, Task>()
+  /** The score the draft arrived with. */
+  let began: number | null = null
+  /** The job that is open, showing its reason. */
+  let open: string | null = null
+  /** Which occurrence each job's next click goes to. */
+  const cursor = new Map<string, number>()
+  let pasted = false
 
   const textKey = () => hash(editor.getText())
 
-  /* ─────────────────────────────────────────────────────── the slop reading */
+  // A draft arriving: the next reading is a new start, with a new list.
+  editor.on('transaction', ({ transaction: tr }) => {
+    if (tr.getMeta('uiEvent') !== 'paste' || !tr.docChanged) return
+    const before = tr.before.textContent.split(/\s+/).filter(Boolean).length
+    const after = tr.doc.textContent.split(/\s+/).filter(Boolean).length
+    if (after - before >= PASTE_WORDS) pasted = true
+  })
+
+  /** Open jobs, worst first, then the finished ones. */
+  const renderTasks = () => {
+    const tasks = current ? tasksOf(current) : []
+    const live = new Set(tasks.map((t) => t.rule))
+    const done = [...seen.values()].filter((t) => !live.has(t.rule)).map((t) => ({ ...t, hits: [], count: 0 }))
+    if (!open || !live.has(open)) open = tasks[0]?.rule ?? null
+    els.tasks.replaceChildren(...[...tasks, ...done].map(taskRow))
+    els.prompt.hidden = tasks.length === 0
+  }
+
+  const taskRow = (t: Task): HTMLLIElement => {
+    const li = document.createElement('li')
+    const finished = t.count === 0
+    li.className = finished ? 'done' : t.rule === open ? 'open' : ''
+
+    const b = document.createElement('button')
+    b.type = 'button'
+    b.disabled = finished
+    const box = document.createElement('i')
+    box.setAttribute('aria-hidden', 'true')
+    const text = document.createElement('span')
+    text.textContent = t.fix
+    b.append(box, text)
+    if (!finished && t.hits.length > 0) {
+      const n = document.createElement('b')
+      n.textContent = String(t.count)
+      b.title = `${t.count} in the draft. Click to go to the next one.`
+      b.append(n)
+    }
+    // Colour never carries it alone: a finished job says so in words too.
+    if (finished) b.setAttribute('aria-label', `Done: ${t.fix}`)
+    b.addEventListener('mousedown', (e) => e.preventDefault())
+    b.addEventListener('click', () => {
+      open = t.rule
+      const i = (cursor.get(t.rule) ?? 0) % Math.max(t.hits.length, 1)
+      cursor.set(t.rule, i + 1)
+      renderTasks()
+      const hit = t.hits[i]
+      if (hit) select(editor, hit)
+    })
+    li.append(b)
+
+    if (t.rule === open && !finished) {
+      const why = document.createElement('p')
+      why.textContent = t.why
+      li.append(why)
+    }
+    return li
+  }
 
   const paint = (state: SlopState) => {
     current = state
-    const { report, hits } = state
+    const { report } = state
     const empty = report.words === 0
+
+    if (pasted || empty) {
+      seen.clear()
+      cursor.clear()
+      began = null
+      open = null
+      pasted = false
+    }
+    if (began === null && !empty) began = report.score
+    for (const t of tasksOf(state)) seen.set(t.rule, t)
 
     strip.dataset.band = empty ? '' : report.band
     setDial(els, empty ? null : report.score)
-
     els.verdict.textContent = empty ? 'Nothing to read yet' : BANDS[report.band]
-    els.detail.textContent = empty ? 'Start writing and the dial follows along.' : summarize(state)
+    els.detail.textContent = empty
+      ? 'Write, or paste a draft in, and the dial follows along.'
+      : progress(report.score, report.words, began)
     els.acts.hidden = true
-
-    els.hits.replaceChildren(
-      ...hits.slice(0, SHOWN).map((h) => hitRow(h, editor)),
-      ...report.notes.map((n) => noteRow(n.label, n.why)),
-    )
-    if (hits.length > SHOWN) {
-      els.hits.append(noteRow(`and ${hits.length - SHOWN} more`, 'Every one is underlined in the draft. Hover it to see why.'))
-    }
+    renderTasks()
   }
+
+  els.prompt.addEventListener('click', () => {
+    if (!current) return
+    void copy(promptFor(tasksOf(current))).then((ok) => {
+      els.prompt.textContent = ok ? 'Copied. Paste it with your draft.' : 'Could not copy'
+      setTimeout(() => (els.prompt.textContent = PROMPT_LABEL), 2600)
+    })
+  })
 
   wireTooltip(editor)
   if (!form) return { onReport: paint }
@@ -137,40 +235,73 @@ export function attachSlopPanel(host: HTMLElement, editor: Editor, form?: HTMLFo
   return { onReport: paint }
 }
 
+/* ────────────────────────────────────────────────────────────── the list */
+
+/**
+ * One job per kind of tell, worst first. "Worst" is what it costs the score —
+ * weight times how many — so the top of the list is always the biggest win
+ * available, and a writer with five minutes knows where to spend them.
+ */
+function tasksOf({ report, hits }: SlopState): Task[] {
+  const byRule = new Map<string, Task>()
+  for (const h of hits) {
+    const t = byRule.get(h.rule) ?? { rule: h.rule, fix: h.fix, why: h.why, weight: h.weight, hits: [], count: 0 }
+    t.hits.push(h)
+    t.count++
+    byRule.set(h.rule, t)
+  }
+  for (const n of report.notes) {
+    byRule.set(n.rule, { rule: n.rule, fix: n.fix, why: n.why, weight: n.weight, hits: [], count: 1 })
+  }
+  return [...byRule.values()].sort((a, b) => b.weight * b.count - a.weight * a.count)
+}
+
+function progress(score: number, words: number, began: number | null): string {
+  const size = `${words.toLocaleString()} ${words === 1 ? 'word' : 'words'}`
+  if (score < GOAL) {
+    return began !== null && began >= GOAL ? `Started at ${began}. Clean now, across ${size}.` : `Nothing much to fix in ${size}.`
+  }
+  const from = began !== null && began !== score ? `Started at ${began}. ` : ''
+  return `${from}Work the list to get under ${GOAL}.`
+}
+
+const PROMPT_LABEL = 'Copy a clean-up prompt'
+
+/**
+ * For the writer who would rather send the draft back to the model that wrote
+ * it. The prompt names this draft's actual tells, so the model is told what to
+ * stop doing rather than asked, vaguely, to "sound more human".
+ */
+function promptFor(tasks: Task[]): string {
+  const jobs = tasks.map((t) => {
+    const examples = [...new Set(t.hits.map((h) => `"${h.text}"`))].slice(0, 3).join(', ')
+    return `- ${t.fix}. ${t.why}${examples ? ` Found here: ${examples}.` : ''}`
+  })
+  return [
+    'Rewrite the draft below so it reads like one person talking to another.',
+    'Keep my meaning, my facts, my structure and my voice. Do not add anything, and do not make it longer.',
+    'Use plain statements. If a phrase could be deleted and the reader would lose nothing but a flourish, delete it.',
+    '',
+    'Fix these specific problems:',
+    ...jobs,
+    '',
+    'Do not replace one stock phrase with another. No em-dashes anywhere.',
+    '',
+    'The draft:',
+    '',
+  ].join('\n')
+}
+
+async function copy(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text)
+    return true
+  } catch {
+    return false
+  }
+}
+
 /* ─────────────────────────────────────────────────────────────── rendering */
-
-function summarize({ report }: SlopState): string {
-  const total = report.hits.length + report.notes.length
-  if (total === 0) return `Nothing flagged in ${report.words.toLocaleString()} words.`
-  const parts = (Object.entries(report.counts) as [Category, number][])
-    .sort((a, b) => b[1] - a[1])
-    .map(([c, n]) => `${n} ${CATEGORIES[c][n === 1 ? 0 : 1]}`)
-  const tells = `${total} ${total === 1 ? 'tell' : 'tells'} in ${report.words.toLocaleString()} words`
-  return parts.length ? `${tells}: ${parts.join(' · ')}.` : `${tells}.`
-}
-
-function hitRow(hit: LocatedHit, editor: Editor): HTMLLIElement {
-  const li = document.createElement('li')
-  const b = document.createElement('button')
-  b.type = 'button'
-  b.title = hit.why
-  const label = document.createElement('span')
-  label.textContent = hit.label
-  const quote = document.createElement('q')
-  quote.textContent = hit.text.length > 46 ? `${hit.text.slice(0, 44)}…` : hit.text
-  b.append(label, quote)
-  b.addEventListener('click', () => select(editor, hit))
-  li.append(b)
-  return li
-}
-
-function noteRow(label: string, why: string): HTMLLIElement {
-  const li = document.createElement('li')
-  li.className = 'note'
-  li.title = why
-  li.textContent = label
-  return li
-}
 
 function select(editor: Editor, hit: LocatedHit): void {
   // The draft may have shrunk since this reading; never select past its end.
@@ -236,11 +367,12 @@ const STRIP =
   '<div class="bm-scan-band" data-verdict role="status"></div>' +
   '<p data-detail></p>' +
   `<p class="bm-scan-why">${REMINDER}</p>` +
-  '<ol class="bm-scan-hits" data-hits></ol>' +
   '<div class="bm-scan-acts" data-acts hidden>' +
   '<button type="button" class="bm-scan-act primary" data-keep>Keep writing</button>' +
   '<button type="button" class="bm-scan-act" data-save>Save anyway</button>' +
   '</div>' +
+  '<ol class="bm-scan-tasks" data-tasks></ol>' +
+  `<button type="button" class="bm-scan-act bm-scan-prompt" data-prompt hidden>${PROMPT_LABEL}</button>` +
   '</div>'
 
 /* ───────────────────────────────────────────────────────────────── memory */

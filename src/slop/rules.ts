@@ -60,6 +60,8 @@ interface RuleBase {
   category: Category
   /** What it is, in three or four words. */
   label: string
+  /** The job, as an instruction: a line on a to-do list. */
+  fix: string
   /** What to do about it, said to the writer. */
   why: string
   weight: 1 | 2 | 3
@@ -110,6 +112,7 @@ export const RULES: Rule[] = [
     id: 'em-dash',
     category: 'punctuation',
     label: 'Em-dash',
+    fix: 'Replace the em-dashes',
     why: 'The single loudest AI tell there is. Use a comma, parentheses, or start a new sentence.',
     weight: 2,
     kinds: ['paragraph', 'listItem', 'heading'],
@@ -122,6 +125,7 @@ export const RULES: Rule[] = [
     id: 'heres-the-thing',
     category: 'lead-in',
     label: '"Here\'s the thing"',
+    fix: "Cut \"Here's the thing\" and say the thing",
     why: 'An announcement that a sentence is coming. Delete it and say the sentence.',
     weight: 3,
     pattern: opens(
@@ -132,6 +136,7 @@ export const RULES: Rule[] = [
     id: 'nobody-tells-you',
     category: 'lead-in',
     label: 'The secret nobody tells you',
+    fix: 'Drop the "nobody tells you" reveal',
     why: 'It flatters you and talks down to everyone else. Say the thing; skip the reveal.',
     weight: 3,
     pattern: has(
@@ -142,6 +147,7 @@ export const RULES: Rule[] = [
     id: 'let-me',
     category: 'lead-in',
     label: 'Announcing honesty',
+    fix: 'Stop announcing honesty',
     why: 'If you have to announce you are being honest or clear, the last paragraph wasn\'t. Cut the announcement.',
     weight: 2,
     pattern: opens(
@@ -152,6 +158,7 @@ export const RULES: Rule[] = [
     id: 'label-colon',
     category: 'lead-in',
     label: 'Stage label',
+    fix: 'Remove the stage labels',
     why: 'A label borrowed from social posts. Nobody says "plot twist" out loud to a friend.',
     weight: 2,
     pattern: opens(
@@ -162,6 +169,7 @@ export const RULES: Rule[] = [
     id: 'scene-cut',
     category: 'lead-in',
     label: 'Movie-trailer transition',
+    fix: 'Swap the trailer cues for plain transitions',
     why: 'A screenplay cue standing in for a transition. Say what happened next.',
     weight: 2,
     pattern: opens(
@@ -172,6 +180,7 @@ export const RULES: Rule[] = [
     id: 'enter-x',
     category: 'lead-in',
     label: '"Enter X."',
+    fix: 'Introduce the tool in a real sentence',
     why: 'A drum roll for a tool. Introduce it in a sentence that says what it does.',
     weight: 2,
     // Case-sensitive on purpose: "Enter" then a proper noun, as a whole sentence.
@@ -181,6 +190,7 @@ export const RULES: Rule[] = [
     id: 'signpost',
     category: 'lead-in',
     label: 'Signposting',
+    fix: 'Cut the signposting',
     why: 'Narrating the structure of the piece instead of getting on with it.',
     weight: 2,
     pattern: has(
@@ -193,6 +203,7 @@ export const RULES: Rule[] = [
     id: 'not-x-its-y',
     category: 'frame',
     label: '"It\'s not X, it\'s Y"',
+    fix: "Unwind \"It's not X, it's Y\"",
     why: 'Knocking down a claim nobody made, to make the real one sound deeper. Say Y once.',
     weight: 3,
     pattern: new RegExp(
@@ -212,6 +223,7 @@ export const RULES: Rule[] = [
     id: 'not-just-but',
     category: 'frame',
     label: '"Not just X, but Y"',
+    fix: 'Unwind "not just X, but Y"',
     why: 'A scale built to make Y look bigger. If Y matters, it can stand on its own.',
     weight: 2,
     pattern: has(
@@ -222,6 +234,7 @@ export const RULES: Rule[] = [
     id: 'question-hook',
     category: 'frame',
     label: 'Self-answered question',
+    fix: 'Answer without asking yourself first',
     why: 'Asking yourself a question so you can answer it. Drop the question; keep the answer.',
     weight: 3,
     pattern: new RegExp(
@@ -233,6 +246,7 @@ export const RULES: Rule[] = [
     id: 'colon-reveal',
     category: 'frame',
     label: 'Colon reveal',
+    fix: 'Turn the colon reveals into sentences',
     why: 'A drum roll, then a colon. Write it as a plain sentence: "It broke reactivity."',
     weight: 2,
     pattern: opens(
@@ -243,6 +257,7 @@ export const RULES: Rule[] = [
     id: 'whether-youre',
     category: 'frame',
     label: '"Whether you\'re a…"',
+    fix: 'Write to one reader',
     why: 'Addressing everybody at once, which reads as addressing nobody. Write to one reader.',
     weight: 2,
     pattern: has(
@@ -255,6 +270,7 @@ export const RULES: Rule[] = [
     id: 'mic-drop',
     category: 'mic-drop',
     label: 'Mic drop',
+    fix: 'Delete the mic drops',
     why: 'A line telling the reader how to feel about the last line. Trust the last line.',
     weight: 3,
     pattern: has(
@@ -265,6 +281,7 @@ export const RULES: Rule[] = [
     id: 'full-stop',
     category: 'mic-drop',
     label: '"Full stop."',
+    fix: 'Delete "Full stop."',
     why: 'Punctuation read aloud for emphasis. The sentence before it already ended.',
     weight: 3,
     pattern: /(?<=[.!?]["')]?\s+)(?:Full stop|Period|End of story|Mic drop)\.(?=\s|$)/g,
@@ -275,6 +292,7 @@ export const RULES: Rule[] = [
     id: 'worth-noting',
     category: 'filler',
     label: 'Hedge',
+    fix: 'Cut the hedges',
     why: 'If it is worth noting, note it. The preamble adds six words and no information.',
     weight: 2,
     pattern: has(
@@ -285,6 +303,7 @@ export const RULES: Rule[] = [
     id: 'adverb-opener',
     category: 'filler',
     label: 'Adverb opener',
+    fix: 'Trim the adverb openers',
     why: 'A throat-clear. The sentence is almost always stronger starting at the next word.',
     weight: 1,
     pattern: opens(
@@ -295,6 +314,7 @@ export const RULES: Rule[] = [
     id: 'grand-opening',
     category: 'filler',
     label: 'Grand opening',
+    fix: 'Rewrite the opening around something specific',
     why: 'Opening from orbit. Start with the specific thing that happened to you this week.',
     weight: 3,
     zone: 'opening',
@@ -306,6 +326,7 @@ export const RULES: Rule[] = [
     id: 'closer',
     category: 'filler',
     label: 'Summary ending',
+    fix: 'Cut the summary ending',
     why: 'Restating the piece to the person who just read it. End on the last real thing you had to say.',
     weight: 2,
     zone: 'closing',
@@ -317,6 +338,7 @@ export const RULES: Rule[] = [
     id: 'ai-closer',
     category: 'filler',
     label: 'Horizon gazing',
+    fix: 'Cut the gazing at the horizon',
     why: 'Gesturing at the future because the piece ran out of things to say.',
     weight: 2,
     pattern: has(
@@ -329,6 +351,7 @@ export const RULES: Rule[] = [
     id: 'vocab-strong',
     category: 'vocabulary',
     label: 'Model vocabulary',
+    fix: 'Swap the model words for plain ones',
     why: 'A word models use constantly and people almost never say out loud. Use the plain one.',
     weight: 3,
     kinds: ['paragraph', 'listItem', 'heading'],
@@ -372,6 +395,7 @@ export const RULES: Rule[] = [
     id: 'vocab-business',
     category: 'vocabulary',
     label: 'Brochure verb',
+    fix: 'Swap the brochure verbs for short ones',
     why: 'Brochure language. "Use", "help", "build", "fix": the short verb is the one a person says.',
     weight: 2,
     kinds: ['paragraph', 'listItem', 'heading'],
@@ -409,6 +433,7 @@ export const RULES: Rule[] = [
     id: 'vocab-soft',
     category: 'vocabulary',
     label: 'Inflated word',
+    fix: 'Thin out the inflated words',
     why: 'Fine once. In numbers it is the sound of a model filling space. Try the plainer word.',
     weight: 1,
     pattern: words(
@@ -436,6 +461,7 @@ export const RULES: Rule[] = [
     id: 'flourish',
     category: 'flourish',
     label: 'Stock flourish',
+    fix: 'Say the literal thing, not the stock image',
     why: 'A borrowed image doing the work of a plain statement. Say the literal thing it stands for.',
     weight: 2,
     kinds: ['paragraph', 'listItem', 'heading'],
@@ -449,6 +475,7 @@ export const RULES: Rule[] = [
     id: 'summary-heading',
     category: 'structure',
     label: 'Heading that describes',
+    fix: 'Rename headings after their subject',
     why: 'A heading that names the section\'s job instead of its subject. Say what the section says.',
     weight: 2,
     kinds: ['heading'],
@@ -459,6 +486,7 @@ export const RULES: Rule[] = [
     id: 'bold-lead-bullets',
     category: 'structure',
     label: 'Bold-label bullets',
+    fix: 'Turn the labelled bullets into sentences',
     why: 'Every bullet opening with a bold label and a colon is the default shape of a chatbot answer. Write the point as a sentence.',
     weight: 2,
     find(doc) {
@@ -479,6 +507,7 @@ export const RULES: Rule[] = [
     id: 'emoji-bullet',
     category: 'structure',
     label: 'Emoji bullet',
+    fix: 'Take the emoji off the bullets',
     why: 'An emoji in place of a bullet or in front of a heading is slide-deck decoration, not writing.',
     weight: 1,
     kinds: ['listItem', 'heading'],
@@ -488,6 +517,7 @@ export const RULES: Rule[] = [
     id: 'one-liner',
     category: 'structure',
     label: 'Punchline paragraph',
+    fix: 'Fold the punchline paragraphs back in',
     why: 'A paragraph of one or two words, set apart for effect. If the paragraph before it landed, this is an echo.',
     weight: 2,
     find(doc) {
@@ -508,6 +538,7 @@ export const RULES: Rule[] = [
     id: 'question-paragraph',
     category: 'structure',
     label: 'Question as transition',
+    fix: 'Replace the one-line questions',
     why: 'A one-line question set on its own to pull the reader along. Make the turn in a sentence instead.',
     weight: 2,
     find(doc) {
@@ -530,6 +561,7 @@ export const RULES: Rule[] = [
     id: 'staccato',
     category: 'rhythm',
     label: 'Staccato run',
+    fix: 'Join the staccato fragments',
     why: '"No fluff. No filler. Just results." Fragments lined up for a drumbeat. Join them into one sentence that says something.',
     weight: 3,
     find(doc) {
@@ -563,6 +595,7 @@ export const RULES: Rule[] = [
     id: 'triplet',
     category: 'rhythm',
     label: 'Rhythm triplet',
+    fix: 'Break up the rhythm triplets',
     why: '"Faster, cleaner, smarter." Three matched words chosen for the beat. Pick the one that is true, or use two.',
     weight: 1,
     find(doc) {
@@ -602,6 +635,7 @@ export const NOTES: NoteRule[] = [
     id: 'even-sentences',
     category: 'rhythm',
     label: 'Every sentence the same length',
+    fix: 'Vary your sentence length',
     why: 'People write a long sentence, then a short one. A model holds a steady fifteen to twenty words. Vary the length and the piece starts to sound spoken.',
     weight: 3,
     test(doc) {
@@ -620,6 +654,7 @@ export const NOTES: NoteRule[] = [
     id: 'bullet-heavy',
     category: 'structure',
     label: 'More bullets than prose',
+    fix: 'Turn bullets back into prose',
     why: 'An email that is mostly bullets reads as a generated summary. Bullets are for parallel items; ideas go in sentences.',
     weight: 3,
     test(doc) {
@@ -632,6 +667,7 @@ export const NOTES: NoteRule[] = [
     id: 'heading-then-bullets',
     category: 'structure',
     label: 'Heading, bullets, repeat',
+    fix: 'Break the heading-then-bullets pattern',
     why: 'Section after section of a heading followed straight by a list is the house style of a chatbot.',
     weight: 3,
     test(doc) {

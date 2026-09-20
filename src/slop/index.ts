@@ -52,6 +52,8 @@ export interface Hit {
   rule: string
   category: Category
   label: string
+  /** The job, as an instruction: "Replace the em-dashes". */
+  fix: string
   why: string
   weight: number
   /** Index into the blocks that were scanned. */
@@ -67,6 +69,7 @@ export interface Note {
   rule: string
   category: Category
   label: string
+  fix: string
   why: string
   weight: number
 }
@@ -101,11 +104,16 @@ export interface Options {
 const WORD_FLOOR = 120
 
 /**
- * Steepness of the curve from weighted-tells-per-100-words to 0–100. Tuned so
- * that one strong tell per ~200 words reads as "some", and the density of an
- * unedited chatbot draft (six or more points per hundred words) lands past 80.
+ * The density at which the score reads 50. The curve is `d / (d + HALF)`: it
+ * climbs fast at first, so the first few tells in a clean piece register, and
+ * it never quite reaches 100, so in a draft that is wall-to-wall slop every
+ * single fix still moves the needle. A curve that pegs is a curve that tells
+ * someone halfway through a rewrite that nothing they have done has counted.
+ *
+ * Tuned so one strong tell per ~200 words reads as "some", and an unedited
+ * chatbot draft (six or more points per hundred words) lands in the 60s and up.
  */
-const STEEPNESS = 0.3
+const HALF = 4
 
 export function findSlop(input: string | Block[], options: Options = {}): Report {
   const source = typeof input === 'string' ? fromText(input) : input
@@ -129,6 +137,7 @@ export function findSlop(input: string | Block[], options: Options = {}): Report
         rule: rule.id,
         category: rule.category,
         label: rule.label,
+        fix: rule.fix,
         why: rule.why,
         weight: rule.weight,
         block: s.block,
@@ -142,12 +151,12 @@ export function findSlop(input: string | Block[], options: Options = {}): Report
   const hits = settle(found)
   const notes: Note[] = NOTES.filter(on)
     .filter((n) => n.test(doc))
-    .map(({ id, category, label, why, weight }) => ({ rule: id, category, label, why, weight }))
+    .map(({ id, category, label, fix, why, weight }) => ({ rule: id, category, label, fix, why, weight }))
 
   const words = doc.blocks.reduce((n, b) => n + b.words, 0)
   const points = [...hits, ...notes].reduce((n, h) => n + h.weight, 0)
   const per100 = (points / Math.max(words, WORD_FLOOR)) * 100
-  const score = Math.round(100 * (1 - Math.exp(-STEEPNESS * per100)))
+  const score = Math.round((100 * per100) / (per100 + HALF))
 
   const counts: Partial<Record<Category, number>> = {}
   for (const h of hits) counts[h.category] = (counts[h.category] ?? 0) + 1

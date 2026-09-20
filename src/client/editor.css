@@ -1,7 +1,11 @@
 /* Kōlea editor — served as a static asset, so it carries its own tokens
    rather than depending on the admin stylesheet load order. */
+/* The dial can live in the side panel and the tooltip on <body>, both outside
+   the host, so they take the tokens too. */
 .bm-editor-host,
-.bm-reader-host {
+.bm-reader-host,
+.bm-scan,
+.bm-slop-tip {
   --e-ink: #22262b;
   --e-muted: #6b7280;
   --e-faint: #9aa0a8;
@@ -20,7 +24,10 @@
   --e-paper: #fff;
   --e-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Helvetica, Arial, sans-serif;
   --e-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+}
 
+.bm-editor-host,
+.bm-reader-host {
   border: 1px solid var(--e-line);
   border-radius: 10px;
   background: var(--e-paper);
@@ -629,26 +636,68 @@
 .bm-scan-say p { margin: 6px 0 0; font: 13px/1.55 var(--e-ui); color: var(--e-ui-muted); }
 .bm-scan-say .bm-scan-why { color: var(--e-ui-faint); font-style: italic; }
 
-/* The tells, by name. Each row selects its words in the draft. */
-.bm-scan-hits { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
-.bm-scan-hits:empty { display: none; }
-.bm-scan-hits button,
-.bm-scan-hits .note {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 7px;
-  max-width: 100%;
-  padding: 5px 11px;
+/* The to-do list: one job per kind of tell, worst first. A row is a button that
+   walks the draft to the next occurrence; the open one shows its reason. A
+   finished job stays, ticked and struck through — and says "Done" to a screen
+   reader, so the tick is never the only carrier. */
+.bm-scan-tasks { list-style: none; margin: 16px 0 0; padding: 0 2px 0 0; }
+.bm-scan-tasks:empty { display: none; }
+.bm-scan-tasks li { position: relative; padding: 2px 0; }
+.bm-scan-tasks button {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 0;
   border: 0;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.06);
+  background: none;
+  text-align: left;
   color: var(--e-ui-ink);
-  font: 500 12px/1.3 var(--e-ui);
+  font: 500 13px/1.4 var(--e-ui);
+  cursor: pointer;
 }
-.bm-scan-hits button { cursor: pointer; transition: background-color 0.35s cubic-bezier(0.22, 1, 0.36, 1); }
-.bm-scan-hits button:hover { background: rgba(255, 255, 255, 0.13); }
-.bm-scan-hits q { color: var(--e-ui-muted); font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bm-scan-hits .note { color: var(--e-ui-muted); cursor: help; }
+.bm-scan-tasks button span { flex: 1; min-width: 0; transition: color 0.35s cubic-bezier(0.22, 1, 0.36, 1); }
+.bm-scan-tasks button:hover span { color: #fff; }
+.bm-scan-tasks i {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  margin-top: 1px;
+  border-radius: 5px;
+  box-shadow: inset 0 0 0 1.5px rgba(148, 190, 255, 0.34);
+  transition: box-shadow 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.bm-scan-tasks button:hover i { box-shadow: inset 0 0 0 1.5px rgba(148, 190, 255, 0.7); }
+.bm-scan-tasks button b {
+  flex: none;
+  min-width: 20px;
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  font: 600 11px/1 var(--e-ui);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  color: var(--e-ui-muted);
+}
+.bm-scan-tasks li p { margin: 0 0 8px 25px; font: 12.5px/1.55 var(--e-ui); color: var(--e-ui-muted); }
+.bm-scan-tasks li.open button span { color: #fff; }
+.bm-scan-tasks li.done button { cursor: default; color: var(--e-ui-faint); }
+.bm-scan-tasks li.done span { text-decoration: line-through; color: var(--e-ui-faint); }
+.bm-scan-tasks li.done i { position: relative; background: var(--e-beam); box-shadow: none; }
+/* The tick: two sides of a rotated box. */
+.bm-scan-tasks li.done i::after {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 2px;
+  width: 4px;
+  height: 8px;
+  border: solid #03121f;
+  border-width: 0 1.8px 1.8px 0;
+  transform: rotate(45deg);
+}
+.bm-scan-prompt { margin-top: 14px; }
+.bm-scan-prompt[hidden] { display: none; }
 
 .bm-scan-acts { display: flex; gap: 8px; margin-top: 14px; }
 .bm-scan-acts[hidden] { display: none; }
@@ -715,3 +764,21 @@
    sheet's top corners itself. */
 .bm-reader-host .bm-scan { border-radius: 9px 9px 0 0; }
 .bm-reader-host .bm-scan::before { display: none; }
+
+/* In the composer's side panel: no chrome of its own. It sits on the water like
+   every other section there — dial over words over list — and the panel's own
+   hairlines do the separating. */
+.bm-scan.side {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 16px;
+  padding: 0;
+  background: none;
+  animation: none;
+}
+.bm-scan.side::before { display: none; }
+.bm-scan.side .bm-scan-dial { width: 164px; margin: 0 auto; }
+.bm-scan.side .bm-scan-band { text-align: center; }
+.bm-scan.side .bm-scan-say > p { text-align: center; }
+.bm-scan.side .bm-scan-acts { justify-content: center; }
+.bm-scan.side .bm-scan-prompt { width: 100%; }

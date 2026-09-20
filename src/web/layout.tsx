@@ -1537,7 +1537,12 @@ export const ComposeLayout: FC<
             </header>
             <div class="compose-body">
               <main class="compose-main">{children}</main>
-              <aside class="compose-side">{side}</aside>
+              <aside class="compose-side">
+                {/* First thing in the panel, above who it goes to: the dial and
+                    its to-do list mount here (`client/slop-panel.ts`). */}
+                {slop ? <div class="side-sec" data-slop-panel /> : null}
+                {side}
+              </aside>
             </div>
             <footer class="compose-foot">
               {/* Autosave writes its state here: Unsaved / Saving… / Saved 14:22.

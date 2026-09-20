@@ -68,10 +68,11 @@ accident, **2** a strong tell, **1** innocent alone and only counts in numbers.
 
 ## 🧮 The score
 
-A density, not a count. Weighted tells per 100 words go through a saturating
-curve, `100 × (1 − e^(−0.3 × density))`. Three tells in 2,000 words is a clean
-piece. Three in sixty is not. Drafts under 120 words are measured against 120,
-so one em-dash in a two-line note doesn't peg the dial.
+A density, not a count. Weighted tells per 100 words (`d`) go through
+`100 × d / (d + 4)`. Three tells in 2,000 words is a clean piece. Three in sixty
+is not. The curve never pegs at 100, so in a draft that is wall-to-wall slop
+every fix still moves the number. Drafts under 120 words are measured against
+120, so one em-dash in a two-line note doesn't swing the dial.
 
 ## ⚠️ What it can't do
 
