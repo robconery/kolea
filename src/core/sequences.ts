@@ -15,6 +15,7 @@ import { logActivities, logActivity } from './activity.ts'
 import { canReceiveSequence } from './consent.ts'
 import { slugify } from './ids.ts'
 import { dispatch } from './sending.ts'
+import { findPlaceholders } from './sequence-templates/placeholders.ts'
 
 const TICK_LIMIT = 200
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -430,6 +431,20 @@ export async function setSequenceActive(
     if (!steps?.n) return { ok: false, reason: 'sequence has no steps' }
     if (s.trigger === 'tag_added' && !s.triggerTagId) {
       return { ok: false, reason: 'tag_added sequence has no trigger tag' }
+    }
+
+    // ⭐ A sequence made from a template arrives full of `[[ write this bit ]]`
+    // scaffolding. Going live with any of it left would mail instructions to
+    // real people, so it is refused here, in the one function every activation
+    // path (admin toggle and MCP) already goes through.
+    for (const step of await stepsFor(db, id)) {
+      const left = findPlaceholders(step)
+      if (left.length) {
+        return {
+          ok: false,
+          reason: `step ${step.position} still has ${left.length} template placeholder${left.length === 1 ? '' : 's'} to fill in, starting with [[ ${left[0]} ]]`,
+        }
+      }
     }
   }
 

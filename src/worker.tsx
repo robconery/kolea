@@ -26,6 +26,7 @@ import { purchaseMailAdmin } from './web/admin-purchase-mail.tsx'
 import { goalsAdmin } from './web/admin-goals.tsx'
 import { help } from './web/admin-help.tsx'
 import { mail } from './web/admin-mail.tsx'
+import { sequenceTemplatesAdmin } from './web/admin-sequence-templates.tsx'
 import { store } from './web/admin-store.tsx'
 import { tagging } from './web/admin-tags.tsx'
 import { requireOperator } from './web/auth.ts'
@@ -111,6 +112,8 @@ app.route('/', analyticsSequences)
 app.route('/', analytics)
 app.route('/', tagging)
 app.route('/', store)
+// Ahead of `mail`, which owns `/sequences/:id` and would read "templates" as an id.
+app.route('/', sequenceTemplatesAdmin)
 app.route('/', mail)
 // Ahead of `campaignsAdmin`, which owns `/sales`, so `/sales/:id/thanks` is
 // matched by the router that implements it rather than by anything broader.

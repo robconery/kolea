@@ -883,6 +883,68 @@ th a.on{color:#7dd3fc}
   letter-spacing:.19em;text-transform:uppercase;flex:0 0 auto;padding-top:3px}
 }
 
+
+/* ─────────────── sequence templates ───────────────
+   A gallery of shapes, not of cards: each entry is a band under a hairline,
+   and the only drawing is the rhythm strip — one dot per mail, placed on the
+   day it lands, so "five mails in five days" and "three mails in nine" look
+   different before a word is read. */
+@layer data {
+.tpl-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:var(--gut)}
+@media (max-width:1180px){.tpl-grid{grid-template-columns:1fr}}
+.tpl{position:relative;display:block;padding:34px 0 38px;color:inherit;text-decoration:none}
+.tpl::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:var(--rule)}
+.tpl h2{margin:0 0 8px;display:flex;align-items:baseline;gap:10px;transition:color .3s var(--glide)}
+.tpl h2 span{opacity:0;transform:translateX(-6px);color:var(--cyan);
+  transition:opacity .35s var(--glide),transform .45s var(--spring)}
+.tpl:hover h2,.tpl:focus-visible h2{color:#fff}
+.tpl:hover h2 span,.tpl:focus-visible h2 span{opacity:1;transform:none}
+.tpl p{color:var(--muted);font-size:14.5px;line-height:1.6;margin:0;max-width:52ch}
+.tpl-meta{display:flex;gap:16px;flex-wrap:wrap;margin-top:4px;color:var(--faint);
+  font-size:12.5px;font-variant-numeric:tabular-nums}
+
+.rhythm{position:relative;height:24px;margin:20px 0 10px;max-width:440px}
+.rhythm::before{content:'';position:absolute;left:0;right:0;top:50%;height:1px;
+  background:var(--rule-faint)}
+.rhythm i{position:absolute;top:50%;width:9px;height:9px;margin:-4.5px 0 0;border-radius:50%;
+  left:calc((100% - 9px) * var(--at));background:var(--cyan);
+  box-shadow:0 0 0 3px rgba(3,6,15,.9),0 0 12px rgba(34,211,238,.75)}
+.rhythm i:last-child{background:var(--violet);
+  box-shadow:0 0 0 3px rgba(3,6,15,.9),0 0 12px rgba(168,85,247,.75)}
+
+/* The plan: a vertical line of days down the left, the mails hanging off it. */
+.plan{list-style:none;margin:0;padding:0;position:relative}
+.plan::before{content:'';position:absolute;left:63px;top:8px;bottom:8px;width:1px;
+  background:var(--rule-v)}
+.plan>li{position:relative;display:grid;grid-template-columns:64px minmax(0,1fr);
+  column-gap:26px;padding:0 0 34px}
+.plan>li:last-child{padding-bottom:0}
+.plan>li::before{content:'';position:absolute;left:59px;top:6px;width:9px;height:9px;
+  border-radius:50%;background:var(--cyan);
+  box-shadow:0 0 0 4px rgba(3,6,15,.92),0 0 12px rgba(34,211,238,.7)}
+.plan>li:last-child::before{background:var(--violet);
+  box-shadow:0 0 0 4px rgba(3,6,15,.92),0 0 12px rgba(168,85,247,.7)}
+.plan .day{font:500 11.5px/1.9 var(--mono);color:var(--faint);white-space:nowrap;
+  font-variant-numeric:tabular-nums}
+.plan h4{margin:0 0 5px;font:600 15.5px/1.35 var(--display);letter-spacing:-.012em;color:#fff}
+.plan .subj{font-size:13.5px;color:var(--muted);margin:0 0 8px}
+.plan .subj em{font-style:normal;color:var(--faint);font:600 9.5px/1 var(--display);
+  letter-spacing:.19em;text-transform:uppercase;margin-right:8px}
+.plan p{font-size:14px;line-height:1.6;color:var(--muted);margin:0;max-width:60ch}
+.plan details{margin-top:10px}
+.plan summary{cursor:pointer;color:var(--faint);font-size:12.5px;
+  transition:color .3s var(--glide)}
+.plan summary:hover{color:var(--ink)}
+.plan pre{white-space:pre-wrap;word-break:break-word;margin:12px 0 0;
+  font:400 12.5px/1.7 var(--mono);color:var(--muted)}
+mark.ph{background:none;color:#e0bbff}
+
+.tpl-list{list-style:none;margin:0 0 26px;padding:0}
+.tpl-list li{position:relative;padding:0 0 9px 20px;font-size:14px;line-height:1.55;
+  color:var(--muted)}
+.tpl-list li::before{content:'';position:absolute;left:0;top:.72em;width:9px;height:1.5px;
+  border-radius:2px;background:var(--beam)}
+}
 `
 
 /**

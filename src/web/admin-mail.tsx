@@ -27,6 +27,7 @@ import {
   updateSequence,
   updateStep,
 } from '../core/sequences.ts'
+import { findPlaceholders } from '../core/sequence-templates/index.ts'
 import { BROADCAST_SCOPE_LABEL, footerPreviewHtml, previewHtml } from '../core/render.ts'
 import { type PreviewTarget, previewAddress, sendPreview } from '../core/sending.ts'
 import { type Db, getDb } from '../db/index.ts'
@@ -1157,8 +1158,11 @@ mail.get('/sequences', async (c) => {
           <form method="post" action="/sequences/tick">
             <button class="btn">Run now</button>
           </form>
-          <a class="btn primary" href="/sequences/new">
+          <a class="btn" href="/sequences/new">
             New sequence
+          </a>
+          <a class="btn primary" href="/sequences/templates">
+            Create from template
           </a>
         </div>
       </div>
@@ -1202,6 +1206,11 @@ mail.get('/sequences/new', async (c) => {
     <Layout title="New sequence" nav="seq">
       <div class="head">
         <h1>New sequence</h1>
+        <div class="actions">
+          <a class="btn" href="/sequences/templates">
+            Create from template
+          </a>
+        </div>
       </div>
       <div class="card">
         <div class="card-b">
@@ -1444,6 +1453,14 @@ mail.get('/sequences/:id', async (c) => {
                         <a class="rl" href={href}>
                           {st.subject}
                         </a>
+                        {/* Template scaffolding left in this step. Core refuses
+                            to activate while any remains, so say where it is. */}
+                        {findPlaceholders(st).length > 0 && (
+                          <>
+                            {' '}
+                            <span class="pill warn">{findPlaceholders(st).length} to fill in</span>
+                          </>
+                        )}
                       </td>
                       <td class="faint">
                         <a href={href} tabindex={-1} aria-hidden="true">

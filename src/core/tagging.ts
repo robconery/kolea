@@ -85,6 +85,11 @@ export async function applyTagRules(
   return applied
 }
 
+/** Every tag, by name. For pickers. */
+export async function listTags(db: Db) {
+  return await db.select().from(tags).orderBy(asc(tags.name)).all()
+}
+
 /** Rules with their tag and scope names resolved, for the rules table. */
 export async function listTagRules(db: Db) {
   return await db
