@@ -429,6 +429,66 @@ export const sequenceOptouts = sqliteTable(
   (t) => [primaryKey({ columns: [t.subscriberId, t.sequenceId] })],
 )
 
+/** One mail in a template. Same meaning as the `sequence_steps` columns it becomes. */
+export interface TemplateStepDoc {
+  /** Days after the PREVIOUS step. */
+  delayDays: number
+  /** Two or three words naming the mail's job. */
+  label: string
+  /** What this mail is for. Shown on the picker only, never sent. */
+  purpose: string
+  subject: string
+  bodyMd: string
+}
+
+/**
+ * A reusable sequence *shape*: how many mails, how far apart, what each is for.
+ *
+ * ⭐ A template is copied into `sequences` + `sequence_steps` once and never
+ * referenced again — there is deliberately no FK from `sequences` back to here.
+ * Editing or deleting a template must never touch a sequence already made from
+ * it (invariant 9), and the cheapest way to guarantee that is for the link not
+ * to exist.
+ *
+ * Steps are one JSON document rather than a child table for the same reason:
+ * nothing ever queries a template step on its own, a template is always read
+ * and written whole, and `sequence_steps` is where a step becomes relational.
+ *
+ * `[[ double brackets ]]` inside `subject` / `bodyMd` mark scaffolding the
+ * operator must rewrite; `setSequenceActive` refuses while any survive.
+ */
+export const sequenceTemplates = sqliteTable(
+  'sequence_templates',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    // Set once at creation and never rewritten on rename: it is the URL, and it
+    // is how "restore the starters" knows which of them are already here.
+    slug: text('slug').notNull(),
+    name: text('name').notNull(),
+    family: text('family', { enum: ['funnel', 'launch', 'welcome', 'sale', 'customer'] })
+      .notNull()
+      .default('funnel'),
+    /** Who the shape comes from. Credit, not endorsement. */
+    source: text('source').notNull().default(''),
+    tagline: text('tagline').notNull().default(''),
+    /** Plain text, paragraphs split on blank lines. */
+    description: text('description').notNull().default(''),
+    bestFor: text('best_for', { mode: 'json' }).notNull().$type<string[]>().default([]),
+    needs: text('needs', { mode: 'json' }).notNull().$type<string[]>().default([]),
+    suggestedTrigger: text('suggested_trigger', { enum: ['subscribe', 'tag_added', 'manual'] })
+      .notNull()
+      .default('manual'),
+    triggerHint: text('trigger_hint').notNull().default(''),
+    /** Prefills for the sequence. `defaultDescription` is subscriber-facing. */
+    defaultName: text('default_name').notNull().default(''),
+    defaultDescription: text('default_description').notNull().default(''),
+    steps: text('steps', { mode: 'json' }).notNull().$type<TemplateStepDoc[]>().default([]),
+    createdAt: ts('created_at').notNull(),
+    updatedAt: ts('updated_at').notNull(),
+  },
+  (t) => [uniqueIndex('sequence_templates_slug_key').on(t.slug)],
+)
+
 // ─────────────────────────────────────────────────────────── campaigns
 
 /**
@@ -1211,6 +1271,7 @@ export type Segment = typeof segments.$inferSelect
 export type TagRule = typeof tagRules.$inferSelect
 export type Broadcast = typeof broadcasts.$inferSelect
 export type Sequence = typeof sequences.$inferSelect
+export type SequenceTemplateRow = typeof sequenceTemplates.$inferSelect
 export type SequenceStep = typeof sequenceSteps.$inferSelect
 export type SequenceEnrollment = typeof sequenceEnrollments.$inferSelect
 export type Message = typeof messages.$inferSelect

@@ -939,6 +939,12 @@ th a.on{color:#7dd3fc}
   font:400 12.5px/1.7 var(--mono);color:var(--muted)}
 mark.ph{background:none;color:#e0bbff}
 
+/* One mail in the template editor: a band inside the band, under a faint rule. */
+.tpl-step{position:relative;padding:30px 0 6px;margin-top:22px;scroll-margin-top:24px}
+.tpl-step::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;
+  background:var(--rule-faint)}
+.tpl-step .card-h{padding-bottom:16px}
+
 .tpl-list{list-style:none;margin:0 0 26px;padding:0}
 .tpl-list li{position:relative;padding:0 0 9px 20px;font-size:14px;line-height:1.55;
   color:var(--muted)}
@@ -965,6 +971,8 @@ const ICONS: Record<string, string> = {
   segs: 'M9.6 19a7 7 0 1 0 0-14 7 7 0 0 0 0 14Zm4.8 0a7 7 0 1 0 0-14 7 7 0 0 0 0 14Z',
   bc: 'M4 12.2 20.2 4.6l-4.4 15.2-3.9-5.9L4 12.2Zm7.9 1.7 4.9-8',
   seq: 'M5.4 6.6h6.2a3.1 3.1 0 0 1 0 6.2H9a3.1 3.1 0 0 0 0 6.2h6.6M14.6 16.6l2.6 2.4-2.6 2.4M14.6 4.2 17.2 6.6l-2.6 2.4',
+  /* Two sheets, one behind the other: a copy waiting to be made. */
+  tpl: 'M8.2 7.4h10.2v12.8H8.2V7.4ZM5.6 16.6V3.8h10.2M11 11.6h4.6M11 14.8h3',
   out: 'M4 13.6h4.2l1.3 2.5h5l1.3-2.5H20M6.5 4.8h11l2.5 8.8v5.6H4v-5.6l2.5-8.8Z',
   /* A sheet with a filled line and an arrow leaving it: fill this in, get that back. */
   forms: 'M6.2 3.8h11.6v16.4H6.2V3.8Zm2.8 4.2h6M9 11.2h3.2M14.8 12.6v5m0 0 2-2m-2 2-2-2',
@@ -1028,6 +1036,9 @@ const NAV: ({ grp: string } | { href: string; key: string; label: string })[] = 
   { grp: 'Mail' },
   { href: '/broadcasts', key: 'bc', label: 'Broadcasts' },
   { href: '/sequences', key: 'seq', label: 'Sequences' },
+  // Directly under Sequences: a template is where a sequence starts, and it is
+  // a library you come back to, not a step inside "new sequence".
+  { href: '/sequences/templates', key: 'tpl', label: 'Templates' },
   { href: '/outbox', key: 'out', label: 'Outbox' },
   // ⭐ Analytics follows the mail it measures. Six slots rather than
   // one-with-tabs because each is a different question, and burying five of
