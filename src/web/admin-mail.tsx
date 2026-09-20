@@ -633,7 +633,7 @@ mail.get('/broadcasts/:id', async (c) => {
       {revising ? (
         // A plain form with an explicit save — no autosave. Every save here
         // rewrites a live page, so it happens when you say so and not before.
-        <form class="card" method="post" action={`/broadcasts/${id}/revise`}>
+        <form class="card" method="post" action={`/broadcasts/${id}/revise`} data-slop="1">
           <div class="card-h">
             <h2>Content</h2>
             {b.revisedAt ? (

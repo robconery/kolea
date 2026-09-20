@@ -552,17 +552,6 @@
    never the only carrier of what it means.
    ───────────────────────────────────────────────────────────────────────── */
 
-.bm-scan-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  margin-left: auto;
-  padding: 0 11px;
-  white-space: nowrap;
-}
-.bm-scan-btn svg { flex: none; }
-.bm-scan-btn:disabled { opacity: 0.5; cursor: default; }
-
 .bm-scan {
   --arc: var(--e-ui-muted);
   position: relative;
@@ -586,20 +575,6 @@
 .bm-scan[data-band='some'] { --arc: #a855f7; }
 .bm-scan[data-band='heavy'] { --arc: #fb7185; }
 
-/* The chip in the toolbar: the live score, always in the corner of your eye. */
-.bm-scan-btn b {
-  min-width: 22px;
-  padding: 3px 6px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
-  font: 600 11px/1 var(--e-ui);
-  font-variant-numeric: tabular-nums;
-  color: var(--e-ui-ink);
-}
-.bm-scan-btn[data-band='clean'] b { background: rgba(45, 212, 191, 0.2); color: #99f6e4; }
-.bm-scan-btn[data-band='some'] b { background: rgba(168, 85, 247, 0.26); color: #e9d5ff; }
-.bm-scan-btn[data-band='heavy'] b { background: rgba(251, 113, 133, 0.26); color: #fecdd3; }
-.bm-scan-btn.on { background: rgba(255, 255, 255, 0.1); color: #fff; }
 
 .bm-scan-dial { position: relative; flex: none; width: 148px; }
 .bm-scan-dial svg { display: block; width: 100%; overflow: visible; }
@@ -698,7 +673,6 @@
 
 @media (max-width: 640px) {
   .bm-scan { flex-direction: column; align-items: flex-start; gap: 14px; padding: 18px 20px; }
-  .bm-scan-btn span { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   .bm-scan { animation: none; }
@@ -736,3 +710,8 @@
 }
 .bm-slop-tip[hidden] { display: none; }
 .bm-slop-tip b { display: block; margin-bottom: 3px; font-weight: 600; color: var(--e-ui-ink); }
+
+/* In the read-only view there is no toolbar above the strip, so it carries the
+   sheet's top corners itself. */
+.bm-reader-host .bm-scan { border-radius: 9px 9px 0 0; }
+.bm-reader-host .bm-scan::before { display: none; }

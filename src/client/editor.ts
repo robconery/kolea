@@ -151,8 +151,7 @@ function mount(host: HTMLElement): void {
       if (hidden) hidden.value = JSON.stringify(editor.getJSON())
     }
     attachComposer(form, sync)
-    const panel = attachSlopPanel(host, form, editor)
-    if (panel) reportSlop = panel.onReport
+    if (form.dataset.slop) reportSlop = attachSlopPanel(host, editor, form).onReport
   }
 
   // Belt and braces: sync on submit too, in case a command mutated the doc
@@ -309,11 +308,15 @@ function mountReader(host: HTMLElement): void {
   el.className = 'bm-editor'
   host.append(el)
 
-  new Editor({
+  // Sent mail gets its reading too. Same dial, nothing to hold.
+  let reportSlop: (state: SlopState) => void = () => {}
+
+  const editor = new Editor({
     element: el,
     editable: false,
     extensions: [
       ...docExtensions(),
+      SlopLint.configure({ enabled: true, onReport: (s) => reportSlop(s) }),
       // Read-only, so the table has nothing to resize.
       TableKit.configure({ table: { resizable: false } }),
     ],
@@ -322,6 +325,7 @@ function mountReader(host: HTMLElement): void {
   })
 
   host.querySelector('.bm-reader-fallback')?.remove()
+  reportSlop = attachSlopPanel(host, editor).onReport
 
   // Same move the composer makes: the consent footer joins the sheet, so what
   // you read is the whole mail on one piece of paper.

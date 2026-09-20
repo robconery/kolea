@@ -9,6 +9,11 @@ import type { LocatedHit, SlopState } from './extensions/slop-lint.ts'
  * moves as you type, and every point of it is a phrase underlined in the draft
  * with a reason attached. Nothing leaves the browser.
  *
+ * It is always there. Not behind a button, not only while drafting: a sent
+ * broadcast shows its reading too, because the number is worth seeing next to
+ * the open rate. In the read-only view there is no Save to hold, so it only
+ * reads.
+ *
  * It is a coach, not a gate. A clean draft saves untouched; a sloppy one is
  * held until the writer has seen the number and chosen — once. The same words
  * are never questioned twice. Autosave is never held at all, and it wrote the
@@ -16,7 +21,6 @@ import type { LocatedHit, SlopState } from './extensions/slop-lint.ts'
  */
 
 const STORE = 'bm-slop'
-const OPEN = 'bm-slop-open'
 const SHOWN = 8
 
 const BANDS: Record<Band, string> = {
@@ -44,30 +48,21 @@ export interface SlopPanel {
   onReport(state: SlopState): void
 }
 
-export function attachSlopPanel(
-  host: HTMLElement,
-  form: HTMLFormElement,
-  editor: Editor,
-): SlopPanel | null {
-  const bar = host.querySelector<HTMLElement>('.bm-toolbar')
-  if (!form.dataset.slop || !bar) return null
-
-  const button = document.createElement('button')
-  button.type = 'button'
-  button.className = 'bm-tb bm-scan-btn'
-  button.innerHTML = `${GAUGE_ICON}<span>Slop</span><b data-chip>–</b>`
-  button.addEventListener('mousedown', (e) => e.preventDefault())
-  bar.append(button)
-
+/**
+ * `form` is the composer's form, and is what Save hangs off. Leave it out for a
+ * read-only view: the dial reads, and holds nothing.
+ */
+export function attachSlopPanel(host: HTMLElement, editor: Editor, form?: HTMLFormElement | null): SlopPanel {
   const strip = document.createElement('div')
   strip.className = 'bm-scan'
-  strip.hidden = !wasOpen()
   strip.innerHTML = STRIP
-  bar.after(strip)
+  // Under the toolbar where there is one; otherwise at the head of the sheet.
+  const bar = host.querySelector<HTMLElement>('.bm-toolbar')
+  if (bar) bar.after(strip)
+  else host.prepend(strip)
 
   const q = <T extends Element>(sel: string) => strip.querySelector<T>(sel) as T
   const els = {
-    chip: button.querySelector<HTMLElement>('[data-chip]') as HTMLElement,
     arc: q<SVGPathElement>('[data-arc]'),
     needle: q<SVGGElement>('[data-needle]'),
     num: q<HTMLElement>('[data-num]'),
@@ -81,18 +76,6 @@ export function attachSlopPanel(
 
   const textKey = () => hash(editor.getText())
 
-  const setOpen = (open: boolean) => {
-    strip.hidden = !open
-    button.classList.toggle('on', open)
-    try {
-      localStorage.setItem(OPEN, open ? '1' : '0')
-    } catch {
-      // Storage off. The strip still opens; it just won't remember.
-    }
-  }
-  button.classList.toggle('on', !strip.hidden)
-  button.addEventListener('click', () => setOpen(strip.hidden))
-
   /* ─────────────────────────────────────────────────────── the slop reading */
 
   const paint = (state: SlopState) => {
@@ -101,15 +84,11 @@ export function attachSlopPanel(
     const empty = report.words === 0
 
     strip.dataset.band = empty ? '' : report.band
-    button.dataset.band = empty ? '' : report.band
-    button.title = empty
-      ? `Slop check. ${REMINDER}`
-      : `Slop score ${report.score}: ${BANDS[report.band].toLowerCase()}. ${REMINDER}`
-    els.chip.textContent = empty ? '–' : String(report.score)
     setDial(els, empty ? null : report.score)
 
     els.verdict.textContent = empty ? 'Nothing to read yet' : BANDS[report.band]
     els.detail.textContent = empty ? 'Start writing and the dial follows along.' : summarize(state)
+    els.acts.hidden = true
 
     els.hits.replaceChildren(
       ...hits.slice(0, SHOWN).map((h) => hitRow(h, editor)),
@@ -121,6 +100,7 @@ export function attachSlopPanel(
   }
 
   wireTooltip(editor)
+  if (!form) return { onReport: paint }
 
   /* ──────────────────────────────────────────────────────────── on Save */
 
@@ -139,7 +119,6 @@ export function attachSlopPanel(
     if (accepted() === key) return
 
     e.preventDefault()
-    setOpen(true)
     strip.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
     els.acts.hidden = false
     q<HTMLButtonElement>('[data-save]').onclick = () => {
@@ -241,10 +220,6 @@ function setDial(
   els.num.textContent = score === null ? '–' : String(score)
 }
 
-const GAUGE_ICON =
-  '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" ' +
-  'stroke-linecap="round" aria-hidden="true"><path d="M4 17a8 8 0 1 1 16 0"/><path d="M12 17l4-6"/></svg>'
-
 // The arc is drawn with `pathLength="100"`, so the score *is* the dash offset.
 const ARC = 'M 12 66 A 54 54 0 0 1 120 66'
 const STRIP =
@@ -284,14 +259,6 @@ function accepted(): string | null {
     return sessionStorage.getItem(STORE)
   } catch {
     return null
-  }
-}
-
-function wasOpen(): boolean {
-  try {
-    return localStorage.getItem(OPEN) === '1'
-  } catch {
-    return false
   }
 }
 
