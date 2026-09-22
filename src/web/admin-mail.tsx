@@ -9,7 +9,8 @@ import {
 } from '../core/broadcasts.ts'
 import { listCampaigns } from '../core/campaigns.ts'
 import { storeMedia } from '../core/media.ts'
-import { clearFeatureImage, publishPost, setFeatureImage, unpublishPost } from '../core/posts.ts'
+import { setPostTags, tagSlug, tagsForPost } from '../core/post-tags.ts'
+import { clearFeatureImage, postPath, publishPost, setFeatureImage, unpublishPost } from '../core/posts.ts'
 import { type Photo, searchPhotos, triggerDownload, unsplashConfigured } from '../core/unsplash.ts'
 import { aiConfigured, modelFor, modelLabel } from '../core/ai/openrouter.ts'
 import { countSegment, describeRule, listSegments } from '../core/segments.ts'
@@ -789,7 +790,7 @@ mail.get('/broadcasts/:id/publishing', async (c) => {
       <Flash msg={c.req.query('flash')} kind={c.req.query('kind')} />
 
       <FeatureImage env={c.env} b={b} photos={photos} query={photoQuery} photoError={photoError} />
-      <Publishing env={c.env} b={b} />
+      <Publishing env={c.env} b={b} topics={(await tagsForPost(db, id)).map((t) => t.name)} />
     </Layout>,
   )
 })
@@ -974,6 +975,11 @@ mail.post('/broadcasts/:id/feature-image/clear', async (c) => {
   return c.redirect(`/broadcasts/${id}/publishing?flash=Featured image removed.`)
 })
 
+/** The URL segment a topic name will get — for showing the URL before it exists. */
+function topicSlug(name: string | undefined): string | null {
+  return name ? tagSlug(name) || null : null
+}
+
 /**
  * Put this broadcast on the public site, or take it down.
  *
@@ -983,13 +989,13 @@ mail.post('/broadcasts/:id/feature-image/clear', async (c) => {
  * deliberate decision made afterwards. (MCP can publish anything at any point;
  * this is the screen, not the rule.)
  */
-const Publishing: FC<{ env: Env; b: Broadcast }> = ({ env, b }) => {
+const Publishing: FC<{ env: Env; b: Broadcast; topics: string[] }> = ({ env, b, topics }) => {
   // No public site configured means nothing to publish to, so the card would be
   // a button that does nothing visible.
   if (!env.SITE_URL) return null
   const origin = env.SITE_URL.replace(/\/$/, '')
   const live = Boolean(b.publishedAt)
-  const url = b.slug ? `${origin}/${b.slug}` : ''
+  const url = b.slug ? `${origin}${postPath(b.slug, topicSlug(topics[0]))}` : ''
 
   return (
     <div class="card">
@@ -1008,7 +1014,7 @@ const Publishing: FC<{ env: Env; b: Broadcast }> = ({ env, b }) => {
           </p>
         ) : (
           <p class="faint" style="margin:0 0 18px">
-            Goes up at <code>{origin}/{b.slug || 'slug-from-the-subject'}</code>. Nothing is mailed
+            Goes up at <code>{origin}{postPath(b.slug || 'slug-from-the-subject', topicSlug(topics[0]))}</code>. Nothing is mailed
             and nothing about the send changes.
           </p>
         )}
@@ -1020,6 +1026,14 @@ const Publishing: FC<{ env: Env; b: Broadcast }> = ({ env, b }) => {
           </label>
           <p class="faint" style="margin:-8px 0 4px;font-size:12.5px">
             Leave as-is once it's live — changing it breaks every link anyone has shared.
+          </p>
+          <label>
+            <span>Topics</span>
+            <input type="text" name="tags" value={topics.join(', ')} placeholder="AI, Databases" />
+          </label>
+          <p class="faint" style="margin:-8px 0 4px;font-size:12.5px">
+            Comma-separated. The first is the topic in the URL. These tag the <em>post</em>, never the people
+            who got it. Old links keep working if you change it: the site redirects.
           </p>
           <label>
             <span>Excerpt</span>
@@ -1045,9 +1059,17 @@ mail.post('/broadcasts/:id/publish', async (c) => {
     slug: String(form.get('slug') ?? '').trim() || null,
     excerpt: String(form.get('excerpt') ?? '').trim() || null,
   })
+  const tags = await setPostTags(
+    db,
+    id,
+    String(form.get('tags') ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean),
+  )
 
   return c.redirect(
-    `/broadcasts/${id}/publishing?flash=${encodeURIComponent(`Published at /${post.slug}`)}`,
+    `/broadcasts/${id}/publishing?flash=${encodeURIComponent(`Published at ${postPath(post.slug, tags[0]?.slug)}`)}`,
   )
 })
 

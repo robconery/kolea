@@ -30,6 +30,7 @@ import { sequenceTemplatesAdmin } from './web/admin-sequence-templates.tsx'
 import { aiAdmin } from './web/admin-ai.ts'
 import { store } from './web/admin-store.tsx'
 import { tagging } from './web/admin-tags.tsx'
+import { themesAdmin } from './web/admin-themes.tsx'
 import { requireOperator } from './web/auth.ts'
 import { isSiteHost, site } from './web/site.tsx'
 import { prefs } from './web/prefs.tsx'
@@ -115,6 +116,9 @@ app.route('/', tagging)
 // The composer's writing help. JSON-only, operator-only, writes no mail.
 app.route('/', aiAdmin)
 app.route('/', store)
+// The public site's look. Operator-only like everything below `requireOperator`;
+// the site itself is a separate app, reached by hostname.
+app.route('/', themesAdmin)
 // Ahead of `mail`, which owns `/sequences/:id` and would read "templates" as an id.
 app.route('/', sequenceTemplatesAdmin)
 app.route('/', mail)

@@ -1,6 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/server'
 import * as z from 'zod/v4'
-import { getPostBySlug, listPosts, postStatus, publishPost, unpublishPost } from '../../core/posts.ts'
+import { setPostTags, tagsForPost, tagsForPosts } from '../../core/post-tags.ts'
+import { getPostBySlug, listPosts, postPath, postStatus, publishPost, unpublishPost } from '../../core/posts.ts'
 import { renderPostHtml } from '../../core/render-web.ts'
 import { type Ctx, defineTool, fail, ok } from '../kit.ts'
 
@@ -32,13 +33,18 @@ export function registerPosts(server: McpServer, ctx: Ctx): void {
     },
     async ({ q, limit, offset }) => {
       const { posts, hasMore } = await listPosts(ctx.db, { q, limit, offset })
+      const tags = await tagsForPosts(
+        ctx.db,
+        posts.map((p) => p.id),
+      )
       return ok({
         hasMore,
         posts: posts.map((p) => ({
           id: p.id,
           subject: p.subject,
           slug: p.slug,
-          url: `${origin()}/${p.slug}`,
+          tags: (tags.get(p.id) ?? []).map((t) => t.name),
+          url: `${origin()}${postPath(p.slug, tags.get(p.id)?.[0]?.slug)}`,
           excerpt: p.excerpt,
           featureImage: p.featureImage,
           publishedAt: p.publishedAt,
@@ -59,11 +65,13 @@ export function registerPosts(server: McpServer, ctx: Ctx): void {
     async ({ slug }) => {
       const post = await getPostBySlug(ctx.db, slug)
       if (!post) return fail('No published post with that slug.')
+      const tags = await tagsForPost(ctx.db, post.id)
       return ok({
         id: post.id,
         subject: post.subject,
         slug: post.slug,
-        url: `${origin()}/${post.slug}`,
+        tags: tags.map((t) => t.name),
+        url: `${origin()}${postPath(post.slug, tags[0]?.slug)}`,
         excerpt: post.excerpt,
         featureImage: post.featureImage,
         publishedAt: post.publishedAt,
@@ -78,24 +86,27 @@ export function registerPosts(server: McpServer, ctx: Ctx): void {
     'post_publish',
     {
       description:
-        'Put one broadcast on the public site. Sends nothing and changes nothing about the send — it sets a publish date, a slug and the card metadata. Re-running on a live post updates the metadata and keeps the original publish date. Omit slug/excerpt/featureImage to derive them from the subject and body.',
+        'Put one broadcast on the public site. Sends nothing and changes nothing about the send — it sets a publish date, a slug and the card metadata. Re-running on a live post updates the metadata and keeps the original publish date. Omit slug/excerpt/featureImage to derive them from the subject and body. `tags` are post topics (never subscriber tags): the first is the primary topic and the first URL segment, so ["AI"] publishes at /ai/<slug>. Omit to leave the current topics alone; pass [] to clear them.',
       inputSchema: z.object({
         broadcastId: z.number().int(),
         slug: z.string().optional(),
         excerpt: z.string().optional(),
         featureImage: z.string().optional(),
+        tags: z.array(z.string()).optional(),
       }),
     },
-    async ({ broadcastId, slug, excerpt, featureImage }) => {
+    async ({ broadcastId, slug, excerpt, featureImage, tags }) => {
       if (!ctx.env.SITE_URL) return offline()
       const before = await postStatus(ctx.db, broadcastId)
       if (!before) return fail('No such broadcast.')
 
       const post = await publishPost(ctx.db, broadcastId, { slug, excerpt, featureImage })
+      const topics = tags ? await setPostTags(ctx.db, broadcastId, tags) : await tagsForPost(ctx.db, broadcastId)
       return ok({
         published: true,
         alreadyLive: Boolean(before.publishedAt),
-        url: `${origin()}/${post.slug}`,
+        tags: topics.map((t) => t.name),
+        url: `${origin()}${postPath(post.slug, topics[0]?.slug)}`,
         slug: post.slug,
         excerpt: post.excerpt,
         publishedAt: post.publishedAt,

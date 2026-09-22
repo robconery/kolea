@@ -169,6 +169,13 @@
       "when": 1790108001651,
       "tag": "0023_equal_captain_stacy",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1790113492726,
+      "tag": "0024_steep_carnage",
+      "breakpoints": true
     }
   ]
 }

@@ -975,6 +975,8 @@ mark.ph{background:none;color:#e0bbff}
  */
 const ICONS: Record<string, string> = {
   home: 'M3.8 11.4 12 4.4l8.2 7M6.4 10v9.6h11.2V10M10.2 19.6v-5.2h3.6v5.2',
+  /* A page with a layout on it: header bar, a column, a block. */
+  theme: 'M4.4 4.4h15.2v15.2H4.4zM4.4 8.6h15.2M8.8 8.6v11M11.6 12h5.2M11.6 15.4h3.6',
   /* A heartbeat trace. The feed is a pulse — the one screen that shows the list
      as something moving rather than something counted. */
   act: 'M3.2 12.4h4l2.2-6 3.4 12.4 2.4-8.2 1.7 4.6h4.4',
@@ -1085,6 +1087,8 @@ const NAV: ({ grp: string } | { href: string; key: string; label: string })[] = 
   { href: '/store/offers', key: 'offers', label: 'Offers' },
   { href: '/store/customers', key: 'cust', label: 'Customers' },
   { href: '/store/ideas', key: 'ideas', label: 'Segment ideas' },
+  { grp: 'Site' },
+  { href: '/themes', key: 'theme', label: 'Themes' },
   { grp: 'System' },
   { href: '/consent', key: 'cons', label: 'Consent' },
   { href: '/settings', key: 'set', label: 'Settings' },

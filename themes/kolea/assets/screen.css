@@ -1,0 +1,296 @@
+*,*::before,*::after{box-sizing:border-box}
+:root{
+  /* depth — the console's three */
+  --abyss:#03060f; --deep:#050c22;
+  /* light */
+  --cyan:#22d3ee; --azure:#3b82f6; --sky:#7dd3fc;
+  /* ink */
+  --ink:#eaf3ff; --muted:#9db2d4; --faint:#6d84a8;
+  /* The dividers fade out at both ends, so a rule never ends in a hard corner. */
+  --rule:linear-gradient(90deg,transparent,rgba(148,190,255,.17) 6%,
+    rgba(148,190,255,.17) 94%,transparent);
+  --edge:rgba(148,190,255,.14);
+  --panel:rgba(255,255,255,.042);
+  --sans:'Inter',ui-sans-serif,system-ui,-apple-system,'Segoe UI',Helvetica,sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,'SF Mono',Menlo,monospace;
+  --spring:cubic-bezier(.32,.72,0,1);
+  --glide:cubic-bezier(.22,1,.36,1);
+  --radius:14px;
+  --gut:clamp(18px,3.4vw,48px);
+}
+html{-webkit-text-size-adjust:100%;scrollbar-color:rgba(148,190,255,.2) transparent}
+body{margin:0;background:var(--abyss);color:var(--ink);
+  font:17px/1.68 var(--sans);letter-spacing:-.005em;
+  -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+::selection{background:rgba(34,211,238,.28);color:#fff}
+a{color:var(--sky);text-decoration:none;transition:color .35s var(--glide)}
+a:hover{color:#a5f3fc}
+img{max-width:100%;height:auto}
+h1,h2,h3{margin:0;font-weight:600;letter-spacing:-.02em}
+
+/* ── the ocean, one layer, behind everything, inert */
+.ocean{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden;
+  background:
+    radial-gradient(120% 78% at 50% -18%,rgba(56,189,248,.20),transparent 62%),
+    radial-gradient(85% 58% at 88% 6%,rgba(139,92,246,.20),transparent 66%),
+    radial-gradient(80% 60% at 4% 96%,rgba(45,212,191,.10),transparent 62%),
+    radial-gradient(60% 45% at 78% 92%,rgba(99,102,241,.14),transparent 66%),
+    linear-gradient(178deg,#07183a 0%,var(--deep) 42%,var(--abyss) 100%)}
+.rays,.rays-b{position:absolute;left:-25%;top:-45%;width:150%;height:130%;
+  will-change:transform;transform:translateZ(0)}
+.rays{background:repeating-linear-gradient(99deg,
+    rgba(186,230,253,.070) 0 2px,transparent 2px 11px,
+    rgba(224,242,254,.045) 11px 14px,transparent 14px 34px);
+  -webkit-mask-image:radial-gradient(58% 74% at 46% -4%,#000 0%,rgba(0,0,0,.55) 40%,transparent 76%);
+  mask-image:radial-gradient(58% 74% at 46% -4%,#000 0%,rgba(0,0,0,.55) 40%,transparent 76%);
+  animation:rake 26s var(--glide) infinite alternate}
+.rays-b{background:repeating-linear-gradient(84deg,
+    rgba(165,243,252,.055) 0 3px,transparent 3px 22px);
+  -webkit-mask-image:radial-gradient(64% 60% at 68% -8%,#000 0%,transparent 72%);
+  mask-image:radial-gradient(64% 60% at 68% -8%,#000 0%,transparent 72%);
+  animation:rake-b 34s var(--glide) infinite alternate}
+@keyframes rake{from{transform:translate3d(-2.5%,0,0) rotate(-1.1deg) scaleY(1)}
+  to{transform:translate3d(3.5%,0,0) rotate(1.4deg) scaleY(1.06)}}
+@keyframes rake-b{from{transform:translate3d(3%,0,0) rotate(1deg)}
+  to{transform:translate3d(-3%,0,0) rotate(-1.2deg)}}
+.caustic{position:absolute;inset:-20%;opacity:.24;mix-blend-mode:screen;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='320'%3E%3Cfilter id='c'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.012 0.018' numOctaves='2' seed='7'/%3E%3CfeColorMatrix values='0 0 0 0 0.42 0 0 0 0 0.78 0 0 0 0 1 0 0 0 -1.6 0.72'/%3E%3C/filter%3E%3Crect width='320' height='320' filter='url(%23c)'/%3E%3C/svg%3E");
+  background-size:760px 760px;
+  -webkit-mask-image:radial-gradient(70% 55% at 50% 0%,#000,transparent 78%);
+  mask-image:radial-gradient(70% 55% at 50% 0%,#000,transparent 78%);
+  animation:swell 40s linear infinite}
+@keyframes swell{from{transform:translate3d(0,0,0) scale(1.04)}
+  50%{transform:translate3d(-3%,2%,0) scale(1.12)}
+  to{transform:translate3d(0,0,0) scale(1.04)}}
+/* Four, not the console's six. There is text to read on this one. */
+.mote{position:absolute;border-radius:50%;background:rgba(186,230,253,.62);
+  box-shadow:0 0 12px 2px rgba(103,232,249,.35);animation:drift 26s var(--glide) infinite}
+.mote:nth-child(3){width:3px;height:3px;left:12%;top:72%;animation-duration:31s}
+.mote:nth-child(4){width:2px;height:2px;left:38%;top:88%;animation-duration:24s;animation-delay:-6s}
+.mote:nth-child(5){width:4px;height:4px;left:66%;top:80%;animation-duration:38s;animation-delay:-14s;opacity:.6}
+.mote:nth-child(6){width:2px;height:2px;left:86%;top:66%;animation-duration:28s;animation-delay:-3s}
+@keyframes drift{0%{transform:translate3d(0,0,0);opacity:0}
+  12%{opacity:.75}
+  100%{transform:translate3d(38px,-78vh,0);opacity:0}}
+.grain{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.05;
+  mix-blend-mode:overlay;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E")}
+/* Water in motion is charm; water in motion while someone is trying to read is
+   a problem. One switch turns all of it off. */
+@media (prefers-reduced-motion:reduce){
+  .rays,.rays-b,.caustic,.mote{animation:none}
+  .mote{opacity:.4}
+}
+
+/* ── the page */
+.wrap{position:relative;z-index:2;max-width:920px;margin:0 auto;
+  padding:0 var(--gut) 90px}
+
+.top{display:flex;align-items:center;justify-content:space-between;gap:16px;
+  padding:26px 0 24px;margin-bottom:44px;position:relative}
+.top::after{content:'';position:absolute;left:0;right:0;bottom:0;height:1px;background:var(--rule)}
+.top .home{display:flex;align-items:center;gap:10px;color:var(--ink);
+  font:600 13px/1 var(--sans);letter-spacing:.15em;text-transform:uppercase}
+.top .home img{display:block;filter:drop-shadow(0 0 10px rgba(103,232,249,.35))}
+.top .feed{font:500 11.5px/1 var(--sans);letter-spacing:.19em;color:var(--faint)}
+.top .feed:hover{color:var(--sky)}
+
+/* Big type earns its presence from weight and tight tracking, not a second
+   family — and the gradient is the one the console puts on every h1. */
+.masthead{margin:0 0 40px}
+.masthead h1{font:700 clamp(32px,5vw,46px)/1.06 var(--sans);letter-spacing:-.038em;
+  background:linear-gradient(178deg,#ffffff 10%,#b6cff2 92%);
+  -webkit-background-clip:text;background-clip:text;color:transparent}
+.tagline{margin:16px 0 0;color:var(--muted);font-size:17px;max-width:56ch}
+
+.search{display:flex;gap:10px;margin:0 0 40px}
+.search input{flex:1;min-width:0;padding:12px 16px;border:1px solid var(--edge);
+  border-radius:10px;background:rgba(255,255,255,.045);color:var(--ink);
+  font:15px var(--sans);transition:border-color .35s var(--glide),background .35s var(--glide)}
+.search input::placeholder{color:var(--faint)}
+.search input:focus{outline:0;border-color:rgba(125,211,252,.55);background:rgba(255,255,255,.07)}
+.search button,.subscribe button{padding:12px 22px;border:1px solid rgba(125,211,252,.4);
+  border-radius:10px;background:rgba(56,189,248,.16);color:var(--ink);
+  font:600 14px var(--sans);letter-spacing:.01em;cursor:pointer;
+  transition:background .35s var(--glide),border-color .35s var(--glide)}
+.search button:hover,.subscribe button:hover{background:rgba(56,189,248,.28);
+  border-color:rgba(125,211,252,.7)}
+.result-count{margin:-24px 0 30px;color:var(--muted);font-size:15px}
+
+/* ── cards */
+.cards{display:grid;gap:22px;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));
+  align-items:start}
+.card{display:flex;flex-direction:column;background:var(--panel);
+  border:1px solid var(--edge);border-radius:var(--radius);overflow:hidden;
+  color:inherit;-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);
+  transition:transform .5s var(--spring),border-color .4s var(--glide),box-shadow .5s var(--spring)}
+.card:hover{transform:translateY(-3px);border-color:rgba(125,211,252,.42);
+  box-shadow:0 18px 42px -18px rgba(3,12,34,.9),0 0 0 1px rgba(125,211,252,.08)}
+.card-img{aspect-ratio:16/9;overflow:hidden;background:rgba(148,190,255,.07)}
+.card-img img{width:100%;height:100%;object-fit:cover;display:block}
+.card-b{padding:20px 22px 24px}
+.card-date{display:block;font:500 11px/1 var(--mono);letter-spacing:.14em;
+  text-transform:uppercase;color:var(--faint)}
+.card h2{margin:11px 0 9px;font:600 19px/1.3 var(--sans);letter-spacing:-.022em;color:#e6f0ff}
+.card:hover h2{color:#fff}
+.card p{margin:0;color:var(--muted);font-size:14.5px;line-height:1.6}
+
+.pager{display:flex;justify-content:space-between;margin:48px 0 0;font-size:14.5px}
+
+/* ── the post */
+.post-head{margin:6px 0 32px}
+.post-head .meta{margin:0 0 16px;font:500 11.5px/1 var(--mono);letter-spacing:.14em;
+  text-transform:uppercase;color:var(--faint)}
+.post-head .meta a{color:var(--faint)}
+.post-head .meta a:hover{color:var(--sky)}
+.post-head h1{font:700 clamp(30px,4.2vw,42px)/1.1 var(--sans);letter-spacing:-.036em;
+  background:linear-gradient(178deg,#ffffff 10%,#b6cff2 92%);
+  -webkit-background-clip:text;background-clip:text;color:transparent}
+.feature-wrap{margin:0 0 36px}
+.feature{width:100%;max-height:460px;object-fit:cover;border-radius:var(--radius);
+  display:block;border:1px solid var(--edge)}
+.feature-wrap figcaption{margin-top:10px;font-size:12.5px;color:var(--faint);text-align:right}
+.feature-wrap figcaption a{color:var(--faint);text-decoration:underline;
+  text-decoration-color:rgba(148,190,255,.3)}
+.feature-wrap figcaption a:hover{color:var(--sky)}
+
+/* The reading column is narrower than the page. 920px is right for a grid of
+   cards and much too wide for prose. */
+.prose{max-width:68ch;font-size:18px;line-height:1.75;color:#dfeaf9}
+.prose p,.prose ul,.prose ol,.prose pre,.prose blockquote,.prose figure,.prose .table-wrap{margin:0 0 26px}
+.prose h2{margin:48px 0 15px;font:600 25px/1.28 var(--sans);letter-spacing:-.026em;color:#f2f7ff}
+.prose h3{margin:36px 0 11px;font:600 19px/1.35 var(--sans);letter-spacing:-.02em;color:#eaf3ff}
+.prose h4,.prose h5,.prose h6{margin:30px 0 9px;font:600 16px/1.4 var(--sans);color:var(--muted)}
+.prose strong{color:#f4f8ff;font-weight:600}
+.prose ul,.prose ol{padding-left:24px}
+.prose li{margin:0 0 9px}
+.prose li::marker{color:var(--faint)}
+.prose blockquote{margin-left:0;padding:4px 0 4px 22px;border-left:2px solid rgba(125,211,252,.35);
+  color:var(--muted);font-style:italic}
+.prose pre{padding:18px 20px;background:rgba(3,10,26,.6);border:1px solid var(--edge);
+  border-radius:12px;overflow-x:auto}
+.prose code{font:13.5px/1.5 var(--mono);background:rgba(148,190,255,.12);padding:2px 6px;
+  border-radius:5px;color:#cfe6ff}
+.prose pre code{background:none;padding:0;font-size:13px;color:#d7e7fb}
+.prose figure{margin-inline:0}
+.prose figure img{border-radius:12px;display:block;border:1px solid var(--edge)}
+.prose figcaption{margin-top:10px;font-size:13.5px;color:var(--faint);text-align:center}
+.prose hr{border:0;height:1px;background:var(--rule);margin:44px 0}
+.prose .table-wrap{overflow-x:auto}
+.prose table{width:100%;border-collapse:collapse;font-size:15px}
+.prose th,.prose td{padding:10px 13px;border:1px solid var(--edge);text-align:left;vertical-align:top}
+.prose th{background:rgba(148,190,255,.08);font-weight:600;color:#e6f0ff}
+.prose .task-list{list-style:none;padding-left:0}
+.prose .task-item{display:flex;gap:11px;align-items:flex-start}
+.prose .task-item.done span{color:var(--faint);text-decoration:line-through}
+.prose .video{position:relative;aspect-ratio:16/9;margin:0 0 26px}
+.prose .video iframe{position:absolute;inset:0;width:100%;height:100%;border:0;border-radius:12px}
+.prose .cta{margin:32px 0}
+.prose .cta.center{text-align:center}
+.prose .btn{display:inline-block;padding:13px 28px;border-radius:10px;
+  border:1px solid rgba(125,211,252,.45);background:rgba(56,189,248,.18);
+  color:var(--ink);font-weight:600;font-size:16px;
+  transition:background .35s var(--glide),border-color .35s var(--glide)}
+.prose .btn:hover{background:rgba(56,189,248,.3);border-color:rgba(125,211,252,.75);color:#fff}
+.prose .align-center{text-align:center}
+.prose .align-right{text-align:right}
+
+.share{margin:52px 0 0;padding-top:24px;position:relative;font-size:14.5px}
+.share::before{content:'';position:absolute;left:0;right:0;top:0;height:1px;background:var(--rule)}
+.share a{display:inline-block;padding:9px 18px;border:1px solid var(--edge);border-radius:999px;
+  color:var(--muted);transition:border-color .35s var(--glide),color .35s var(--glide),
+  background .35s var(--glide)}
+.share a:hover{border-color:rgba(125,211,252,.5);color:var(--ink);background:rgba(56,189,248,.1)}
+
+/* ── signup */
+.subscribe{margin:72px 0 0;padding:34px;background:var(--panel);border:1px solid var(--edge);
+  border-radius:var(--radius);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}
+.subscribe h2{margin:0 0 10px;font:600 21px/1.3 var(--sans);letter-spacing:-.024em;color:#f2f7ff}
+.subscribe p{margin:0 0 20px;color:var(--muted);font-size:15px}
+.subscribe form{display:flex;gap:10px;flex-wrap:wrap}
+.subscribe input{flex:1;min-width:200px;padding:12px 16px;border:1px solid var(--edge);
+  border-radius:10px;background:rgba(3,10,26,.45);color:var(--ink);font:15px var(--sans)}
+.subscribe input::placeholder{color:var(--faint)}
+.subscribe input:focus{outline:0;border-color:rgba(125,211,252,.55)}
+.subscribe .fine{margin:16px 0 0;font-size:13px;color:var(--faint)}
+
+.empty{padding:90px 0;text-align:center}
+.empty h1{margin:0 0 12px;font:700 34px/1.15 var(--sans);letter-spacing:-.034em;
+  background:linear-gradient(178deg,#ffffff 10%,#b6cff2 92%);
+  -webkit-background-clip:text;background-clip:text;color:transparent}
+.empty p{color:var(--muted)}
+
+.foot{margin:80px 0 0;padding-top:26px;position:relative;color:var(--faint);font-size:13.5px}
+.foot::before{content:'';position:absolute;left:0;right:0;top:0;height:1px;background:var(--rule)}
+.foot p{margin:0}
+
+/* Phones. The page gutter is 18px and everything inside it gives its padding
+   back to the text — on a 390px screen, a 20px gutter plus 22px of card padding
+   was 42px of nothing on each side, which is a tenth of the display spent on
+   margin. One column, tighter insets, same type size. */
+@media (max-width:640px){
+  .wrap{padding-left:18px;padding-right:18px}
+  .cards{grid-template-columns:1fr;gap:18px}
+  .card-b{padding:16px 17px 19px}
+  .card h2{font-size:20px}
+  .subscribe{padding:24px 18px}
+  .subscribe form{gap:9px}
+  .subscribe input{min-width:0;flex-basis:100%}
+  .subscribe button{width:100%}
+  .search{gap:8px}
+  .top{padding:20px 0 18px;margin-bottom:34px}
+  .masthead{margin-bottom:32px}
+  .post-head{margin-bottom:26px}
+  .prose{font-size:17px}
+  .prose p,.prose ul,.prose ol,.prose pre,.prose blockquote,.prose figure,
+  .prose .table-wrap{margin-bottom:22px}
+  /* Code and images run to the gutter rather than sitting in their own inset
+     box inside it — a phone has no width to spare for a second frame. */
+  .prose pre{padding:14px 15px}
+  .prose ul,.prose ol{padding-left:21px}
+  .feature{border-radius:10px}
+}
+
+/* ── Added with themes: nav links, topic chips, neighbours, page counter */
+.top-links{display:flex;align-items:center;gap:22px}
+.top-links a{font:500 11.5px/1 var(--sans);letter-spacing:.16em;text-transform:uppercase;color:var(--faint)}
+.top-links a:hover,.top-links a.nav-current{color:var(--sky)}
+.kicker{margin:0 0 12px;font:500 11.5px/1 var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--cyan)}
+.masthead .count{margin:14px 0 0;font:500 12px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--faint)}
+.card-meta{display:flex;align-items:center;gap:10px;margin:0;font:500 11px/1 var(--mono);
+  letter-spacing:.14em;text-transform:uppercase;color:var(--faint)}
+.card p.card-meta{color:var(--faint);font-size:11px;line-height:1}
+.card-tag{color:var(--cyan)}
+.card-tag::before{content:'·';margin-right:10px;color:var(--faint)}
+.pager{align-items:center}
+.page-of{font:500 11.5px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--faint)}
+.post-foot{margin:52px 0 0;padding-top:24px;position:relative}
+.post-foot::before{content:'';position:absolute;left:0;right:0;top:0;height:1px;background:var(--rule)}
+.post-foot .share{margin:0;padding:0}
+.post-foot .share::before{display:none}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 18px}
+.chip{padding:6px 13px;border:1px solid var(--edge);border-radius:999px;font:500 12.5px/1 var(--sans);
+  color:var(--muted);transition:border-color .35s var(--glide),color .35s var(--glide)}
+.chip:hover{border-color:rgba(125,211,252,.5);color:var(--ink)}
+.neighbours{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin:56px 0 0}
+.neighbours a{display:block;padding:18px 20px;border:1px solid var(--edge);border-radius:var(--radius);
+  background:var(--panel);color:var(--ink);font-weight:600;line-height:1.35;
+  transition:border-color .4s var(--glide),transform .5s var(--spring)}
+.neighbours a:hover{border-color:rgba(125,211,252,.42);transform:translateY(-2px)}
+.neighbours a span{display:block;margin-bottom:8px;font:500 11px/1 var(--mono);letter-spacing:.14em;
+  text-transform:uppercase;color:var(--faint)}
+.neighbours .older{text-align:right}
+.flat-cards .card{-webkit-backdrop-filter:none;backdrop-filter:none;background:rgba(3,10,26,.55)}
+
+/* Ghost's editor classes, so posts written for (or imported from) Ghost keep
+   their widths. Our own renderer emits these too. */
+.prose .kg-width-wide{margin-left:calc(50% - 50vw + 12vw);margin-right:calc(50% - 50vw + 12vw);max-width:none}
+.prose .kg-width-full{margin-left:calc(50% - 50vw);margin-right:calc(50% - 50vw);max-width:none}
+.prose .kg-width-full img{border-radius:0;border-left:0;border-right:0}
+
+@media (max-width:640px){
+  .top-links{gap:14px}
+  .top-links a:not(.feed){display:none}
+  .neighbours{grid-template-columns:1fr}
+  .neighbours .older{text-align:left}
+}

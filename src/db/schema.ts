@@ -1728,3 +1728,106 @@ export const aiCalls = sqliteTable(
 )
 
 export type AiCall = typeof aiCalls.$inferSelect
+
+// ─────────────────────────────────────────────────────────── post tags
+//
+// ⚠️ NOT `tags`. Those are on *people*: they drive segments, tag rules and
+// `tag_added` sequence triggers, so a tag there can put mail in someone's inbox.
+// These are on *posts* and do exactly one thing — organise the public site.
+// Sharing a table would make "tag this post AI" and "enroll everyone tagged AI"
+// the same write, which is how a blog change turns into a send.
+
+/**
+ * A topic on the public site. Its slug is a URL segment: a post whose primary
+ * tag is `ai` lives at `/ai/<post-slug>`, and `/ai` is the tag's archive.
+ */
+export const postTags = sqliteTable(
+  'post_tags',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    slug: text('slug').notNull(),
+    name: text('name').notNull(),
+    description: text('description'),
+    createdAt: ts('created_at').notNull(),
+  },
+  (t) => [uniqueIndex('post_tags_slug_key').on(t.slug)],
+)
+
+/**
+ * Which tags a post carries, in order. Position 0 is the **primary tag** — the
+ * one in the URL. Ordered rather than flagged so there is exactly one primary by
+ * construction: a boolean `is_primary` column could be true on two rows.
+ */
+export const broadcastPostTags = sqliteTable(
+  'broadcast_post_tags',
+  {
+    broadcastId: integer('broadcast_id')
+      .notNull()
+      .references(() => broadcasts.id, { onDelete: 'cascade' }),
+    postTagId: integer('post_tag_id')
+      .notNull()
+      .references(() => postTags.id, { onDelete: 'cascade' }),
+    position: integer('position').notNull().default(0),
+  },
+  (t) => [
+    primaryKey({ columns: [t.broadcastId, t.postTagId] }),
+    // The tag archive's query: every post under one tag.
+    index('broadcast_post_tags_tag_idx').on(t.postTagId),
+  ],
+)
+
+export type PostTag = typeof postTags.$inferSelect
+
+// ─────────────────────────────────────────────────────────── themes
+//
+// The public site renders through a theme: Handlebars-syntax templates run by
+// our own interpreter in `core/theme/` (Workers forbid `eval`, which is what
+// Handlebars' own compiler emits). The built-in `kolea` theme ships in the
+// bundle and is what renders when no row here is active.
+
+/**
+ * An uploaded theme. Templates and `package.json` are text and live in
+ * `theme_files`, so loading a whole theme is one query. Everything else (CSS,
+ * JS, fonts, images) is bytes, and lives in R2 under `themes/<id>/<path>`.
+ */
+export const themes = sqliteTable(
+  'themes',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    /** `package.json` name, e.g. `casper`. Re-uploading the same name replaces it. */
+    name: text('name').notNull(),
+    version: text('version').notNull().default('0.0.0'),
+    /** The parsed `package.json`, kept whole: `config.custom` defines the settings. */
+    packageJson: text('package_json', { mode: 'json' })
+      .notNull()
+      .$type<Record<string, unknown>>()
+      .default({}),
+    /** The operator's values for `config.custom`. Keys missing here use the default. */
+    settings: text('settings', { mode: 'json' })
+      .notNull()
+      .$type<Record<string, unknown>>()
+      .default({}),
+    /** At most one row is active; none active means the built-in theme. */
+    isActive: integer('is_active', { mode: 'boolean' }).notNull().default(false),
+    createdAt: ts('created_at').notNull(),
+    /** Part of the render cache key, so a re-upload is never served stale. */
+    updatedAt: ts('updated_at').notNull(),
+  },
+  (t) => [uniqueIndex('themes_name_key').on(t.name)],
+)
+
+/** A template, partial or `package.json` — the text half of a theme. */
+export const themeFiles = sqliteTable(
+  'theme_files',
+  {
+    themeId: integer('theme_id')
+      .notNull()
+      .references(() => themes.id, { onDelete: 'cascade' }),
+    /** Relative to the theme root, forward slashes: `partials/post-card.hbs`. */
+    path: text('path').notNull(),
+    body: text('body').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.themeId, t.path] })],
+)
+
+export type Theme = typeof themes.$inferSelect

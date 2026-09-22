@@ -1,0 +1,7 @@
+{{#if pages}}{{#match pages ">" 1}}
+<nav class="pager">
+    {{#if prev}}<a href="{{page_url prev}}">&larr; Newer</a>{{else}}<span></span>{{/if}}
+    <span class="page-of">Page {{page}} of {{pages}}</span>
+    {{#if next}}<a href="{{page_url next}}">Older &rarr;</a>{{else}}<span></span>{{/if}}
+</nav>
+{{/match}}{{/if}}

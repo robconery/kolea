@@ -1,0 +1,14 @@
+{{!< default}}
+{{> search-box}}
+
+{{#if query}}
+<p class="result-count">
+    {{plural pagination.total empty="Nothing matches" singular="% post matching" plural="% posts matching"}} “{{query}}” · <a href="/search">clear</a>
+</p>
+{{/if}}
+
+<div class="cards">
+    {{#foreach posts}}{{> card}}{{/foreach}}
+</div>
+
+{{pagination}}

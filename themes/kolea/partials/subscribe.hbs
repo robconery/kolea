@@ -1,0 +1,15 @@
+{{!-- Posts to the ordinary signup endpoint on the admin host: the same consent,
+      double-opt-in and tagging path as every other signup. Hidden entirely
+      when no form is configured — a box that drops addresses is worse than
+      no box. --}}
+{{#if @site.signup_action}}
+<section class="subscribe">
+    <h2>Get these by email</h2>
+    {{#if @site.description}}<p>{{@site.description}}</p>{{/if}}
+    <form method="post" action="{{@site.signup_action}}">
+        <input type="email" name="email" required placeholder="you@example.com" aria-label="Email address">
+        <button type="submit">Subscribe</button>
+    </form>
+    <p class="fine">No spam. Unsubscribe from any email, one click, and it only stops what you asked it to stop.</p>
+</section>
+{{/if}}

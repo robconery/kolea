@@ -1,0 +1,6 @@
+{{!< default}}
+<div class="empty">
+    <h1>{{#match statusCode 404}}Not here{{else}}Something broke{{/match}}</h1>
+    <p>{{#match statusCode 404}}That page doesn't exist, or it isn't published.{{else}}{{message}}{{/match}}</p>
+    <p><a href="/">&larr; Everything else</a></p>
+</div>

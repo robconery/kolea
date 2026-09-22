@@ -106,12 +106,14 @@ function renderNode(node: DocNode): string {
       const alt = escapeHtml(String(node.attrs?.alt ?? ''))
       const caption = String(node.attrs?.title ?? '')
       // `loading="lazy"` is free here and impossible in mail.
-      const img = `<img src="${escapeHtml(src)}" alt="${alt}" loading="lazy" decoding="async" />`
+      const img = `<img class="kg-image" src="${escapeHtml(src)}" alt="${alt}" loading="lazy" decoding="async" />`
       const href = node.attrs?.href ? String(node.attrs.href) : ''
       const wrapped = href ? `<a href="${escapeHtml(href)}">${img}</a>` : img
+      // `kg-*` are Ghost's editor classes. Every Ghost theme styles them, so
+      // emitting them is what makes a post look right in a theme built for Ghost.
       return caption
-        ? `<figure>${wrapped}<figcaption>${escapeHtml(caption)}</figcaption></figure>`
-        : `<figure>${wrapped}</figure>`
+        ? `<figure class="kg-card kg-image-card kg-card-hascaption">${wrapped}<figcaption>${escapeHtml(caption)}</figcaption></figure>`
+        : `<figure class="kg-card kg-image-card">${wrapped}</figure>`
     }
 
     // An email button is a call to action that still makes sense on the page —
@@ -120,7 +122,7 @@ function renderNode(node: DocNode): string {
       const label = children(node).trim() || escapeHtml(String(node.attrs?.label ?? 'Click here'))
       const href = String(node.attrs?.href ?? '#')
       const align = String(node.attrs?.align ?? 'left')
-      return `<p class="cta${align === 'center' ? ' center' : ''}"><a class="btn" href="${escapeHtml(href)}">${label}</a></p>`
+      return `<p class="cta kg-card kg-button-card kg-align-${align === 'center' ? 'center' : 'left'}${align === 'center' ? ' center' : ''}"><a class="btn kg-btn kg-btn-accent" href="${escapeHtml(href)}">${label}</a></p>`
     }
 
     case 'mergeTag':
@@ -154,7 +156,7 @@ function renderNode(node: DocNode): string {
       if (!src) return ''
       const embed = youtubeEmbedUrl(src)
       if (!embed) return `<p><a href="${escapeHtml(src)}">Watch the video</a></p>`
-      return `<div class="video"><iframe src="${escapeHtml(embed)}" title="Video" loading="lazy" allowfullscreen allow="accelerometer; clipboard-write; encrypted-media; picture-in-picture"></iframe></div>`
+      return `<div class="video kg-card kg-embed-card"><iframe src="${escapeHtml(embed)}" title="Video" loading="lazy" allowfullscreen allow="accelerometer; clipboard-write; encrypted-media; picture-in-picture"></iframe></div>`
     }
 
     default:

@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="{{@site.locale}}">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>{{meta_title}}</title>
+    <link rel="icon" href="/favicon.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+    <link rel="stylesheet" href="{{asset "screen.css"}}">
+    {{ghost_head}}
+</head>
+<body class="{{body_class}}{{#match @custom.card_style "Flat"}} flat-cards{{/match}}">
+    {{> ocean}}
+    <div class="wrap">
+        <nav class="top">
+            <a class="home" href="/">
+                <img src="/logo_200.png" alt="" width="24" height="23">
+                <span>{{@site.title}}</span>
+            </a>
+            <span class="top-links">
+                {{#foreach @site.navigation from="2" limit="4"}}
+                <a class="{{link_class for=url}}" href="{{url}}">{{label}}</a>
+                {{/foreach}}
+                <a class="feed" href="/feed.xml">RSS</a>
+            </span>
+        </nav>
+
+        {{{body}}}
+
+        <footer class="foot">
+            <p>&copy; {{date @site.now format="YYYY"}} {{@site.author}} · <a href="/feed.xml">RSS</a></p>
+        </footer>
+    </div>
+    {{ghost_foot}}
+</body>
+</html>

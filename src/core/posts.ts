@@ -1,6 +1,6 @@
-import { and, desc, eq, isNotNull, ne, or, sql } from 'drizzle-orm'
+import { and, asc, count, desc, eq, gt, inArray, isNotNull, lt, ne, notInArray, or, sql, type SQL } from 'drizzle-orm'
 import type { Db } from '../db/index.ts'
-import { broadcasts } from '../db/schema.ts'
+import { broadcastPostTags, broadcasts } from '../db/schema.ts'
 import { slugify } from './ids.ts'
 import { excerptFrom, firstImageFrom, postPlainText } from './render-web.ts'
 
@@ -28,6 +28,19 @@ import { excerptFrom, firstImageFrom, postPlainText } from './render-web.ts'
 export function postUrl(siteUrl: string | undefined, slug: string | null): string | null {
   if (!siteUrl || !slug) return null
   return `${siteUrl.replace(/\/$/, '')}/${slug}`
+}
+
+/**
+ * A post's canonical path. The primary tag is the first segment when there is
+ * one — `/ai/my-post` — and the post sits at the root when there isn't.
+ *
+ * `postUrl` above still builds the bare `/<slug>` form, and that is fine: it is
+ * what the send path bakes into "read this online" links, and the site
+ * redirects it here. Mail that has already gone out can't be re-addressed, so
+ * the bare form has to resolve forever anyway.
+ */
+export function postPath(slug: string, primaryTagSlug: string | null | undefined): string {
+  return primaryTagSlug ? `/${primaryTagSlug}/${slug}` : `/${slug}`
 }
 
 /**
@@ -205,6 +218,14 @@ export interface PostQuery {
   q?: string
   limit?: number
   offset?: number
+  /** Only posts carrying this post tag (any position). */
+  tagId?: number
+  /** Only posts whose *primary* tag is this one. */
+  primaryTagId?: number
+  /** Leave these out — "more like this" lists skip the post being read. */
+  excludeIds?: number[]
+  /** Newest first unless told otherwise. */
+  order?: 'newest' | 'oldest'
 }
 
 export interface PostPage {
@@ -214,33 +235,113 @@ export interface PostPage {
 }
 
 export async function listPosts(db: Db, query: PostQuery = {}): Promise<PostPage> {
-  const limit = Math.min(Math.max(query.limit ?? 12, 1), 50)
+  const limit = Math.min(Math.max(query.limit ?? 12, 1), 100)
   const offset = Math.max(query.offset ?? 0, 0)
-  const q = (query.q ?? '').trim()
-
-  // `LIKE '%q%'` over a stored plain-text column, not FTS5. At this corpus size
-  // it is one indexless scan of a few hundred short rows, which D1 does in
-  // single-digit milliseconds — and it costs one query out of the 1,000 an
-  // invocation gets. Revisit at a few thousand posts, with an FTS5 virtual table
-  // in a custom migration.
-  const search = q
-    ? or(
-        sql`lower(${broadcasts.subject}) like ${`%${q.toLowerCase()}%`}`,
-        sql`lower(${broadcasts.searchText}) like ${`%${q.toLowerCase()}%`}`,
-      )
-    : undefined
 
   const rows = await db
     .select(postColumns)
     .from(broadcasts)
-    .where(search ? and(isPublished, search) : isPublished)
-    .orderBy(desc(broadcasts.publishedAt))
+    .where(postFilter(db, query))
+    .orderBy(query.order === 'oldest' ? asc(broadcasts.publishedAt) : desc(broadcasts.publishedAt))
     // One extra row answers "is there a next page?" without a second count query.
     .limit(limit + 1)
     .offset(offset)
     .all()
 
   return { posts: rows.slice(0, limit) as Post[], hasMore: rows.length > limit }
+}
+
+/** How many posts match — for "page 2 of 7", which `hasMore` alone can't say. */
+export async function countPosts(db: Db, query: PostQuery = {}): Promise<number> {
+  const row = await db.select({ n: count() }).from(broadcasts).where(postFilter(db, query)).get()
+  return row?.n ?? 0
+}
+
+function postFilter(db: Db, query: PostQuery): SQL | undefined {
+  const q = (query.q ?? '').trim()
+  const clauses: (SQL | undefined)[] = [isPublished]
+
+  // `LIKE '%q%'` over a stored plain-text column, not FTS5. At this corpus size
+  // it is one indexless scan of a few hundred short rows, which D1 does in
+  // single-digit milliseconds — and it costs one query out of the 1,000 an
+  // invocation gets. Revisit at a few thousand posts, with an FTS5 virtual table
+  // in a custom migration.
+  if (q) {
+    clauses.push(
+      or(
+        sql`lower(${broadcasts.subject}) like ${`%${q.toLowerCase()}%`}`,
+        sql`lower(${broadcasts.searchText}) like ${`%${q.toLowerCase()}%`}`,
+      ),
+    )
+  }
+  if (query.tagId !== undefined) {
+    clauses.push(
+      inArray(
+        broadcasts.id,
+        db
+          .select({ id: broadcastPostTags.broadcastId })
+          .from(broadcastPostTags)
+          .where(eq(broadcastPostTags.postTagId, query.tagId)),
+      ),
+    )
+  }
+  if (query.primaryTagId !== undefined) {
+    clauses.push(
+      inArray(
+        broadcasts.id,
+        db
+          .select({ id: broadcastPostTags.broadcastId })
+          .from(broadcastPostTags)
+          .where(and(eq(broadcastPostTags.postTagId, query.primaryTagId), eq(broadcastPostTags.position, 0))),
+      ),
+    )
+  }
+  if (query.excludeIds?.length) clauses.push(notInArray(broadcasts.id, query.excludeIds))
+  return and(...clauses)
+}
+
+export async function getPostById(db: Db, id: number): Promise<Post | null> {
+  const row = await db
+    .select(postColumns)
+    .from(broadcasts)
+    .where(and(eq(broadcasts.id, id), isPublished))
+    .get()
+  return (row as Post | undefined) ?? null
+}
+
+/**
+ * The post published just before (`prev`) or after (`next`) this one,
+ * optionally within one primary tag. Ghost's `{{#prev_post}}`/`{{#next_post}}`.
+ */
+export async function adjacentPost(
+  db: Db,
+  post: Pick<Post, 'id' | 'publishedAt'>,
+  direction: 'prev' | 'next',
+  primaryTagId?: number,
+): Promise<Post | null> {
+  const clauses: (SQL | undefined)[] = [
+    isPublished,
+    direction === 'prev' ? lt(broadcasts.publishedAt, post.publishedAt) : gt(broadcasts.publishedAt, post.publishedAt),
+  ]
+  if (primaryTagId !== undefined) {
+    clauses.push(
+      inArray(
+        broadcasts.id,
+        db
+          .select({ id: broadcastPostTags.broadcastId })
+          .from(broadcastPostTags)
+          .where(and(eq(broadcastPostTags.postTagId, primaryTagId), eq(broadcastPostTags.position, 0))),
+      ),
+    )
+  }
+  const row = await db
+    .select(postColumns)
+    .from(broadcasts)
+    .where(and(...clauses))
+    .orderBy(direction === 'prev' ? desc(broadcasts.publishedAt) : asc(broadcasts.publishedAt))
+    .limit(1)
+    .get()
+  return (row as Post | undefined) ?? null
 }
 
 export async function getPostBySlug(db: Db, slug: string): Promise<Post | null> {
@@ -259,15 +360,15 @@ export async function recentPosts(db: Db, limit = 20): Promise<Post[]> {
 }
 
 /** Everything published, oldest first — the sitemap's list. */
-export async function allPostSlugs(db: Db): Promise<{ slug: string; publishedAt: Date }[]> {
+export async function allPostSlugs(db: Db): Promise<{ id: number; slug: string; publishedAt: Date }[]> {
   const rows = await db
-    .select({ slug: broadcasts.slug, publishedAt: broadcasts.publishedAt })
+    .select({ id: broadcasts.id, slug: broadcasts.slug, publishedAt: broadcasts.publishedAt })
     .from(broadcasts)
     .where(isPublished)
     .orderBy(desc(broadcasts.publishedAt))
     .limit(1000)
     .all()
-  return rows as { slug: string; publishedAt: Date }[]
+  return rows as { id: number; slug: string; publishedAt: Date }[]
 }
 
 /** The publishing state of one broadcast, for the admin screen. */
