@@ -38,6 +38,7 @@ import { SlopLint, type SlopState } from './extensions/slop-lint.ts'
 import { buildBubbleMenu } from './bubble-menu.ts'
 import { attachComposer, markDirty } from './composer.ts'
 import { attachSlopPanel } from './slop-panel.ts'
+import { attachAi } from './ai.ts'
 
 // A curated language set rather than lowlight's `common`, which drags in ~40
 // grammars and roughly doubles the bundle. One line per language to add more.
@@ -152,6 +153,8 @@ function mount(host: HTMLElement): void {
     }
     attachComposer(form, sync)
     if (form.dataset.slop) reportSlop = attachSlopPanel(host, editor, form).onReport
+    // After the slop panel, so "Clean this up" lands under the dial it answers.
+    attachAi(form, editor)
   }
 
   // Belt and braces: sync on submit too, in case a command mutated the doc

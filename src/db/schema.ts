@@ -1689,3 +1689,42 @@ export const goals = sqliteTable(
 export type Conversion = typeof conversions.$inferSelect
 export type ConversionKind = typeof conversionKinds.$inferSelect
 export type Goal = typeof goals.$inferSelect
+
+/**
+ * One row per call to a language model (OpenRouter), successful or not.
+ *
+ * This is the budget. `core/ai/openrouter.ts` sums `cost_usd` for the current
+ * calendar month before every call and refuses once it reaches
+ * `AI_MONTHLY_BUDGET_USD`, so the cap holds even if the OpenRouter key has no
+ * limit of its own. A row, not a log line: Workers logs are gone in days and a
+ * monthly total has to survive the month.
+ *
+ * Nothing in here is subscriber data. The prompt and the reply are not stored,
+ * only what they cost: the draft already lives on its own row.
+ */
+export const aiCalls = sqliteTable(
+  'ai_calls',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    /** What it was for: `subject`, `cleanup`, `sequence-plan`, `sequence-mail`. */
+    task: text('task').notNull(),
+    /** The OpenRouter model id that answered, e.g. `anthropic/claude-sonnet-5`. */
+    model: text('model').notNull(),
+    promptTokens: integer('prompt_tokens').notNull().default(0),
+    completionTokens: integer('completion_tokens').notNull().default(0),
+    /**
+     * What OpenRouter charged, in US dollars, as it reported it. A real, not
+     * integer cents: a subject line costs a fraction of a cent, and rounding
+     * every call to zero would make the budget a budget for nothing.
+     */
+    costUsd: real('cost_usd').notNull().default(0),
+    ok: integer('ok', { mode: 'boolean' }).notNull(),
+    /** Why it failed, when it did. */
+    error: text('error'),
+    durationMs: integer('duration_ms').notNull().default(0),
+    createdAt: ts('created_at').notNull(),
+  },
+  (t) => [index('ai_calls_created_idx').on(t.createdAt)],
+)
+
+export type AiCall = typeof aiCalls.$inferSelect

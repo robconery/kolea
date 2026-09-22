@@ -21,6 +21,8 @@ import {
   updateTemplate,
 } from '../core/sequence-templates/index.ts'
 import type { SequenceTrigger } from '../core/sequences.ts'
+import { aiConfigured, modelFor, modelLabel } from '../core/ai/openrouter.ts'
+import { draftSequence, writeDraftIntoSequence } from '../core/ai/sequence-draft.ts'
 import { listTags } from '../core/tagging.ts'
 import { getDb } from '../db/index.ts'
 import type { Env } from '../types.ts'
@@ -352,6 +354,8 @@ sequenceTemplatesAdmin.get(`${BASE}/:slug`, async (c) => {
   const [allTags, allCampaigns] = await Promise.all([listTags(db), listCampaigns(db)])
   const days = templateSchedule(t.steps)
   const here = `${BASE}/${t.slug}`
+  // The drafting model's name, or null to hide the pitch box entirely.
+  const ai = aiConfigured(c.env) ? modelLabel(modelFor(c.env, 'sequence')) : null
 
   return c.html(
     <Layout title={t.name} nav="tpl">
@@ -508,9 +512,34 @@ sequenceTemplatesAdmin.get(`${BASE}/:slug`, async (c) => {
               value={null}
               hint="Clicks on this series count as a touch for the campaign."
             />
-            <button class="btn primary" disabled={t.steps.length === 0}>
-              Create paused sequence
-            </button>
+            {ai ? (
+              <div class="field" style="margin-top:22px">
+                <label for="brief">Your pitch, for a first draft (optional)</label>
+                <textarea
+                  id="brief"
+                  name="brief"
+                  placeholder={BRIEF_PLACEHOLDER}
+                  style="min-height:170px;font-family:var(--sans);font-size:14px"
+                />
+                <div class="faint" style="margin-top:8px">
+                  Fill this in and {ai} writes a first draft of all {t.steps.length} mails in this
+                  shape, using only what you put here. Anything it doesn't know stays a{' '}
+                  <mark class="ph">[[ placeholder ]]</mark>. Every mail opens with a note asking
+                  you to rewrite it in your own words, and the sequence can't go live until you
+                  have. Takes about a minute; costs roughly 20 to 40 cents.
+                </div>
+              </div>
+            ) : null}
+            <div style="display:flex;gap:10px;flex-wrap:wrap">
+              <button class="btn primary" disabled={t.steps.length === 0}>
+                Create paused sequence
+              </button>
+              {ai ? (
+                <button class="btn" name="draft" value="1" disabled={t.steps.length === 0}>
+                  Create and draft it with {ai}
+                </button>
+              ) : null}
+            </div>
           </form>
         </div>
       </div>
@@ -535,6 +564,15 @@ sequenceTemplatesAdmin.post(`${BASE}/:slug/use`, async (c) => {
   })
 
   if (!result.ok) return c.redirect(flashTo(`${BASE}/${slug}`, result.reason, 'warn'))
+
+  // The sequence exists either way. A draft that fails leaves the template's
+  // own scaffolding in place, which is exactly what "no draft" would have been.
+  const brief = String(form.get('brief') ?? '').trim()
+  if (String(form.get('draft') ?? '') === '1' && aiConfigured(c.env)) {
+    const flash = await draftInto(c.env, slug, result.id, brief, String(form.get('name') ?? ''))
+    return c.redirect(flashTo(`/sequences/${result.id}`, flash.msg, flash.kind))
+  }
+
   return c.redirect(
     flashTo(
       `/sequences/${result.id}`,
@@ -754,3 +792,43 @@ sequenceTemplatesAdmin.post(`${BASE}/:slug/delete`, async (c) => {
   return c.redirect(flashTo(BASE, `Deleted “${t?.name ?? slug}”.`))
 })
 
+
+/** What to put in the brief, as a placeholder the writer reads before typing. */
+const BRIEF_PLACEHOLDER = [
+  'What are you offering, and what does it cost?',
+  'Who is it for, and what are they stuck on?',
+  'Why do you care about this? The story behind it, in a few lines.',
+  'Links, dates and your name for the sign-off, if you have them.',
+].join('\n')
+
+/**
+ * Draft a freshly created sequence from its template and the brief, and say
+ * how it went in a flash the sequence page can show.
+ */
+async function draftInto(
+  env: Env,
+  slug: string,
+  sequenceId: number,
+  brief: string,
+  name: string,
+): Promise<{ msg: string; kind?: 'warn' }> {
+  const db = getDb(env)
+  const template = await getTemplate(db, slug)
+  if (!template) return { msg: 'Created, paused. The template vanished before it could be drafted.', kind: 'warn' }
+
+  const result = await draftSequence(env, db, { template, brief, sequenceName: name || template.name })
+  if (!result.ok) {
+    return {
+      msg: `Created, paused, but not drafted: ${result.reason} The template's placeholders are in place instead.`,
+      kind: 'warn',
+    }
+  }
+  await writeDraftIntoSequence(db, sequenceId, result.mails)
+  const cost = `$${result.costUsd.toFixed(2)}`
+  const missed = result.skipped
+    ? ` ${result.skipped} ${result.skipped === 1 ? 'mail' : 'mails'} could not be drafted and kept the template text.`
+    : ''
+  return {
+    msg: `Created, paused, and drafted with ${modelLabel(modelFor(env, 'sequence'))} (${cost}). Every mail opens with an [[ AI draft ]] line: rewrite the mail in your own words, then delete that line. It can't go live until you do.${missed}`,
+  }
+}

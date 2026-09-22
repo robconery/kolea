@@ -1,5 +1,5 @@
 import type { Editor } from '@tiptap/core'
-import type { Band } from '../slop/index.ts'
+import { type Band, RULES, findSlop } from '../slop/index.ts'
 import type { LocatedHit, SlopState } from './extensions/slop-lint.ts'
 
 /**
@@ -57,6 +57,37 @@ interface Task {
   hits: LocatedHit[]
   /** Still to do. A note counts as one; a finished job is zero. */
   count: number
+  /** Set for a tell in the subject line: where it is in the field's value. */
+  subject?: { start: number; end: number }[]
+}
+
+/**
+ * The rules that make sense on one line of subject: phrases and punctuation.
+ * Rules about openings, closings and paragraph shape are about a body, and on
+ * a subject they would only ever misfire.
+ */
+const SUBJECT_OFF = RULES.filter((r) => 'find' in r || ('zone' in r && r.zone)).map((r) => r.id)
+
+function subjectTasks(value: string): Task[] {
+  if (!value.trim()) return []
+  const report = findSlop([{ text: value, kind: 'paragraph' }], { disable: SUBJECT_OFF })
+  const byRule = new Map<string, Task>()
+  for (const h of report.hits) {
+    const id = `subject:${h.rule}`
+    const t = byRule.get(id) ?? {
+      rule: id,
+      fix: `In the subject: ${h.fix.charAt(0).toLowerCase()}${h.fix.slice(1)}`,
+      why: h.why,
+      weight: h.weight,
+      hits: [],
+      count: 0,
+      subject: [],
+    }
+    t.subject!.push({ start: h.start, end: h.end })
+    t.count++
+    byRule.set(id, t)
+  }
+  return [...byRule.values()]
 }
 
 export interface SlopPanel {
@@ -104,7 +135,22 @@ export function attachSlopPanel(host: HTMLElement, editor: Editor, form?: HTMLFo
   const cursor = new Map<string, number>()
   let pasted = false
 
-  const textKey = () => hash(editor.getText())
+  // The subject is read too: it is the first line anyone sees, and an em-dash
+  // there is the loudest tell in the whole mail. The reader has no underline to
+  // draw in a text field, so its tells go on the list and a click selects them.
+  const subjectInput = form?.querySelector<HTMLInputElement>('input[name="subject"]') ?? null
+  let subject: Task[] = subjectInput ? subjectTasks(subjectInput.value) : []
+  let subjectTimer = 0
+  subjectInput?.addEventListener('input', () => {
+    window.clearTimeout(subjectTimer)
+    subjectTimer = window.setTimeout(() => {
+      subject = subjectTasks(subjectInput.value)
+      for (const t of subject) seen.set(t.rule, t)
+      renderTasks()
+    }, 250)
+  })
+
+  const textKey = () => hash(`${subjectInput?.value ?? ''}\n${editor.getText()}`)
 
   // A draft arriving: the next reading is a new start, with a new list.
   editor.on('transaction', ({ transaction: tr }) => {
@@ -116,7 +162,9 @@ export function attachSlopPanel(host: HTMLElement, editor: Editor, form?: HTMLFo
 
   /** Open jobs, worst first, then the finished ones. */
   const renderTasks = () => {
-    const tasks = current ? tasksOf(current) : []
+    const tasks = [...subject, ...(current ? tasksOf(current) : [])].sort(
+      (a, b) => b.weight * b.count - a.weight * a.count,
+    )
     const live = new Set(tasks.map((t) => t.rule))
     const done = [...seen.values()].filter((t) => !live.has(t.rule)).map((t) => ({ ...t, hits: [], count: 0 }))
     if (!open || !live.has(open)) open = tasks[0]?.rule ?? null
@@ -137,7 +185,7 @@ export function attachSlopPanel(host: HTMLElement, editor: Editor, form?: HTMLFo
     const text = document.createElement('span')
     text.textContent = t.fix
     b.append(box, text)
-    if (!finished && t.hits.length > 0) {
+    if (!finished && (t.hits.length > 0 || (t.subject?.length ?? 0) > 0)) {
       const n = document.createElement('b')
       n.textContent = String(t.count)
       b.title = `${t.count} in the draft. Click to go to the next one.`
@@ -148,9 +196,15 @@ export function attachSlopPanel(host: HTMLElement, editor: Editor, form?: HTMLFo
     b.addEventListener('mousedown', (e) => e.preventDefault())
     b.addEventListener('click', () => {
       open = t.rule
-      const i = (cursor.get(t.rule) ?? 0) % Math.max(t.hits.length, 1)
+      const i = (cursor.get(t.rule) ?? 0) % Math.max(t.subject?.length ?? t.hits.length, 1)
       cursor.set(t.rule, i + 1)
       renderTasks()
+      if (t.subject && subjectInput) {
+        const at = t.subject[i]
+        subjectInput.focus()
+        if (at) subjectInput.setSelectionRange(at.start, at.end)
+        return
+      }
       const hit = t.hits[i]
       if (hit) select(editor, hit)
     })
@@ -177,7 +231,7 @@ export function attachSlopPanel(host: HTMLElement, editor: Editor, form?: HTMLFo
       pasted = false
     }
     if (began === null && !empty) began = report.score
-    for (const t of tasksOf(state)) seen.set(t.rule, t)
+    for (const t of [...subject, ...tasksOf(state)]) seen.set(t.rule, t)
 
     strip.dataset.band = empty ? '' : report.band
     setDial(els, empty ? null : report.score)
@@ -191,7 +245,7 @@ export function attachSlopPanel(host: HTMLElement, editor: Editor, form?: HTMLFo
 
   els.prompt.addEventListener('click', () => {
     if (!current) return
-    void copy(promptFor(tasksOf(current))).then((ok) => {
+    void copy(promptFor([...subject, ...tasksOf(current)])).then((ok) => {
       els.prompt.textContent = ok ? 'Copied. Paste it with your draft.' : 'Could not copy'
       setTimeout(() => (els.prompt.textContent = PROMPT_LABEL), 2600)
     })
@@ -210,7 +264,8 @@ export function attachSlopPanel(host: HTMLElement, editor: Editor, form?: HTMLFo
   form.addEventListener('submit', (e) => {
     const submitter = (e as SubmitEvent).submitter as HTMLButtonElement | null
     if (cleared || submitter?.name || !current) return
-    if (current.report.band === 'clean') return
+    // A tell in the subject holds Save just as a sloppy body does.
+    if (current.report.band === 'clean' && subject.length === 0) return
 
     // Saved anyway once already: these words are not questioned again.
     const key = textKey()
@@ -338,6 +393,22 @@ function wireTooltip(editor: Editor): void {
     if ((e.target as HTMLElement).closest('.bm-slop')) tip.hidden = true
   })
   addEventListener('scroll', () => (tip.hidden = true), true)
+  // Fixing the tell deletes the underline the pointer was resting on, and a
+  // removed element never fires mouseout. So any edit, keystroke or blur puts
+  // the note away too; hovering the next underline brings it back.
+  editor.on('transaction', ({ transaction }) => {
+    if (transaction.docChanged) tip.hidden = true
+  })
+  dom.addEventListener('keydown', () => (tip.hidden = true))
+  // The reader redraws its underlines as it re-reads, which swaps the element
+  // under the pointer; moving off the new one lands on plain text and never
+  // counts as leaving an underline. So the rule is simply: pointer not on an
+  // underline, no note.
+  dom.addEventListener('mousemove', (e) => {
+    if (!tip.hidden && !(e.target as HTMLElement).closest('.bm-slop')) tip.hidden = true
+  })
+  dom.addEventListener('mouseleave', () => (tip.hidden = true))
+  editor.on('blur', () => (tip.hidden = true))
 }
 
 /** Half a turn, left to right: 0 at nine o'clock, 100 at three. */

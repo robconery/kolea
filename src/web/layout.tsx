@@ -1440,6 +1440,15 @@ export const EditorHint: FC = () => (
  * Anything that posts somewhere else (sending, deleting) goes in `extra` as its
  * own hidden form and is reached from a button carrying `form="<id>"`.
  */
+/** What the composer's AI buttons need to know: which models, and where the mail goes. */
+export interface ComposeAi {
+  /** Display names, for the small print under each button. */
+  subjectModel: string
+  cleanupModel: string
+  /** A few words on where this mail goes, handed to the subject suggester. */
+  context?: string
+}
+
 export const ComposeLayout: FC<
   PropsWithChildren<{
     title: string
@@ -1455,6 +1464,12 @@ export const ComposeLayout: FC<
      * needs coaching on.
      */
     slop?: boolean
+    /**
+     * Turns on the writing help (`client/ai.ts`): subject suggestions beside
+     * the subject, and "Clean this up" under the slop dial. Null when
+     * OpenRouter isn't configured, which hides both.
+     */
+    ai?: ComposeAi | null
     /** The row being edited, or null for one that autosave will create. */
     recordId?: number | null
     back: string
@@ -1473,6 +1488,7 @@ export const ComposeLayout: FC<
   autosave,
   preview,
   slop,
+  ai,
   recordId,
   back,
   backLabel,
@@ -1514,6 +1530,10 @@ export const ComposeLayout: FC<
         data-autosave={autosave}
         data-preview={preview}
         data-slop={slop ? '1' : undefined}
+        data-ai={ai ? '1' : undefined}
+        data-ai-subject-model={ai?.subjectModel}
+        data-ai-cleanup-model={ai?.cleanupModel}
+        data-ai-context={ai?.context}
         data-record-id={recordId ? String(recordId) : undefined}
       >
         {/* Autosave posts the form as-is, so the row it should write has to be

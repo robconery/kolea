@@ -43,3 +43,16 @@ STRIPE_WEBHOOK_SECRET=whsec_xxxxxxxxxxxx
 # demo tier's 50 requests/hour is plenty for one person picking pictures.
 # Unset just hides the picker; uploading your own image still works.
 UNSPLASH_ACCESS_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+# ── Writing help (OpenRouter) ───────────────────────────────────────────────
+# Subject suggestions, "Clean this up" and sequence drafts in the composer.
+# A key from https://openrouter.ai/settings/keys. Give the key a credit limit
+# there too. Unset hides every AI button; nothing in core/ai/ is ever called.
+OPENROUTER_KEY=sk-or-v1-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+# Optional. Hard monthly ceiling in US dollars, counted from the ai_calls table.
+# AI_MONTHLY_BUDGET_USD=10
+# Optional. OpenRouter model ids per job. Defaults: Sonnet 5 for subjects,
+# Opus 5.5 for clean-up and sequence drafts.
+# AI_MODEL_SUBJECT=anthropic/claude-sonnet-5
+# AI_MODEL_CLEANUP=anthropic/claude-opus-5.5
+# AI_MODEL_SEQUENCE=anthropic/claude-opus-5.5

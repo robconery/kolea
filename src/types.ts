@@ -63,6 +63,24 @@ export interface Env {
    */
   UNSPLASH_ACCESS_KEY?: string
 
+  /**
+   * OpenRouter API key, for the writing help in the composer: subject line
+   * suggestions, "clean this up", and drafting a sequence from a template.
+   * A secret, not a var. Unset means every AI button is hidden and nothing in
+   * `core/ai/` is ever called.
+   */
+  OPENROUTER_KEY?: string
+  /** OpenRouter model ids per job. Defaults live in `core/ai/openrouter.ts`. */
+  AI_MODEL_SUBJECT?: string
+  AI_MODEL_CLEANUP?: string
+  AI_MODEL_SEQUENCE?: string
+  /**
+   * Hard monthly ceiling on model spend, in US dollars, counted from the
+   * `ai_calls` table. Past it, every AI button answers "budget reached" until
+   * the month turns over. Defaults to 10.
+   */
+  AI_MONTHLY_BUDGET_USD?: string
+
   RESEND_API_KEY?: string
   RESEND_WEBHOOK_SECRET?: string
 

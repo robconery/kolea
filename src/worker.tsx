@@ -27,6 +27,7 @@ import { goalsAdmin } from './web/admin-goals.tsx'
 import { help } from './web/admin-help.tsx'
 import { mail } from './web/admin-mail.tsx'
 import { sequenceTemplatesAdmin } from './web/admin-sequence-templates.tsx'
+import { aiAdmin } from './web/admin-ai.ts'
 import { store } from './web/admin-store.tsx'
 import { tagging } from './web/admin-tags.tsx'
 import { requireOperator } from './web/auth.ts'
@@ -111,6 +112,8 @@ app.route('/', activityAdmin)
 app.route('/', analyticsSequences)
 app.route('/', analytics)
 app.route('/', tagging)
+// The composer's writing help. JSON-only, operator-only, writes no mail.
+app.route('/', aiAdmin)
 app.route('/', store)
 // Ahead of `mail`, which owns `/sequences/:id` and would read "templates" as an id.
 app.route('/', sequenceTemplatesAdmin)
