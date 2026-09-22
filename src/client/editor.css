@@ -1004,3 +1004,29 @@
 /* Code blocks are already dark, so they keep a lighter wash. */
 .bm-prose pre ::selection { background: rgba(34, 211, 238, 0.35); color: #fff; }
 .compose .subj::selection { background: #0b1f4d; color: #fff; }
+
+/* The read-only copy (as mailed) inside the composer frame: the same grey desk
+   and the same sheet the editor draws, so switching between editing and
+   reading a sent broadcast doesn't move the page. */
+.compose-main .bm-reader {
+  flex: 1 0 auto;
+  padding: 32px 16px 40px;
+  background: #f6f5f3;
+}
+/* The editor's writing gutter doesn't belong on a page nobody types into. */
+.compose-main .bm-reader-host .bm-editor { padding: 0; }
+/* The reader's host is the sheet here, so the words sit flat on it; the
+   composer's own sheet styling on .bm-prose would draw a second page inside. */
+.compose-main .bm-reader-host .bm-prose {
+  flex: none;
+  max-width: none;
+  min-height: 0;
+  margin: 0;
+  padding: 36px 40px 14px;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+@media (max-width: 980px) {
+  .compose-main .bm-reader { padding: 18px 0 0; }
+}

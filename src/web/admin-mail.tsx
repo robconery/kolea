@@ -558,176 +558,189 @@ mail.get('/broadcasts/:id', async (c) => {
     ? { json: b.originalBodyJson, md: b.originalBodyMd ?? '' }
     : { json: b.bodyJson, md: b.bodyMd }
 
+  // Sent mail opens in the same composer a draft does: headline subject, the
+  // paper sheet, the dial and the settings down the right. Only what differs is
+  // different. There is no autosave and no send: every save rewrites a live
+  // page, so it happens when the Save button is pressed and not before.
+  const save = revising ? <button class="btn primary">Save changes</button> : null
+  const back = asMailed ? (
+    <a class="btn" href={`/broadcasts/${id}`}>
+      Back to editing
+    </a>
+  ) : null
+
   return c.html(
-    <Layout title={b.subject} nav="bc" editor>
-      <div class="head">
-        <div>
-          <h1>{b.subject}</h1>
-          <div class="sub">
-            {statusPill(b.status)} · {describeRule(b.segment ?? {}, choices.allTags)} ·{' '}
-            {audienceSize} {audienceSize === 1 ? 'person' : 'people'}
+    <ComposeLayout
+      title={b.subject}
+      nav="bc"
+      action={revising ? `/broadcasts/${id}/revise` : `/broadcasts/${id}`}
+      slop
+      ai={revising ? composeAi(c.env, 'a newsletter broadcast that has already been sent') : null}
+      recordId={id}
+      back="/broadcasts"
+      backLabel="Back to broadcasts"
+      heading={b.subject || 'Untitled'}
+      sub={
+        <>
+          {statusPill(b.status)} {asMailed ? 'as it was mailed' : 'saving never sends it again'}
+        </>
+      }
+      actions={save ?? back}
+      side={
+        <>
+          <div class="side-sec">
+            <h3>Sent to</h3>
+            <p style="margin:0">
+              {describeRule(b.segment ?? {}, choices.allTags)} · {audienceSize}{' '}
+              {audienceSize === 1 ? 'person' : 'people'}
+            </p>
+            {b.sentAt ? <p class="faint" style="margin:8px 0 0">Sent {fmtDate(b.sentAt)}</p> : null}
             {segName ? (
-              <>
-                {' '}
-                · from segment{' '}
-                <a href={`/segments/${b.segmentId}`}>{segName}</a>
-              </>
+              <p class="faint" style="margin:8px 0 0">
+                From segment <a href={`/segments/${b.segmentId}`}>{segName}</a>
+              </p>
             ) : null}
             {campaign ? (
+              <p class="faint" style="margin:8px 0 0">
+                Campaign <a href={`/campaigns/${campaign.id}`}>{campaign.name}</a>
+              </p>
+            ) : null}
+          </div>
+          <SideWeb env={c.env} b={b} />
+          <div class="side-sec">
+            <h3>{asMailed ? 'As mailed' : 'Editing sent mail'}</h3>
+            {asMailed ? (
+              <p class="faint" style="margin:0">
+                The copy exactly as it went out. It can't be changed.{' '}
+                <a href={`/broadcasts/${id}`}>Back to the current version</a>
+              </p>
+            ) : (
               <>
-                {' '}
-                · campaign <a href={`/campaigns/${campaign.id}`}>{campaign.name}</a>
+                <p class="faint" style="margin:0">
+                  This already went out, and saving won't send it again. The change shows up on the
+                  web page and here, and the copy as mailed is kept.
+                </p>
+                {b.revisedAt ? (
+                  <p class="faint" style="margin:8px 0 0">
+                    Edited {fmtDate(b.revisedAt)} ·{' '}
+                    <a href={`/broadcasts/${id}?as=mailed`}>show as mailed</a>
+                  </p>
+                ) : null}
               </>
+            )}
+          </div>
+          {revising ? (
+            <div class="side-sec">
+              <h3>Writing</h3>
+              <EditorHint />
+            </div>
+          ) : null}
+        </>
+      }
+      foot={
+        <>
+          <FootNote msg={c.req.query('flash')} kind={c.req.query('kind')} />
+          {save ?? back}
+        </>
+      }
+    >
+      {/* The numbers lead: they are what a sent broadcast has that a draft doesn't. */}
+      <div class="compose-stats">
+        <div class="stats">
+          <div class="stat">
+            <div class="n">{stats.recipients}</div>
+            <div class="l">Recipients</div>
+          </div>
+          <div class="stat hi">
+            <div class="n">{stats.sent}</div>
+            <div class="l">Sent</div>
+          </div>
+          <div class="stat">
+            <div class="n">{stats.opened}</div>
+            <div class="l">Opened</div>
+            {reached > 0 ? (
+              <div class="h">{((stats.opened / reached) * 100).toFixed(1)}% of reached</div>
             ) : null}
           </div>
+          <div class="stat">
+            <div class="n">{stats.clicked}</div>
+            <div class="l">Clicked</div>
+            {stats.opened > 0 ? (
+              <div class="h">{((stats.clicked / stats.opened) * 100).toFixed(2)}% of readers</div>
+            ) : null}
+          </div>
+          <div class="stat">
+            <div class="n">{stats.unsubscribed}</div>
+            <div class="l">Unsubscribed</div>
+            {reached > 0 ? (
+              <div class="h">{((stats.unsubscribed / reached) * 100).toFixed(2)}% of reached</div>
+            ) : null}
+          </div>
+          {stats.source === 'live' ? (
+            <>
+              <div class="stat">
+                <div class="n">{stats.suppressed}</div>
+                <div class="l">Skipped</div>
+              </div>
+              <div class="stat">
+                <div class="n">{stats.failed}</div>
+                <div class="l">Failed</div>
+              </div>
+            </>
+          ) : null}
         </div>
+        {stats.source === 'imported' ? (
+          <p class="faint" style="margin:20px 0 0">
+            Totals carried over from Kit. There are no per-recipient records behind them, so
+            nothing here can be opened up, and rates are over recipients, which Kit already
+            reports net of bounces.
+          </p>
+        ) : null}
       </div>
 
-      <Flash msg={c.req.query('flash')} kind={c.req.query('kind')} />
-
-      <div class="card">
-        <div class="card-b flush">
-            <div class="stats">
-              <div class="stat">
-                <div class="n">{stats.recipients}</div>
-                <div class="l">Recipients</div>
-              </div>
-              <div class="stat hi">
-                <div class="n">{stats.sent}</div>
-                <div class="l">Sent</div>
-              </div>
-              <div class="stat">
-                <div class="n">{stats.opened}</div>
-                <div class="l">Opened</div>
-                {reached > 0 ? (
-                  <div class="h">{((stats.opened / reached) * 100).toFixed(1)}% of reached</div>
-                ) : null}
-              </div>
-              <div class="stat">
-                <div class="n">{stats.clicked}</div>
-                <div class="l">Clicked</div>
-                {stats.opened > 0 ? (
-                  <div class="h">
-                    {((stats.clicked / stats.opened) * 100).toFixed(2)}% of readers
-                  </div>
-                ) : null}
-              </div>
-              <div class="stat">
-                <div class="n">{stats.unsubscribed}</div>
-                <div class="l">Unsubscribed</div>
-                {reached > 0 ? (
-                  <div class="h">{((stats.unsubscribed / reached) * 100).toFixed(2)}% of reached</div>
-                ) : null}
-              </div>
-              {stats.source === 'live' ? (
-                <>
-                  <div class="stat">
-                    <div class="n">{stats.suppressed}</div>
-                    <div class="l">Skipped</div>
-                  </div>
-                  <div class="stat">
-                    <div class="n">{stats.failed}</div>
-                    <div class="l">Failed</div>
-                  </div>
-                </>
-              ) : null}
-            </div>
-            {stats.source === 'imported' ? (
-              <p class="faint" style="margin:26px 0 0">
-                Totals carried over from Kit. There are no per-recipient records behind them, so
-                nothing here can be opened up — and rates are over recipients, which Kit already
-                reports net of bounces.
-              </p>
-            ) : null}
-        </div>
-      </div>
-
-      <WebStatus env={c.env} b={b} />
-
-      {revising ? (
-        // A plain form with an explicit save — no autosave. Every save here
-        // rewrites a live page, so it happens when you say so and not before.
-        <form class="card" method="post" action={`/broadcasts/${id}/revise`} data-slop="1">
-          <div class="card-h">
-            <h2>Content</h2>
-            {b.revisedAt ? (
-              <span class="faint">
-                Edited {fmtDate(b.revisedAt)} ·{' '}
-                <a href={`/broadcasts/${id}?as=mailed`}>show as mailed</a>
-              </span>
-            ) : null}
-            <div class="actions">
-              <button class="btn primary">Save changes</button>
+      {asMailed ? (
+        <>
+          <div class="compose-subject">
+            <div class="subj" role="heading" aria-level={2}>
+              {b.originalSubject || b.subject}
             </div>
           </div>
-          <div class="card-b">
-            <div class="note">
-              <strong>This already went out, and saving won't send it again.</strong> The change
-              shows up on the web page and here. The copy as it was mailed is kept.
-            </div>
-            <Subject value={b.subject} />
-            <RichEditor json={b.bodyJson} md={b.bodyMd} bare inline footer={broadcastFooter} />
-          </div>
-        </form>
+          <MailReader
+            json={shown.json}
+            md={shown.md}
+            fallback={previewHtml(shown.json, shown.md)}
+            footer={broadcastFooter}
+          />
+        </>
       ) : (
-        <div class="card">
-          <div class="card-h">
-            <h2>Content</h2>
-            {asMailed ? (
-              <span class="faint">
-                As mailed · <a href={`/broadcasts/${id}`}>back to editing</a>
-              </span>
-            ) : null}
-          </div>
-          <div class="card-b">
-            {asMailed ? (
-              <p class="faint" style="margin:0 0 18px">
-                Subject as mailed: <strong>{b.originalSubject}</strong>
-              </p>
-            ) : null}
-            <MailReader
-              json={shown.json}
-              md={shown.md}
-              fallback={previewHtml(shown.json, shown.md)}
-              footer={broadcastFooter}
-            />
-          </div>
-        </div>
+        <>
+          <Subject value={b.subject} />
+          <RichEditor json={b.bodyJson} md={b.bodyMd} bare footer={broadcastFooter} />
+        </>
       )}
-    </Layout>,
+    </ComposeLayout>,
   )
 })
 
-/**
- * One line on the broadcast report: is this thing on the web, and where.
- *
- * The controls themselves live on their own page. They have to work for drafts
- * too, and a draft opens in the composer — which is one full-page form, and
- * forms cannot nest.
- */
-const WebStatus: FC<{ env: Env; b: Broadcast }> = ({ env, b }) => {
+/** The web status, for the composer's side panel. Nothing when there is no public site. */
+const SideWeb: FC<{ env: Env; b: Broadcast }> = ({ env, b }) => {
   if (!env.SITE_URL) return null
   const url = b.slug ? `${env.SITE_URL.replace(/\/$/, '')}/${b.slug}` : ''
-
   return (
-    <div class="card">
-      <div class="card-h">
-        <h2>Web</h2>
-        <a class="btn" href={`/broadcasts/${b.id}/publishing`}>
-          {b.publishedAt ? 'Manage' : 'Publish'}
-        </a>
-      </div>
-      <div class="card-b">
-        {b.publishedAt ? (
-          <p style="margin:0">
-            Published {fmtDate(b.publishedAt)} at <a href={url}>{url}</a>
-          </p>
-        ) : (
-          <p class="faint" style="margin:0">
-            Not on the public site. Publishing sends nothing — it puts this piece on a page.
-          </p>
-        )}
-      </div>
+    <div class="side-sec">
+      <h3>On the web</h3>
+      {b.publishedAt ? (
+        <p style="margin:0">
+          Published {fmtDate(b.publishedAt)} at <a href={url}>{url}</a>
+        </p>
+      ) : (
+        <p class="faint" style="margin:0">
+          Not on the public site. Publishing sends nothing; it puts this piece on a page.
+        </p>
+      )}
+      <p style="margin:10px 0 0">
+        <a href={`/broadcasts/${b.id}/publishing`}>{b.publishedAt ? 'Manage' : 'Publish'} →</a>
+      </p>
     </div>
   )
 }

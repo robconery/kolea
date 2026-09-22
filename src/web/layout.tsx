@@ -691,6 +691,19 @@ html:has(.compose-stage){overflow:hidden}
   overflow-x:hidden}
 /* The subject sets like a headline, because that is what it is. */
 .compose-subject{flex:0 0 auto;padding:26px clamp(22px,5vw,74px) 20px}
+/* A sent broadcast's numbers, heading the column above its subject. Same
+   gutters as the subject, and the house hairline under them. */
+.compose-stats{position:relative;flex:0 0 auto;padding:26px clamp(22px,5vw,74px) 24px}
+/* auto-fill, not auto-fit: a number that wraps lands under the one above it
+   instead of stretching across the row. */
+.compose-stats .stats{grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:20px 0}
+.compose-stats .stat{padding:0 12px 0 0}
+.compose-stats .stat .l{letter-spacing:.12em;white-space:nowrap}
+.compose-stats .stat .n{font-size:clamp(21px,1.8vw,27px)}
+.compose-stats .stat .h{font-size:12px}
+.compose-stats > .faint{font-size:12.5px;max-width:62ch}
+.compose-stats::after{content:'';position:absolute;left:clamp(22px,5vw,74px);right:clamp(22px,5vw,74px);
+  bottom:0;height:1px;background:var(--rule)}
 .compose .subj{width:100%;padding:0;border:0;border-radius:0;background:none;box-shadow:none;
   font:600 clamp(20px,2.2vw,27px)/1.25 var(--display);letter-spacing:-.032em;color:#f2f8ff}
 .compose .subj:hover,.compose .subj:focus{box-shadow:none;outline:0;background:none}
@@ -744,6 +757,8 @@ html:has(.compose-stage){overflow:hidden}
   .compose-body{display:block}
   .compose-main{overflow:visible}
   .compose-subject{padding:20px 20px 16px}
+  .compose-stats{padding:20px 20px 18px}
+  .compose-stats::after{left:20px;right:20px}
   .compose-side{overflow:visible;padding:26px 20px 40px}
   .compose-side::before{left:0;right:0;top:0;bottom:auto;width:auto;height:1px;background:var(--rule)}
   .compose-foot{position:sticky;bottom:0;z-index:20;

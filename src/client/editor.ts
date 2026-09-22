@@ -328,7 +328,10 @@ function mountReader(host: HTMLElement): void {
   })
 
   host.querySelector('.bm-reader-fallback')?.remove()
-  reportSlop = attachSlopPanel(host, editor).onReport
+  // Inside the composer frame (a sent broadcast, as mailed) the dial takes the
+  // side panel like it does while writing. It holds nothing: there is no Save.
+  const frame = host.closest<HTMLFormElement>('form[data-slop]')
+  reportSlop = attachSlopPanel(host, editor, frame).onReport
 
   // Same move the composer makes: the consent footer joins the sheet, so what
   // you read is the whole mail on one piece of paper.
