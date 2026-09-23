@@ -634,6 +634,27 @@ mail.get('/broadcasts/:id', async (c) => {
             ) : null}
           </div>
           <SideWeb env={c.env} b={b} />
+          {/* A sent broadcast can still be mailed to its author, one copy, as many
+              times as they like: that is how a change to the email template gets
+              looked at in a real inbox. `formaction`, so it never saves the
+              editor's contents on the way: a save here rewrites a live page. */}
+          <div class="side-sec">
+            <h3>Send it to yourself</h3>
+            <button
+              class="btn"
+              type="submit"
+              formaction={`/broadcasts/${id}/preview`}
+              formnovalidate
+              title={`Sends one copy to ${previewAddress(c.env)}`}
+            >
+              Send a preview
+            </button>
+            <p class="faint" style="margin:8px 0 0">
+              One copy to {previewAddress(c.env)}, built with today's template.{' '}
+              {revising ? 'It sends the saved version, so save first to include an edit. ' : ''}
+              It doesn't count toward this broadcast's numbers.
+            </p>
+          </div>
           <div class="side-sec">
             <h3>{asMailed ? 'As mailed' : 'Editing sent mail'}</h3>
             {asMailed ? (
@@ -1150,6 +1171,30 @@ mail.post('/broadcasts/:id/edit', async (c) => {
   }
   if (String(form.get('send') ?? '') === '1') return c.redirect(`/broadcasts/${id}/send`)
   return c.redirect(`/broadcasts/${id}?flash=Saved.`)
+})
+
+/**
+ * Mail one preview of a broadcast that has already gone out (or is going out):
+ * the saved version, rendered with the current template, to the operator only.
+ * Drafts preview from their own composer, which saves first.
+ *
+ * Nothing on the form is read. The button lives inside the sent-mail editor,
+ * and reading the editor here would mean previewing text that isn't saved, or
+ * saving it, which rewrites the live page. Neither belongs behind "preview".
+ */
+mail.post('/broadcasts/:id/preview', async (c) => {
+  const db = getDb(c.env)
+  const id = Number(c.req.param('id'))
+  const b = await db.select().from(broadcasts).where(eq(broadcasts.id, id)).get()
+  if (!b) return c.notFound()
+  if (b.status === 'draft') {
+    return c.redirect(
+      `/broadcasts/${id}?flash=${encodeURIComponent('Use "Send a preview" in the composer: it saves the draft first.')}&kind=warn`,
+    )
+  }
+  return c.redirect(
+    `/broadcasts/${id}${await previewFlash(c.env, db, { kind: 'broadcast', broadcastId: id, subject: b.subject })}`,
+  )
 })
 
 /**

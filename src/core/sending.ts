@@ -88,7 +88,9 @@ export async function sendPreview(
     .values({
       subscriberId: sub.id,
       kind: target.kind,
-      broadcastId: target.kind === 'broadcast' ? target.broadcastId : null,
+      // Never `broadcastId`: a preview must not count as one of the broadcast's
+      // recipients (see `messages.previewBroadcastId`).
+      previewBroadcastId: target.kind === 'broadcast' ? target.broadcastId : null,
       sequenceStepId: target.kind === 'sequence' ? target.stepId : null,
       formId: target.kind === 'form' ? target.formId : null,
       toEmail: sub.email,
@@ -233,7 +235,10 @@ export async function sendMessages(
   const subById = new Map(subs.map((s) => [s.id, s]))
 
   const bcasts = await loadByIds(
-    queued.flatMap((m) => (m.kind === 'broadcast' && m.broadcastId ? [m.broadcastId] : [])),
+    queued.flatMap((m) => {
+      const id = m.kind === 'broadcast' ? sourceBroadcastId(m) : null
+      return id ? [id] : []
+    }),
     (chunk) => db.select().from(broadcasts).where(inArray(broadcasts.id, chunk)).all(),
   )
   const bcastById = new Map(bcasts.map((b) => [b.id, b]))
@@ -407,6 +412,15 @@ export async function sendMessages(
   return outcomes
 }
 
+/**
+ * The broadcast a message renders from: the one it was sent for, or, for a
+ * preview, the one it is a copy of. Only rendering asks this. Everything that
+ * counts a broadcast's audience reads `broadcastId` alone, which is the point.
+ */
+function sourceBroadcastId(msg: Pick<MessageRow, 'broadcastId' | 'previewBroadcastId'>): number | null {
+  return msg.broadcastId ?? msg.previewBroadcastId
+}
+
 /** Resolve a message's body and consent scope from the pre-loaded sources. */
 function resolveSource(
   msg: MessageRow,
@@ -424,8 +438,9 @@ function resolveSource(
       lead?: string | null
     }
   | { missing: string } {
-  if (msg.kind === 'broadcast' && msg.broadcastId) {
-    const b = bcastById.get(msg.broadcastId)
+  const broadcastId = msg.kind === 'broadcast' ? sourceBroadcastId(msg) : null
+  if (broadcastId) {
+    const b = bcastById.get(broadcastId)
     if (!b) return { missing: 'no_broadcast' }
     return {
       body: { json: b.bodyJson, md: b.bodyMd },

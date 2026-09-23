@@ -976,6 +976,25 @@ export const messages = sqliteTable(
     kind: text('kind', { enum: ['broadcast', 'sequence', 'transactional', 'form'] }).notNull(),
     // nullable-fk: exactly one source per `kind`; transactional has none.
     broadcastId: integer('broadcast_id').references(() => broadcasts.id, { onDelete: 'cascade' }),
+    /**
+     * ⭐ A preview copy of a broadcast: the one "send it to me" mail, rendered from
+     * this broadcast exactly as a real send would be. It stands in for
+     * `broadcast_id`, which stays null on a preview, on purpose.
+     *
+     * Every count of a broadcast's recipients, opens and clicks reads
+     * `broadcast_id` (analytics, signal, pulse, campaigns, conversions…), and a
+     * Kit-era broadcast only shows its imported totals while it has *no* message
+     * rows at all. So a preview that set `broadcast_id` would add the operator to
+     * the audience, and previewing an imported broadcast would replace 13,000
+     * recipients with 1. Kept off `broadcast_id`, a preview can't touch a number.
+     * It also keeps a cancelled broadcast from swallowing its own preview.
+     *
+     * No foreign key, deliberately: SQLite can only add one by ALTER without
+     * `on delete`, and that would make every previewed broadcast undeletable. A
+     * preview pointing at a deleted broadcast is history; the sender treats it
+     * as a missing source and never sends it.
+     */
+    previewBroadcastId: integer('preview_broadcast_id'),
     sequenceStepId: integer('sequence_step_id').references(() => sequenceSteps.id, {
       onDelete: 'cascade',
     }),

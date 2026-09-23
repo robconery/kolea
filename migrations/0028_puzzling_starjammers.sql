@@ -1,0 +1,1 @@
+ALTER TABLE `messages` ADD `preview_broadcast_id` integer;

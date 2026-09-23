@@ -55,7 +55,7 @@ describe('Feature: editing a sent broadcast', () => {
       expect(page).not.toContain('data-autosave')
     })
 
-    it('offers no preview send', () => {
+    it('has no save-then-preview button (see previewing-a-sent-broadcast)', () => {
       expect(page).not.toContain('name="preview"')
     })
   })
