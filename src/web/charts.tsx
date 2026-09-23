@@ -48,6 +48,18 @@ type ChartSpec =
       center: [string, string]
     }
   | { t: 'spark'; values: number[]; height: number; fmt: 'money' | 'number' }
+  | {
+      t: 'traffic'
+      labels: string[]
+      captions: string[]
+      views: number[]
+      visitors: number[]
+      opens: number[]
+      clicks: number[]
+      /** Index into `labels` of each day a broadcast went out, and what it was. */
+      sends: { i: number; subject: string }[]
+      height: number
+    }
 
 /**
  * The mount point. Height is reserved up front so the card doesn't jolt when
@@ -164,3 +176,43 @@ export const BarRow: FC<{ value: number; max: number; tint?: string }> = ({ valu
     </div>
   )
 }
+
+export interface TrafficPoint {
+  label: string
+  caption: string
+  views: number
+  visitors: number
+  opens: number
+  clicks: number
+}
+
+/**
+ * The buzz chart: the site and the list on one timeline.
+ *
+ * Web views and visitors are areas on the left axis; email opens are a dashed
+ * line on their own right axis, because a send day's opens outnumber a normal
+ * day's page views by an order of magnitude and would flatten them to the floor
+ * on a shared scale. Each send is a marker on the axis, so the eye can walk from
+ * "the mail went out" to "the site got busy" without being told to.
+ */
+export const TrafficChart: FC<{
+  data: TrafficPoint[]
+  sends: { i: number; subject: string }[]
+  height?: number
+}> = ({ data, sends, height = 300 }) => (
+  <Mount
+    height={height}
+    label="Site views, visitors and email opens per day"
+    spec={{
+      t: 'traffic',
+      labels: data.map((d) => d.label),
+      captions: data.map((d) => d.caption),
+      views: data.map((d) => d.views),
+      visitors: data.map((d) => d.visitors),
+      opens: data.map((d) => d.opens),
+      clicks: data.map((d) => d.clicks),
+      sends,
+      height,
+    }}
+  />
+)

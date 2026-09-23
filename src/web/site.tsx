@@ -21,6 +21,7 @@ import {
 } from '../core/theme/site.ts'
 import { loadActiveTheme, readThemeAsset } from '../core/theme/store.ts'
 import { escapeHtml } from '../core/text.ts'
+import { recordDwell, recordPageView } from '../core/traffic.ts'
 import { getDb } from '../db/index.ts'
 import type { PostTag } from '../db/schema.ts'
 import type { Env } from '../types.ts'
@@ -80,10 +81,78 @@ async function siteRequest(c: Ctx): Promise<SiteRequest> {
  */
 const PAGE_CACHE = { 'Cache-Control': 'public, max-age=60, s-maxage=300' }
 
-function send(c: Ctx, r: Rendered | null, req: SiteRequest): Promise<Response> | Response {
+function send(
+  c: Ctx,
+  r: Rendered | null,
+  req: SiteRequest,
+  postId?: number,
+): Promise<Response> | Response {
   if (!r) return notFound(c, req)
-  return c.html(r.html, r.status as 200, r.status === 200 ? PAGE_CACHE : undefined)
+  const html = r.status === 200 ? withBeacon(r.html, postId ?? null) : r.html
+  return c.html(html, r.status as 200, r.status === 200 ? PAGE_CACHE : undefined)
 }
+
+// ─────────────────────────────────────────────────────────── the beacon
+
+/** Where the beacon posts. Not a page, so it can never collide with a slug. */
+const HIT_PATH = '/_k/hit'
+
+/**
+ * The page-view beacon, inlined into every page the site serves.
+ *
+ * Added here rather than in the theme so every theme counts the same way and an
+ * uploaded theme can't forget it. It sends two things: the view, on load, and
+ * the time the tab was visible, each time it is hidden. `sendBeacon` survives
+ * the tab closing, which is exactly when the second one fires. No cookie, no
+ * storage, no third party. See `core/traffic.ts` for what the server keeps.
+ */
+function beacon(postId: number | null): string {
+  return `<script>(function(){try{var k=(crypto.randomUUID&&crypto.randomUUID())||(Date.now().toString(36)+Math.random().toString(36).slice(2)),u='${HIT_PATH}',v=Date.now(),a=0,h=0,out,go=function(d){var b=JSON.stringify(d);if(navigator.sendBeacon)navigator.sendBeacon(u,b);else fetch(u,{method:'POST',body:b,keepalive:true})};go({k:k,p:location.pathname,q:location.search,r:document.referrer,b:${postId ?? 'null'}});out=function(){if(h)return;h=1;a+=Date.now()-v;go({k:k,s:a/1000})};document.addEventListener('visibilitychange',function(){if(document.visibilityState==='hidden')out();else{h=0;v=Date.now()}});addEventListener('pagehide',out)}catch(e){}})();</script>`
+}
+
+function withBeacon(html: string, postId: number | null): string {
+  const at = html.toLowerCase().lastIndexOf('</body>')
+  const tag = beacon(postId)
+  return at === -1 ? html + tag : html.slice(0, at) + tag + html.slice(at)
+}
+
+/**
+ * Receives the beacon. Always 204, whatever happens — a reader's browser has no
+ * use for our errors. A hit from another origin is dropped: the beacon is only
+ * ever sent by our own pages, and anything else posting here is noise.
+ */
+site.post(HIT_PATH, async (c) => {
+  const origin = c.req.header('Origin')
+  if (origin && c.env.SITE_URL && origin !== new URL(c.env.SITE_URL).origin) return c.body(null, 204)
+
+  let body: { k?: unknown; p?: unknown; q?: unknown; r?: unknown; b?: unknown; s?: unknown }
+  try {
+    const text = await c.req.text()
+    if (text.length > 4096) return c.body(null, 204)
+    body = JSON.parse(text)
+  } catch {
+    return c.body(null, 204)
+  }
+  if (typeof body.k !== 'string') return c.body(null, 204)
+
+  const db = getDb(c.env)
+  if (typeof body.s === 'number') {
+    await recordDwell(db, body.k, body.s)
+  } else if (typeof body.p === 'string') {
+    const cf = (c.req.raw as unknown as { cf?: { country?: string } }).cf
+    await recordPageView(db, {
+      viewKey: body.k,
+      path: body.p,
+      search: typeof body.q === 'string' ? body.q : null,
+      referrer: typeof body.r === 'string' && body.r ? body.r : null,
+      broadcastId: typeof body.b === 'number' ? body.b : null,
+      country: cf?.country ?? null,
+      ip: c.req.header('CF-Connecting-IP') ?? null,
+      userAgent: c.req.header('User-Agent') ?? null,
+    })
+  }
+  return c.body(null, 204)
+})
 
 async function notFound(c: Ctx, req?: SiteRequest): Promise<Response> {
   const r = await renderError(req ?? (await siteRequest(c)), 404)
@@ -255,7 +324,7 @@ site.get('/:tag/:slug', async (c) => {
   const tags = await tagsForPost(req.db, post.id)
   const canonical = postPath(post.slug, tags[0]?.slug)
   if (canonical !== c.req.path) return c.redirect(canonical, 301)
-  return send(c, await renderPost(req, post, tags), req)
+  return send(c, await renderPost(req, post, tags), req, post.id)
 })
 
 /**
@@ -270,7 +339,7 @@ site.get('/:slug', async (c) => {
   if (post) {
     const tags = await tagsForPost(req.db, post.id)
     if (tags[0]) return c.redirect(postPath(post.slug, tags[0].slug), 301)
-    return send(c, await renderPost(req, post, tags), req)
+    return send(c, await renderPost(req, post, tags), req, post.id)
   }
   const tag = await getPostTagBySlug(req.db, slug)
   return send(c, tag ? await renderTag(req, tag, 1) : null, req)

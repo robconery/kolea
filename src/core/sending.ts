@@ -15,7 +15,7 @@ import {
 } from './consent.ts'
 import { downloadUrl, grantDownload, grantsForMessages } from './downloads.ts'
 import { normalizeEmail } from './ids.ts'
-import { postUrl } from './posts.ts'
+import { authoredLead, postUrl } from './posts.ts'
 import { BROADCAST_SCOPE_LABEL, type EmailBody, renderEmail } from './render.ts'
 
 /**
@@ -336,6 +336,8 @@ export async function sendMessages(
       scopeLabel: resolved.scopeLabel,
       subject: msg.subject,
       postUrl: resolved.postUrl,
+      title: resolved.title,
+      lead: resolved.lead,
       subscriber: { email: sub.email, name: sub.name },
       trackOpens: isMarketing,
       trackClicks: isMarketing,
@@ -412,7 +414,16 @@ function resolveSource(
   stepById: Map<number, typeof sequenceSteps.$inferSelect>,
   seqById: Map<number, typeof sequences.$inferSelect>,
   siteUrl: string | undefined,
-): { body: EmailBody; scope: Scope; scopeLabel: string; postUrl?: string | null } | { missing: string } {
+):
+  | {
+      body: EmailBody
+      scope: Scope
+      scopeLabel: string
+      postUrl?: string | null
+      title?: string | null
+      lead?: string | null
+    }
+  | { missing: string } {
   if (msg.kind === 'broadcast' && msg.broadcastId) {
     const b = bcastById.get(msg.broadcastId)
     if (!b) return { missing: 'no_broadcast' }
@@ -424,6 +435,10 @@ function resolveSource(
       // thing here, but an *unpublished* broadcast with a slug is — it was taken
       // down — and linking to it would 404 in every inbox that kept the mail.
       postUrl: b.publishedAt ? postUrl(siteUrl, b.slug) : null,
+      // A broadcast opens with its own title and lead, the way a post does. A
+      // sequence step or a receipt reads as a letter, and gets neither.
+      title: b.subject,
+      lead: authoredLead(b.excerpt, { json: b.bodyJson, md: b.bodyMd }),
     }
   }
 

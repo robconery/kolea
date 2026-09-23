@@ -1,7 +1,7 @@
 import { marked } from 'marked'
 import type { DocNode, MergeExtra, MergeExtras } from '../db/schema.ts'
 import { type Scope, formatScope } from './consent.ts'
-import { shareOnXUrl } from './posts.ts'
+import { shareOnFacebookUrl, shareOnLinkedInUrl, shareOnXUrl } from './posts.ts'
 import { escapeHtml, mergeFields } from './text.ts'
 import { docIsEmpty, renderDocToEmailHtml, renderDocToText } from './render-doc.ts'
 
@@ -33,6 +33,17 @@ export interface RenderContext {
    * somewhere that 404s.
    */
   postUrl?: string | null
+  /**
+   * The headline at the top of the mail. Set for a broadcast, which is a piece
+   * of writing with a title; left out for a sequence step or a receipt, which
+   * read as a letter and would look odd under a banner.
+   */
+  title?: string | null
+  /**
+   * The grey line under the title. Only ever one the operator wrote — see
+   * `authoredLead()` — and it doubles as the inbox preview text.
+   */
+  lead?: string | null
   /**
    * Per-message merge values the subscriber row can't supply — a lead magnet's
    * download URL, a buyer's offer name and download links — which are one
@@ -169,19 +180,23 @@ export function renderEmail(body: EmailBody, ctx: RenderContext): RenderedEmail 
   // Deliberately built outside the body, which is the only thing `trackLink` and
   // `rewriteLinks` touch — so the chrome stays untracked, exactly like the
   // preference and download links.
-  const online = ctx.postUrl ? readOnlineHtml(ctx.postUrl) : ''
+  const masthead = ctx.title ? mastheadHtml(ctx.title, ctx.lead ?? null, ctx.postUrl ?? null, ctx.subject ?? ctx.title) : ''
   const share = ctx.postUrl ? shareHtml(ctx.postUrl, ctx.subject ?? '') : ''
 
   const html = shell(
-    `${online}${inner}${share}`,
+    `${masthead}${inner}${share}`,
     ctx.showFooter ? footerHtml(ctx, preferenceUrl) : '',
     pixel,
+    ctx.title ? (ctx.lead ?? null) : null,
   )
 
   const text = [
-    ctx.postUrl ? `Read this online: ${ctx.postUrl}\n` : '',
+    ctx.title ? `${ctx.title}\n${ctx.lead ? `${ctx.lead}\n` : ''}\n` : '',
+    ctx.postUrl ? `Read this online: ${ctx.postUrl}\n\n` : '',
     plain,
-    ctx.postUrl ? `\n\nShare it: ${shareOnXUrl(ctx.postUrl, ctx.subject ?? '')}` : '',
+    ctx.postUrl
+      ? `\n\nShare it:\nX: ${shareOnXUrl(ctx.postUrl, ctx.subject ?? '')}\nLinkedIn: ${shareOnLinkedInUrl(ctx.postUrl)}`
+      : '',
     ctx.showFooter ? `\n\n---\n${footerText(ctx)}\n${preferenceUrl}` : '',
   ].join('')
 
@@ -255,20 +270,63 @@ function footerHtml(ctx: RenderContext, preferenceUrl: string): string {
 }
 
 /**
- * "Read this online", above the body and to the right. The oldest affordance in
- * email and still the useful one: it is the escape hatch for a client that
- * mangles the layout, and now it is also the link a reader can actually send to
- * somebody else. A `mailto:` forward is not a shareable thing.
+ * The masthead: title, lead, and — when the piece is on the web — a row of share
+ * buttons with "Read online" at the right, between two hairlines. Substack's
+ * shape, because it puts the thing a reader might do with a good piece (pass it
+ * on) at the top, where it is seen, instead of under 1,500 words where it isn't.
+ *
+ * Every link here is a plain share intent: no API key, no OAuth, nothing to
+ * break when a platform changes its mind. Without a published post there is
+ * nothing to share, and the row is left out rather than pointing at a 404.
  */
-function readOnlineHtml(url: string): string {
-  return `<p style="margin:0 0 22px;font:13px/1.5 ${FOOT_FONT};color:#9aa0a8;text-align:right"><a href="${escapeHtml(url)}" style="color:#9aa0a8;text-decoration:underline">Read this online →</a></p>`
+function mastheadHtml(title: string, lead: string | null, postUrl: string | null, subject: string): string {
+  const forwarded = postUrl
+    ? `<p style="margin:0 0 28px;font:13px/1.5 ${FOOT_FONT};color:#8b8b8b;text-align:right">Forwarded this email? <a href="${escapeHtml(`${siteOrigin(postUrl)}/subscribe`)}" style="color:#8b8b8b;text-decoration:underline">Subscribe here</a> for more</p>`
+    : ''
+  const h1 = `<h1 style="margin:0 0 14px;font:700 34px/1.2 ${TITLE_FONT};color:#1a1a1a;letter-spacing:-0.01em">${escapeHtml(title)}</h1>`
+  const sub = lead
+    ? `<p style="margin:0 0 26px;font:19px/1.5 ${FOOT_FONT};color:#6b6b6b">${escapeHtml(lead)}</p>`
+    : ''
+  const rule = `<div style="height:1px;line-height:1px;font-size:1px;background:#e6e6e6">&nbsp;</div>`
+  const row = postUrl ? shareRowHtml(postUrl, subject) : ''
+  return `${forwarded}${h1}${sub}${lead ? '' : '<div style="height:12px;line-height:12px;font-size:1px">&nbsp;</div>'}${rule}${row ? `${row}${rule}` : ''}<div style="height:30px;line-height:30px;font-size:1px">&nbsp;</div>`
+}
+
+/**
+ * The round buttons. Each is one PNG with the white disc and grey ring baked in
+ * (`public/img/email/`) rather than a styled cell: Outlook ignores border-radius,
+ * and Gmail's dark mode repaints a cell's background but never an image — a
+ * black glyph on a transparent PNG would vanish into the dark. Served from the
+ * public site's host because the console's host sits behind Cloudflare Access.
+ */
+function shareRowHtml(url: string, subject: string): string {
+  const base = `${siteOrigin(url)}/img/email`
+  const button = (href: string, icon: string, label: string): string =>
+    `<td style="padding:0 10px 0 0"><a href="${escapeHtml(href)}" title="${label}" style="text-decoration:none"><img src="${base}/share-${icon}.png" width="40" height="40" alt="${label}" style="display:block;border:0;width:40px;height:40px" /></a></td>`
+  const buttons = [
+    button(shareOnXUrl(url, subject), 'x', 'Share on X'),
+    button(shareOnLinkedInUrl(url), 'linkedin', 'Share on LinkedIn'),
+    button(shareOnFacebookUrl(url), 'facebook', 'Share on Facebook'),
+  ].join('')
+  const readOnline = `<a href="${escapeHtml(url)}" style="display:inline-block;padding:10px 20px;border:1.5px solid #d9d9d9;border-radius:999px;font:600 13px/18px ${FOOT_FONT};letter-spacing:0.04em;color:#3a3a3a;text-decoration:none;white-space:nowrap">READ ONLINE &#8599;</a>`
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td style="padding:14px 0">
+<table role="presentation" cellpadding="0" cellspacing="0" align="left"><tr>${buttons}</tr></table>
+</td><td align="right" style="padding:14px 0">${readOnline}</td></tr></table>`
 }
 
 /** Share row, under the body and above the consent footer. */
 function shareHtml(url: string, subject: string): string {
   const x = escapeHtml(shareOnXUrl(url, subject))
-  return `<p style="margin:30px 0 0;padding-top:20px;border-top:1px solid #eeebe6;font:14px/1.6 ${FOOT_FONT};color:#6b7280">Worth passing on? <a href="${x}" style="color:#1f6f5c;font-weight:600">Post it on X</a> &nbsp;·&nbsp; <a href="${escapeHtml(url)}" style="color:#1f6f5c;font-weight:600">copy the link</a></p>`
+  const li = escapeHtml(shareOnLinkedInUrl(url))
+  return `<p style="margin:36px 0 0;padding-top:20px;border-top:1px solid #e6e6e6;font:14px/1.6 ${FOOT_FONT};color:#6b6b6b">Worth passing on? <a href="${x}" style="color:#1a1a1a;font-weight:600">Post it on X</a> &nbsp;·&nbsp; <a href="${li}" style="color:#1a1a1a;font-weight:600">share it on LinkedIn</a> &nbsp;·&nbsp; <a href="${escapeHtml(url)}" style="color:#1a1a1a;font-weight:600">copy the link</a></p>`
 }
+
+/** Scheme and host of the public site, taken from a post URL on it. */
+function siteOrigin(postUrl: string): string {
+  return new URL(postUrl).origin
+}
+
+const TITLE_FONT = `'SF Mono',ui-monospace,Menlo,Consolas,'Liberation Mono',monospace`
 
 const FOOT_FONT = `-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif`
 
@@ -286,19 +344,31 @@ function rewriteLinks(html: string, ctx: RenderContext): string {
   })
 }
 
-function shell(inner: string, footer: string, pixel: string): string {
+/**
+ * White, edge to edge, one column. No card, no tinted page behind it — the
+ * paper *is* the page, which is most of why a Substack mail reads easily.
+ *
+ * `preheader` is the inbox preview line: hidden in the body, read by the client.
+ * Padded out with zero-width joiners so the client doesn't fill the rest of the
+ * preview with the first words of the body, which it would otherwise do.
+ */
+function shell(inner: string, footer: string, pixel: string, preheader: string | null): string {
+  const hidden = preheader
+    ? `<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:#ffffff;opacity:0">${escapeHtml(preheader)}${'&#847;&zwnj;&nbsp;'.repeat(60)}</div>\n`
+    : ''
   return `<!doctype html>
 <html><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width,initial-scale=1" /></head>
-<body style="margin:0;padding:0;background:#f6f5f3">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f6f5f3">
-<tr><td align="center" style="padding:32px 16px">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:640px;background:#ffffff;border-radius:10px;border:1px solid #e6e3de">
-<tr><td style="padding:36px 40px;font:16px/1.65 -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#22262b">
+<body style="margin:0;padding:0;background:#ffffff">
+${hidden}<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff">
+<tr><td align="center" style="padding:28px 20px">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:620px">
+<tr><td style="padding:0;font:17px/1.7 -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#1f1f1f">
 ${inner}
 </td></tr>
 ${
   footer
-    ? `<tr><td style="padding:20px 40px 32px;border-top:1px solid #eeebe6;font:13px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#8b9199">
+    ? `<tr><td style="height:36px;line-height:36px;font-size:1px">&nbsp;</td></tr>
+<tr><td style="padding:24px 0 32px;border-top:1px solid #e6e6e6;font:13px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#8b8b8b">
 ${footer}
 </td></tr>`
     : ''

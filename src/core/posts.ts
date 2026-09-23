@@ -2,7 +2,7 @@ import { and, asc, count, desc, eq, gt, inArray, isNotNull, lt, ne, notInArray, 
 import type { Db } from '../db/index.ts'
 import { broadcastPostTags, broadcasts } from '../db/schema.ts'
 import { slugify } from './ids.ts'
-import { excerptFrom, firstImageFrom, postPlainText } from './render-web.ts'
+import { excerptFrom, firstImageFrom, type PostBody, postPlainText } from './render-web.ts'
 
 /**
  * Publishing — the public site's half of a broadcast.
@@ -51,6 +51,35 @@ export function postPath(slug: string, primaryTagSlug: string | null | undefined
 export function shareOnXUrl(url: string, subject: string): string {
   const params = new URLSearchParams({ text: subject, url })
   return `https://x.com/intent/post?${params.toString()}`
+}
+
+/**
+ * LinkedIn's share link takes the URL and nothing else — the title, summary and
+ * image come from the post page's `og:` tags, so the card is only as good as those.
+ */
+export function shareOnLinkedInUrl(url: string): string {
+  return `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(url)}`
+}
+
+/** Facebook's, same shape as LinkedIn's: the card is read off the page. */
+export function shareOnFacebookUrl(url: string): string {
+  return `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(url)}`
+}
+
+/**
+ * The excerpt, but only when a person wrote it.
+ *
+ * Publishing fills `excerpt` from the first lines of the body when it is left
+ * blank, which is right for a card on the web and wrong under an email's title:
+ * the reader would get the opening sentence twice, once grey and once black. A
+ * derived excerpt is a prefix of the body's text (less the ellipsis), so that is
+ * the test — anything else was written for the purpose.
+ */
+export function authoredLead(excerpt: string | null | undefined, body: PostBody): string | null {
+  const lead = (excerpt ?? '').replace(/\s+/g, ' ').trim()
+  if (!lead) return null
+  const stem = lead.replace(/…$/, '').trim()
+  return postPlainText(body).startsWith(stem) ? null : lead
 }
 
 export interface PostMeta {

@@ -17,6 +17,8 @@ import type { Env } from '../types.ts'
 import { commerceTotals, listOffers } from '../core/purchases.ts'
 import { customerTiers, headlines, revenueByMonth } from '../core/insights.ts'
 import { signalTrend } from '../core/signal.ts'
+import { trafficReport } from '../core/traffic.ts'
+import { RANGES, TrafficHero } from './admin-traffic.tsx'
 import { SignalHero } from './admin-signal.tsx'
 import { activeGoals } from '../core/goals.ts'
 import { GoalBar } from './admin-goals.tsx'
@@ -62,6 +64,12 @@ admin.get('/', async (c) => {
     signalTrend(db, 14),
   ])
   const liveOffers = catalog.filter((o) => o.active).length
+
+  // ⭐ Buzz — the very top. How loud it is out there comes before how good the
+  // last send was, because it is the answer to "is any of this working?"
+  const rangeParam = Number(c.req.query('range'))
+  const range = (RANGES as readonly number[]).includes(rangeParam) ? rangeParam : 30
+  const traffic = await trafficReport(db, { siteUrl: c.env.SITE_URL, days: range })
 
   // ⭐ Goals sit under the money because they are the question the money can't
   // answer on its own: revenue says how much came in, a goal says whether that
@@ -126,6 +134,8 @@ admin.get('/', async (c) => {
           live series, and a sent broadcast, then open the Outbox to read the mail.
         </div>
       ) : null}
+
+      <TrafficHero report={traffic} siteUrl={c.env.SITE_URL} />
 
       <SignalHero trend={trend} />
 

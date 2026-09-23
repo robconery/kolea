@@ -72,7 +72,7 @@ export async function formTagList(db: Db, formId: number) {
  * and crawlers render embedded pages too, and every one of them would read as
  * a reader who saw the form and walked away.
  */
-const NOT_A_READER = /bot|crawl|spider|slurp|preview|facebookexternalhit|embedly|headless/i
+export const NOT_A_READER = /bot|crawl|spider|slurp|preview|facebookexternalhit|embedly|headless/i
 
 /**
  * Count one render of a form. One upsert, no read first.

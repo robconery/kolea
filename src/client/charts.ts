@@ -17,6 +17,17 @@ type Spec =
   | { t: 'column'; labels: string[]; captions: string[]; values: number[]; height: number; fmt: Fmt }
   | { t: 'donut'; labels: string[]; values: number[]; size: number; center: [string, string] }
   | { t: 'spark'; values: number[]; height: number; fmt: Fmt }
+  | {
+      t: 'traffic'
+      labels: string[]
+      captions: string[]
+      views: number[]
+      visitors: number[]
+      opens: number[]
+      clicks: number[]
+      sends: { i: number; subject: string }[]
+      height: number
+    }
 
 /** The ordinal ramp, mirrored from `src/web/charts.tsx`. Light → deep. */
 const RAMP = ['#a5f3fc', '#38bdf8', '#6366f1', '#8b5cf6']
@@ -242,9 +253,125 @@ function sparkOptions(s: Spec & { t: 'spark' }) {
   }
 }
 
+const esc = (t: string) =>
+  t.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c)
+
+/** Views, visitors, opens: the series colours, mirrored in `web/admin-traffic.tsx`. */
+const TRAFFIC = ['#22d3ee', '#818cf8', '#f0abfc']
+
+function trafficOptions(s: Spec & { t: 'traffic' }) {
+  const sentOn = new Map<number, string[]>()
+  for (const x of s.sends) sentOn.set(x.i, [...(sentOn.get(x.i) ?? []), x.subject])
+  const row = (colour: string, label: string, v: number, dashed = false) =>
+    `<div class="ct-row" style="padding:5px 14px"><span class="ct-dot" style="background:${colour}${dashed ? ';border-radius:1px;height:3px' : ''}"></span>` +
+    `<span style="color:${FAINT};font-weight:500;min-width:92px">${label}</span><span class="ct-val">${nf.format(v)}</span></div>`
+
+  return {
+    chart: {
+      ...chrome(s.height),
+      type: 'line' as const,
+      dropShadow: { enabled: true, enabledOnSeries: [0], top: 2, left: 0, blur: 10, color: '#22d3ee', opacity: 0.45 },
+    },
+    series: [
+      { name: 'Views', type: 'area', data: s.views },
+      { name: 'Visitors', type: 'area', data: s.visitors },
+      { name: 'Email opens', type: 'line', data: s.opens },
+    ],
+    colors: TRAFFIC,
+    stroke: { curve: 'smooth' as const, width: [2.6, 1.6, 2], dashArray: [0, 0, 5] },
+    fill: {
+      type: ['gradient', 'gradient', 'solid'],
+      gradient: {
+        type: 'vertical',
+        shadeIntensity: 0,
+        inverseColors: false,
+        opacityFrom: 0.5,
+        opacityTo: 0.02,
+        stops: [0, 96],
+      },
+    },
+    markers: { size: 0, strokeWidth: 0, hover: { size: 5 } },
+    dataLabels: { enabled: false },
+    legend: { show: false },
+    grid: {
+      borderColor: GRID,
+      strokeDashArray: 4,
+      xaxis: { lines: { show: false } },
+      padding: { left: 6, right: 6, top: -4, bottom: -4 },
+    },
+    // A send is a mark on the timeline, not a series: it has no magnitude, only a
+    // moment. Violet so it reads as belonging to the email line.
+    annotations: {
+      xaxis: [...sentOn.keys()].map((i) => ({
+        x: s.labels[i],
+        borderColor: 'rgba(240,171,252,.45)',
+        strokeDashArray: 3,
+        label: {
+          text: '✉',
+          orientation: 'horizontal',
+          borderWidth: 0,
+          offsetY: -4,
+          style: { background: 'transparent', color: '#f0abfc', fontSize: '13px' },
+        },
+      })),
+    },
+    xaxis: {
+      categories: s.labels,
+      tickAmount: Math.min(8, s.labels.length),
+      axisBorder: { show: false },
+      axisTicks: { show: false },
+      crosshairs: { stroke: { color: 'rgba(148,190,255,.25)', width: 1, dashArray: 3 } },
+      tooltip: { enabled: false },
+      labels: {
+        rotate: 0,
+        hideOverlappingLabels: true,
+        style: { colors: FAINT, fontSize: '11px', fontWeight: 600, fontFamily: DISPLAY },
+      },
+    },
+    yaxis: [
+      {
+        seriesName: 'Views',
+        tickAmount: 4,
+        min: 0,
+        forceNiceScale: true,
+        labels: { formatter: (v: number) => nf.format(Math.round(v)), style: { colors: FAINT, fontSize: '11px' } },
+      },
+      { seriesName: 'Views', show: false },
+      {
+        seriesName: 'Email opens',
+        opposite: true,
+        tickAmount: 4,
+        min: 0,
+        forceNiceScale: true,
+        labels: { formatter: (v: number) => nf.format(Math.round(v)), style: { colors: '#b98bc4', fontSize: '11px' } },
+      },
+    ],
+    tooltip: {
+      shared: true,
+      intersect: false,
+      custom: ({ dataPointIndex: i }: { dataPointIndex: number }) => {
+        const sent = sentOn.get(i)
+        return (
+          `<div class="apexcharts-tooltip-title">${esc(s.captions[i] ?? '')}</div>` +
+          `<div style="padding:4px 0 8px">` +
+          row(TRAFFIC[0]!, 'Page views', s.views[i] ?? 0) +
+          row(TRAFFIC[1]!, 'Visitors', s.visitors[i] ?? 0) +
+          row(TRAFFIC[2]!, 'Email opens', s.opens[i] ?? 0, true) +
+          row('rgba(148,190,255,.4)', 'Email clicks', s.clicks[i] ?? 0) +
+          (sent
+            ? `<div style="padding:8px 14px 2px;max-width:280px;font-size:12px;color:#f0abfc;white-space:normal">✉ ${sent.map(esc).join('<br>✉ ')}</div>`
+            : '') +
+          `</div>`
+        )
+      },
+    },
+  }
+}
+
 function optionsFor(spec: Spec, width: number) {
   if (spec.t === 'column') return columnOptions(spec, width)
   if (spec.t === 'donut') return donutOptions(spec)
+  if (spec.t === 'traffic') return trafficOptions(spec)
   return sparkOptions(spec)
 }
 

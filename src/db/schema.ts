@@ -1879,3 +1879,64 @@ export const siteSettings = sqliteTable('site_settings', {
 })
 
 export type SiteSettings = typeof siteSettings.$inferSelect
+
+// ─────────────────────────────────────────────────────────── page views
+
+/**
+ * ⭐ One page of the public site, rendered in a real browser.
+ *
+ * Written by a beacon on the page, never by the route that served it. Crawlers,
+ * feed readers and link unfurlers fetch HTML all day, and a server-side counter
+ * would report every one of them as a reader. A beacon only fires where the page
+ * actually ran, which is as close to "somebody looked at it" as a counter gets
+ * without a cookie.
+ *
+ * `view_key` is minted by the page and is what lets the second beacon (the one
+ * that fires when the tab is hidden) find this row again to set `seconds`. It is
+ * unique, so a replayed hit is a no-op rather than a second view.
+ *
+ * `broadcast_id` is the post, when the page is one — a post IS a broadcast (see
+ * `core/posts.ts`), which is what lets the dashboard put web reads beside email
+ * reads for the same piece. Set null on delete: a deleted post's traffic still
+ * happened, and the path says where.
+ *
+ * `referrer` is whatever the browser sent, which is usually just an origin —
+ * `strict-origin-when-cross-origin` is the default everywhere now. `source` is
+ * the `ref` / `utm_source` on the landing URL, the only reliable way to name a
+ * link you placed yourself.
+ *
+ * `visitor` is a daily pseudonym: a hash of the day, IP and user agent, never
+ * the IP itself. It rotates at midnight UTC, so it can count "people today" and
+ * cannot follow anybody from one day to the next. No cookie is ever set.
+ *
+ * `day` is `YYYY-MM-DD` text for the same reason as `form_views.day`: the charts
+ * group on it without date arithmetic.
+ */
+export const pageViews = sqliteTable(
+  'page_views',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    viewKey: text('view_key').notNull(),
+    day: text('day').notNull(),
+    occurredAt: ts('occurred_at').notNull(),
+    path: text('path').notNull(),
+    broadcastId: integer('broadcast_id').references((): AnySQLiteColumn => broadcasts.id, {
+      onDelete: 'set null',
+    }),
+    referrer: text('referrer'),
+    referrerHost: text('referrer_host'),
+    source: text('source'),
+    country: text('country'),
+    visitor: text('visitor'),
+    /** Seconds the tab was visible. Null until the page is left or hidden. */
+    seconds: integer('seconds'),
+  },
+  (t) => [
+    uniqueIndex('page_views_view_key').on(t.viewKey),
+    index('page_views_day_idx').on(t.day),
+    index('page_views_broadcast_idx').on(t.broadcastId),
+    index('page_views_occurred_idx').on(t.occurredAt),
+  ],
+)
+
+export type PageView = typeof pageViews.$inferSelect

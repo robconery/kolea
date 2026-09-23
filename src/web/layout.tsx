@@ -424,6 +424,49 @@ input[type=checkbox]:focus-visible,input[type=radio]:focus-visible{outline:2px s
   .stat:nth-child(odd)::before{display:none}
 }
 
+/* ── Buzz: the traffic hero. The site and the list on one timeline. */
+.tr-card .card-b{padding-bottom:40px}
+.tr-top{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap;margin-bottom:28px}
+.tr-headline{font:600 clamp(22px,2.5vw,34px)/1.2 var(--display);letter-spacing:-.032em;margin:0;
+  color:#f2f8ff;max-width:30ch;text-wrap:balance}
+.tr-side{display:flex;flex-direction:column;align-items:flex-end;gap:14px}
+.tr-live{display:inline-flex;align-items:center;gap:9px;font:600 12px/1 var(--display);color:var(--faint);
+  letter-spacing:.02em}
+.tr-live.on{color:#a5f3fc}
+.tr-pulse{width:8px;height:8px;border-radius:50%;background:rgba(148,190,255,.3)}
+.tr-live.on .tr-pulse{background:#22d3ee;box-shadow:0 0 0 0 rgba(34,211,238,.6);animation:tr-pulse 2s infinite}
+@keyframes tr-pulse{70%{box-shadow:0 0 0 9px rgba(34,211,238,0)}100%{box-shadow:0 0 0 0 rgba(34,211,238,0)}}
+.tr-range{display:flex;gap:2px;padding:3px;border-radius:99px;background:rgba(148,190,255,.07)}
+.tr-range a{font:600 11px/1 var(--display);letter-spacing:.06em;color:var(--faint);text-decoration:none;
+  padding:6px 11px;border-radius:99px;transition:color .3s var(--glide),background .3s var(--glide)}
+.tr-range a:hover{color:var(--ink)}
+.tr-range a.on{color:#041423;background:var(--beam)}
+.tr-stats{margin-bottom:30px}
+.tr-delta{font:600 11px/1 var(--display);letter-spacing:.02em;margin-left:9px;vertical-align:middle;
+  -webkit-text-fill-color:currentColor;filter:none;text-shadow:none}
+.tr-delta.up{color:#5eead4}.tr-delta.down{color:#fb7185}
+.tr-key{display:inline-block;width:8px;height:8px;border-radius:3px;margin-right:7px;vertical-align:0}
+.tr-chart{margin:0 -4px}
+.tr-legend{display:flex;flex-wrap:wrap;gap:8px 22px;margin:12px 4px 0;font:500 12px/1 var(--display);color:var(--faint)}
+.tr-legend span{display:inline-flex;align-items:center;gap:8px}
+.tr-legend i{width:12px;height:8px;border-radius:3px}
+.tr-legend i.dash{height:2px;border-radius:1px}
+.tr-legend b{color:#f0abfc;font-weight:400}
+.tr-cols{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:clamp(28px,4vw,60px);margin-top:40px}
+@media (max-width:900px){.tr-cols{grid-template-columns:1fr}.tr-side{align-items:flex-start}}
+.tr-h{font:600 10px/1 var(--display);text-transform:uppercase;letter-spacing:.18em;color:var(--faint);margin:0 0 16px}
+.tr-title a{color:#eaf3ff;text-decoration:none;font-weight:500}
+.tr-title a:hover{color:#7dd3fc}
+.tr-title .meter{max-width:340px;height:3px;margin-top:9px}
+.tr-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:14px}
+.tr-row{display:flex;justify-content:space-between;gap:12px;font-size:13.5px;color:#d5e4fb}
+.tr-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tr-n{font-variant-numeric:tabular-nums;color:#fff;font-weight:600}
+.tr-url{display:block;font-size:11.5px;color:var(--faint);margin-top:3px;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap;text-decoration:none}
+.tr-url:hover{color:#7dd3fc}
+.tr-list .meter{height:3px;margin-top:7px}
+
 /* ── Signal: the hero score. Colour carries meaning here, which it does nowhere
    else in this interface — so every band is also named in words beside it, and
    nothing is legible by hue alone. */

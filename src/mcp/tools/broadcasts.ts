@@ -14,6 +14,7 @@ import {
 } from '../../core/broadcasts.ts'
 import { canReceiveBroadcastIn, loadConsentSnapshot } from '../../core/consent.ts'
 import { mdToDoc } from '../../core/md-to-doc.ts'
+import { authoredLead, postUrl } from '../../core/posts.ts'
 import { previewHtml, renderEmail } from '../../core/render.ts'
 import { countSegment, describeRule, getSegment, resolveSegment } from '../../core/segments.ts'
 import { sendPreview } from '../../core/sending.ts'
@@ -343,6 +344,10 @@ export function registerBroadcasts(server: McpServer, ctx: Ctx): void {
           subscriber: first
             ? { email: first.email, name: sampleName }
             : { email: 'ada@example.com', name: 'Ada Lovelace' },
+          subject: b.subject,
+          title: b.subject,
+          lead: authoredLead(b.excerpt, { json: b.bodyJson, md: b.bodyMd }),
+          postUrl: b.publishedAt ? postUrl(ctx.env.SITE_URL, b.slug) : null,
           trackOpens: true,
           trackClicks: true,
           showFooter: true,
