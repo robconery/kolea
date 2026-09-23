@@ -6,7 +6,8 @@
 import { beforeAll, describe, expect, it } from 'bun:test'
 import { eq } from 'drizzle-orm'
 import { reviseSentBroadcast, startBroadcast } from '../../src/core/broadcasts.ts'
-import { broadcasts } from '../../src/db/schema.ts'
+import { drainQueued } from '../../src/core/sending.ts'
+import { broadcasts, messages } from '../../src/db/schema.ts'
 import { aBroadcast, aPerson } from '../support/factories.ts'
 import { createWorld, type World } from '../support/world.ts'
 
@@ -172,6 +173,37 @@ describe('Feature: correcting a cancelled send', () => {
 
     it('⭐ mails nobody again', async () => {
       expect(await w.outbox()).toHaveLength(1)
+    })
+  })
+})
+
+describe('Feature: cancelling really stops a send', () => {
+  describe('Scenario: mail still queued when the send is cancelled', () => {
+    let w: World
+    let id: number
+    let result: { ok: boolean; reason?: string }
+
+    beforeAll(async () => {
+      // No SEND_QUEUE binding sends inline, so queue rows by hand the way a
+      // cancelled mid-send leaves them: queued, broadcast cancelled.
+      w = createWorld()
+      await aPerson(w)
+      await aPerson(w)
+      id = await aBroadcast(w, { subject: 'Stopped' })
+      await startBroadcast(w.env, w.db, id)
+      await w.db.update(messages).set({ status: 'queued' }).where(eq(messages.broadcastId, id))
+      await w.db.update(broadcasts).set({ status: 'cancelled' }).where(eq(broadcasts.id, id))
+      result = await reviseSentBroadcast(w.db, id, { subject: 'Fixed', bodyJson: null, bodyMd: 'Fixed body.' })
+      await drainQueued(w.env, w.db)
+    })
+
+    it('still lets the operator correct it', () => {
+      expect(result.ok).toBe(true)
+    })
+
+    it('⭐ never sends the rest', async () => {
+      const rows = await w.db.select().from(messages).where(eq(messages.broadcastId, id)).all()
+      expect(rows.every((r) => r.status === 'failed')).toBe(true)
     })
   })
 })

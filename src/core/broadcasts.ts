@@ -119,7 +119,11 @@ export async function reviseSentBroadcast(
     .from(messages)
     .where(and(eq(messages.broadcastId, id), eq(messages.status, 'queued')))
     .get()
-  if ((queued?.n ?? 0) > 0) return { ok: false, reason: 'mail is still queued for this broadcast' }
+  // A cancelled broadcast's queued rows can never send (`sendMessages` fails
+  // them), so they don't block a correction.
+  if (b.status === 'sent' && (queued?.n ?? 0) > 0) {
+    return { ok: false, reason: 'mail is still queued for this broadcast' }
+  }
 
   const firstRevision = b.revisedAt === null
   await db
@@ -195,6 +199,11 @@ export async function cancelBroadcast(
     .get()
 
   await db.update(broadcasts).set({ status: 'cancelled' }).where(eq(broadcasts.id, id))
+  // Anything already queued would otherwise still go out when its batch runs.
+  await db
+    .update(messages)
+    .set({ status: 'failed', error: 'broadcast cancelled' })
+    .where(and(eq(messages.broadcastId, id), eq(messages.status, 'queued')))
   return { ok: true, alreadySent: sent?.n ?? 0 }
 }
 
