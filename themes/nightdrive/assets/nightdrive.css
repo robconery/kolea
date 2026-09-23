@@ -924,12 +924,11 @@ img { display: block; max-width: 100%; height: auto; }
 .tune-rings circle:nth-child(2n) { stroke: oklch(68% 0.23 302 / 0.3); stroke-dasharray: 30 14; }
 @keyframes spin { to { rotate: 360deg; } }
 .tune-title {
-  margin: 1.4rem 0 0;
-  max-width: 13ch;
-  font: 800 clamp(2.2rem, 5.6vw, 4.8rem)/0.98 var(--wide);
-  letter-spacing: -0.03em;
-  text-transform: uppercase;
-  text-shadow: 0 0 calc(0.4em * var(--glow)) oklch(68% 0.23 302 / 0.55);
+  margin: 1.2rem 0 0;
+  max-width: 16ch;
+  font: 500 clamp(1.8rem, 3.6vw, 3rem)/1.08 var(--wide);
+  letter-spacing: -0.025em;
+  text-shadow: 0 0 calc(0.5em * var(--glow)) oklch(68% 0.23 302 / 0.45);
 }
 .tune-note { max-width: 42ch; margin: 1.5rem 0 0; font-size: 1.1rem; color: var(--ink-soft); }
 
@@ -1053,6 +1052,217 @@ img { display: block; max-width: 100%; height: auto; }
   .operator-photo { max-width: 11rem; }
   .freq-head { grid-template-columns: minmax(0, 1fr); }
   .freq-head .beam { justify-self: start; }
+}
+
+/* ── The landing page: columns, a quieter voice. Lighter weights, mixed
+      case, softer glow; the neon is accent, not the whole sign. */
+
+.lp-hero {
+  position: relative;
+  z-index: 1;
+  max-width: 76rem;
+  margin: 0 auto;
+  padding: clamp(7.5rem, 13vw, 10rem) var(--gutter) clamp(2rem, 5vw, 3.5rem);
+}
+.lp-hero-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+  gap: clamp(2rem, 5vw, 4.5rem);
+  align-items: center;
+}
+.lp-title {
+  margin: 1.3rem 0 0;
+  max-width: 18ch;
+  font: 500 clamp(2rem, 4.2vw, 3.5rem)/1.08 var(--wide);
+  letter-spacing: -0.03em;
+  color: var(--ink);
+  text-wrap: balance;
+  text-shadow: 0 0 calc(0.6em * var(--glow)) oklch(62% 0.22 300 / 0.35);
+}
+.lp-lede { max-width: 46ch; margin: 1.3rem 0 0; font-size: 1.1rem; line-height: 1.65; color: var(--ink-soft); }
+.lp-dial { margin-top: 1.8rem; max-width: 28rem; }
+.lp-fine { margin: 0.8rem 0 0 1.2rem; color: var(--ink-faint); }
+
+.lp-me .shell { --radius: 1.75rem; }
+.lp-me-core { padding: clamp(1.4rem, 3vw, 2rem); }
+.lp-me-top { display: flex; align-items: center; gap: 1rem; }
+.lp-avatar {
+  flex: none;
+  width: 4.5rem;
+  height: 4.5rem;
+  padding: 0.2rem;
+  border-radius: 50%;
+  background: conic-gradient(from 200deg, var(--cyan), var(--violet), var(--orchid), var(--cyan));
+  box-shadow: 0 0 calc(26px * var(--glow)) -8px oklch(68% 0.23 302 / 0.9);
+}
+.lp-avatar img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; border: 0.18rem solid oklch(13% 0.045 282); }
+.lp-kicker { margin: 0; color: var(--neon); }
+.lp-me-name { margin: 0.35rem 0 0; font: 600 1.35rem/1.15 var(--wide); letter-spacing: -0.015em; }
+.lp-me-bio { margin-top: 1.1rem; font-size: 0.98rem; line-height: 1.65; color: var(--ink-soft); }
+.lp-me-bio p { margin: 0; }
+.lp-me-bio p + p { margin-top: 0.7em; }
+.lp-me-links { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 1.2rem 0 0; }
+.lp-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 1.2rem;
+  font: 500 0.875rem/1 var(--text);
+  color: var(--cyan);
+  text-decoration: none;
+  transition: gap 0.4s var(--respond), text-shadow 0.4s var(--respond);
+}
+.lp-more:hover { gap: 0.75rem; text-shadow: 0 0 12px oklch(85% 0.14 210 / 0.7); }
+
+/* The sunset, as a band between the intro and the rest. */
+.lp-horizon { position: relative; z-index: 0; margin: 0 0 clamp(1rem, 3vw, 2rem); }
+.lp-horizon .horizon { min-height: 0; height: clamp(18rem, 48vh, 30rem); margin-top: -2rem; }
+.lp-horizon .horizon-sky {
+  min-height: 0;
+  /* Clipped here: the sky mustn't rise behind the intro's text. The fade
+     keeps the clip from reading as an edge. */
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 30%);
+  mask-image: linear-gradient(to bottom, transparent, #000 30%);
+}
+.lp-horizon .floor { height: 36%; }
+
+.lp-section { max-width: 76rem; margin: clamp(4rem, 9vw, 6.5rem) auto 0; padding: 0 var(--gutter); }
+.lp-head { margin-bottom: clamp(1.6rem, 3vw, 2.4rem); }
+.lp-head--row { display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; }
+.lp-head--row .lp-more { margin: 0 0 0.35rem; }
+.lp-h2 {
+  margin: 0.9rem 0 0;
+  font: 500 clamp(1.5rem, 2.8vw, 2.2rem)/1.1 var(--wide);
+  letter-spacing: -0.025em;
+  text-shadow: 0 0 calc(0.5em * var(--glow)) oklch(62% 0.2 var(--h) / 0.35);
+}
+
+/* What I do: three quiet columns, a line icon each. */
+.lp-do { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(1rem, 2vw, 1.5rem); }
+.lp-do-item {
+  padding: 1.6rem 1.6rem 1.8rem;
+  border-radius: 1.4rem;
+  background: oklch(100% 0 0 / 0.03);
+  box-shadow: inset 0 0 0 1px var(--hair);
+  transition: box-shadow 0.5s var(--respond), translate 0.7s var(--arrive);
+}
+.lp-do-item:hover { box-shadow: inset 0 0 0 1px oklch(80% 0.16 var(--h) / 0.4), 0 0 calc(30px * var(--glow)) -14px var(--neon-hot); }
+.lp-do-item h3 { margin: 1.1rem 0 0; font: 500 1.1rem/1.2 var(--wide); letter-spacing: -0.01em; }
+.lp-do-item p { margin: 0.7rem 0 0; font-size: 0.97rem; line-height: 1.65; color: var(--ink-soft); }
+.lp-icon {
+  width: 2.2rem;
+  height: 2.2rem;
+  fill: none;
+  stroke: var(--neon);
+  stroke-width: 1.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 0 calc(6px * var(--glow)) var(--neon-hot));
+}
+
+/* Start here: left-right spreads, alternating. */
+.lp-spread {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: clamp(1.5rem, 4vw, 3.5rem);
+  align-items: center;
+}
+.lp-spread + .lp-spread { margin-top: clamp(2.5rem, 6vw, 4rem); }
+.lp-spread--flip .lp-spread-art { order: 2; }
+.lp-spread-art { display: block; text-decoration: none; }
+.lp-spread-art .shell { --radius: 1.5rem; --lip: 0.4rem; transition: box-shadow 0.6s var(--respond); }
+.lp-spread-art:hover .shell { box-shadow: inset 0 0 0 1px oklch(80% 0.16 var(--h) / 0.5), 0 30px 70px -40px var(--neon-hot); }
+.lp-spread-art img { width: 100%; aspect-ratio: 16 / 10; object-fit: cover; transition: transform 1.2s var(--arrive); }
+.lp-spread-art:hover img { transform: scale(1.04); }
+.lp-spread-blank { display: grid; place-items: center; aspect-ratio: 16 / 10; }
+.lp-spread-blank .sun-glyph { width: 5rem; height: 5rem; }
+.lp-spread-title { margin: 0.8rem 0 0; font: 500 clamp(1.4rem, 2.4vw, 1.9rem)/1.15 var(--wide); letter-spacing: -0.02em; text-wrap: balance; }
+.lp-spread-title a { text-decoration: none; transition: text-shadow 0.4s var(--respond); }
+.lp-spread-title a:hover { text-shadow: 0 0 calc(18px * var(--glow)) var(--neon-hot); }
+.lp-spread-dek { margin: 0.9rem 0 0; max-width: 46ch; font-size: 1rem; line-height: 1.65; color: var(--ink-soft); }
+
+/* Shelves and the latest: a three-column grid of small tiles. */
+.lp-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(1rem, 2vw, 1.4rem); }
+.tile-link {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  border-radius: 1.3rem;
+  background: oklch(100% 0 0 / 0.035);
+  box-shadow: inset 0 0 0 1px var(--hair);
+  text-decoration: none;
+  transition: box-shadow 0.5s var(--respond), translate 0.7s var(--arrive);
+}
+.tile-link:hover {
+  translate: 0 -4px;
+  box-shadow: inset 0 0 0 1px oklch(80% 0.16 var(--h) / 0.5), 0 0 calc(34px * var(--glow)) -14px var(--neon-hot);
+}
+.tile-art { position: relative; display: block; aspect-ratio: 16 / 10; overflow: hidden; }
+.tile-art--blank {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 16 / 7;
+  background:
+    radial-gradient(60% 90% at 50% 120%, oklch(55% 0.22 var(--h) / 0.55), transparent 70%),
+    linear-gradient(180deg, oklch(16% 0.05 282), oklch(20% 0.08 var(--h)));
+}
+.tile-art--blank .sun-glyph { width: 2.6rem; height: 2.6rem; opacity: 0.85; }
+.tile-art img { width: 100%; height: 100%; object-fit: cover; filter: saturate(0.8) brightness(0.9); transition: transform 1.2s var(--arrive), filter 0.6s var(--respond); }
+.tile-art::after { content: ''; position: absolute; inset: 0; background: repeating-linear-gradient(0deg, oklch(0% 0 0 / 0.16) 0 1px, transparent 1px 3px); }
+.tile-link:hover .tile-art img { transform: scale(1.05); filter: none; }
+.tile-body { display: flex; flex: 1; flex-direction: column; gap: 0.7rem; padding: 1.1rem 1.2rem 1.3rem; }
+.tile-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; color: var(--ink-faint); }
+.tile-title { font: 500 1.08rem/1.28 var(--wide); letter-spacing: -0.01em; color: var(--ink); text-wrap: balance; }
+.tile-dek { font-size: 0.92rem; line-height: 1.55; color: var(--ink-soft); }
+
+/* Notable links: a two-column list of rows. */
+.lp-links { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 clamp(1.5rem, 4vw, 3rem); }
+.lp-link {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.35rem 1rem;
+  padding: 1.3rem 0.2rem;
+  border-bottom: 1px solid var(--hair);
+  text-decoration: none;
+}
+.lp-link-kind { grid-column: 1 / -1; color: var(--neon); }
+.lp-link-title { font: 500 1.15rem/1.25 var(--wide); letter-spacing: -0.01em; transition: text-shadow 0.4s var(--respond); }
+.lp-link-dek { grid-column: 1; font-size: 0.93rem; line-height: 1.55; color: var(--ink-soft); }
+.lp-link-host { grid-column: 2; grid-row: 2 / 4; align-self: center; color: var(--ink-faint); text-transform: none; letter-spacing: 0.02em; transition: color 0.4s var(--respond); }
+.lp-link::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 1px;
+  background: linear-gradient(90deg, var(--neon), transparent);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.7s var(--arrive);
+}
+.lp-link:hover::after { transform: scaleX(1); }
+.lp-link:hover .lp-link-title { text-shadow: 0 0 calc(16px * var(--glow)) var(--neon-hot); }
+.lp-link:hover .lp-link-host { color: var(--cyan); }
+
+.lp-all { max-width: 76rem; margin: clamp(3rem, 6vw, 4rem) auto 0; padding: 0 var(--gutter); }
+
+@media (max-width: 960px) {
+  .lp-hero-grid { grid-template-columns: minmax(0, 1fr); }
+  .lp-do { grid-template-columns: minmax(0, 1fr); }
+  .lp-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 760px) {
+  .lp-spread, .lp-spread--flip { grid-template-columns: minmax(0, 1fr); }
+  .lp-spread--flip .lp-spread-art { order: 0; }
+  .lp-tiles { grid-template-columns: minmax(0, 1fr); }
+  .lp-links { grid-template-columns: minmax(0, 1fr); }
+  .lp-link { grid-template-columns: minmax(0, 1fr); }
+  .lp-link-host { grid-column: 1; grid-row: auto; }
+  .lp-head--row { flex-direction: column; align-items: flex-start; }
 }
 
 /* ── Reading progress: a neon line across the top */
