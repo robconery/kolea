@@ -1855,6 +1855,11 @@ export const siteSettings = sqliteTable('site_settings', {
   title: text('title'),
   tagline: text('tagline'),
   logoUrl: text('logo_url'),
+  /**
+   * Superseded by the keyed `profile.social` (one URL per network), and no
+   * longer read or written. Kept rather than dropped to avoid a migration while
+   * nothing in production uses it; safe to remove in a later schema change.
+   */
   socialLinks: text('social_links', { mode: 'json' }).notNull().$type<SocialLink[]>().default([]),
   authorName: text('author_name'),
   authorPhotoUrl: text('author_photo_url'),

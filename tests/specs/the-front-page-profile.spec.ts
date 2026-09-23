@@ -92,6 +92,41 @@ describe('Feature: the front page profile', () => {
     })
   })
 
+  describe('Scenario: social profiles by key', () => {
+    let w: World
+    let html: string
+
+    beforeAll(async () => {
+      w = createWorld({ SITE_URL: SITE })
+      await publishPost(w.db, await aBroadcast(w, { subject: 'Anything' }))
+      await saveSite(w, {
+        short_bio: 'Hi.',
+        social_github: 'https://github.com/robconery',
+        social_mastodon: 'https://mastodon.social/@robconery',
+      })
+      html = await (await w.fetch(`${SITE}/`)).text()
+    })
+
+    it('stores each under its key', async () => {
+      const profile = readProfile((await getSiteSettings(w.db))?.profile)
+      expect(profile.social).toEqual({ github: 'https://github.com/robconery', mastodon: 'https://mastodon.social/@robconery' })
+    })
+
+    it('shows them on the front page, named', () => {
+      expect(html).toContain('>GitHub</a>')
+    })
+
+    it('leaves out the ones not set', () => {
+      expect(html).not.toContain('>Facebook</a>')
+    })
+  })
+
+  describe('Scenario: a social profile that is not a URL', () => {
+    it('is refused', () => {
+      expect(validateProfile({ social: { github: 'robconery' } }).ok).toBe(false)
+    })
+  })
+
   describe('Scenario: more than six things in What I do', () => {
     it('is refused', () => {
       const seven = Array.from({ length: 7 }, (_, i) => ({ title: `T${i}` }))

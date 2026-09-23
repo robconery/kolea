@@ -84,7 +84,7 @@ describe('Feature: the front page sells the writer', () => {
         tagline: 'Candid notes.',
         author_name: 'Rob C',
         short_bio: 'I write about code.\n\nAnd business.',
-        social_links: 'GitHub https://github.com/robconery',
+        social_github: 'https://github.com/robconery',
         body_json: doc('The long story of how I got here.'),
       })
       home = await page(w, '/')

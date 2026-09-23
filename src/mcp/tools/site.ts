@@ -1,6 +1,6 @@
 import type { McpServer } from '@modelcontextprotocol/server'
 import * as z from 'zod/v4'
-import { PROFILE_ICONS, ProfileLink, WhatIDoItem, readProfile, validateProfile } from '../../core/site-profile.ts'
+import { PROFILE_ICONS, ProfileLink, SOCIAL, WhatIDoItem, readProfile, validateProfile } from '../../core/site-profile.ts'
 import { getSiteSettings, saveSiteSettings, type SiteSettingsPatch } from '../../core/site-settings.ts'
 import { type Ctx, defineTool, fail, ok } from '../kit.ts'
 
@@ -17,7 +17,7 @@ export function registerSite(server: McpServer, ctx: Ctx): void {
     'site_get',
     {
       description:
-        'The public site\'s settings: name, tagline, logo, the author (name, photo, short bio, long bio as markdown, links) and the front page profile (lede, what_i_do, links). Empty fields fall back to the SITE_* environment variables on the live site.',
+        'The public site\'s settings: name, tagline, logo, the author (name, photo, short bio, long bio as markdown) and the profile (lede, what_i_do, links, and social: the author\'s profiles keyed by network). Empty fields fall back to the SITE_* environment variables on the live site.',
       inputSchema: z.object({}),
       annotations: { readOnlyHint: true },
     },
@@ -32,8 +32,8 @@ export function registerSite(server: McpServer, ctx: Ctx): void {
         shortBio: s?.shortBio ?? null,
         longBioMarkdown: s?.longBioMd ?? null,
         longBioIsRichText: Boolean(s?.longBioJson),
-        socialLinks: s?.socialLinks ?? [],
         profile: readProfile(s?.profile),
+        socialKeys: SOCIAL.map((n) => n.key),
         iconChoices: PROFILE_ICONS,
       })
     },
@@ -45,7 +45,7 @@ export function registerSite(server: McpServer, ctx: Ctx): void {
     'site_update',
     {
       description:
-        'Change the public site\'s settings. Only the fields you pass change. `lede`, `what_i_do` (max 6, icon from site_get\'s iconChoices) and `links` (max 8, http(s) URLs) are the front page profile; passing `what_i_do` or `links` replaces that whole list. `longBioMarkdown` replaces the /about page (and drops any rich-text version). Pass an empty string to clear a text field. Sends nothing.',
+        'Change the public site\'s settings. Only the fields you pass change. `social` sets the author\'s profiles by key (see site_get\'s socialKeys): pass only the keys to change, with a full https URL, or "" to remove one. `lede`, `what_i_do` (max 6, icon from site_get\'s iconChoices) and `links` (max 8, http(s) URLs) are the front page profile; passing `what_i_do` or `links` replaces that whole list. `longBioMarkdown` replaces the /about page (and drops any rich-text version). Pass an empty string to clear a text field. Sends nothing.',
       inputSchema: z.object({
         title: z.string().max(120).optional(),
         tagline: z.string().max(200).optional(),
@@ -54,7 +54,7 @@ export function registerSite(server: McpServer, ctx: Ctx): void {
         authorPhotoUrl: z.string().max(500).optional(),
         shortBio: z.string().max(1200).optional(),
         longBioMarkdown: z.string().max(20000).optional(),
-        socialLinks: z.array(z.object({ label: z.string().max(40), url: z.string().max(500) })).max(20).optional(),
+        social: z.record(z.string(), z.string().max(500)).optional(),
         lede: z.string().max(600).optional(),
         what_i_do: z.array(WhatIDoItem).max(6).optional(),
         links: z.array(ProfileLink).max(8).optional(),
@@ -63,10 +63,14 @@ export function registerSite(server: McpServer, ctx: Ctx): void {
     async (input) => {
       const current = await getSiteSettings(ctx.db)
       const profile = readProfile(current?.profile)
+      const unknown = Object.keys(input.social ?? {}).filter((k) => !SOCIAL.some((n) => n.key === k))
+      if (unknown.length) return fail(`Unknown social key(s): ${unknown.join(', ')}. Use: ${SOCIAL.map((n) => n.key).join(', ')}.`)
       const checked = validateProfile({
         lede: input.lede ?? profile.lede,
         what_i_do: input.what_i_do ?? profile.what_i_do,
         links: input.links ?? profile.links,
+        // Merged key by key: setting GitHub never clears LinkedIn.
+        social: { ...profile.social, ...(input.social ?? {}) },
       })
       if (!checked.ok) return fail(checked.error)
 
@@ -78,9 +82,6 @@ export function registerSite(server: McpServer, ctx: Ctx): void {
       if (input.authorName !== undefined) patch.authorName = blank(input.authorName)
       if (input.authorPhotoUrl !== undefined) patch.authorPhotoUrl = blank(input.authorPhotoUrl)
       if (input.shortBio !== undefined) patch.shortBio = blank(input.shortBio)
-      if (input.socialLinks !== undefined) {
-        patch.socialLinks = input.socialLinks.filter((l) => /^https?:\/\//i.test(l.url) && l.label.trim())
-      }
       if (input.longBioMarkdown !== undefined) {
         // Markdown replaces the rich-text version outright; two bodies that
         // disagree would leave /about showing whichever one wins.

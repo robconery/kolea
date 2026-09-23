@@ -2,7 +2,7 @@ import type { Db } from '../../db/index.ts'
 import type { DocNode, PostTag, SocialLink } from '../../db/schema.ts'
 import type { Env } from '../../types.ts'
 import { slugify } from '../ids.ts'
-import { EMPTY_PROFILE, type Profile, displayHost, readProfile } from '../site-profile.ts'
+import { EMPTY_PROFILE, type Profile, displayHost, readProfile, socialList } from '../site-profile.ts'
 import { getSiteSettings, hasLongBio, paragraphs } from '../site-settings.ts'
 import {
   getPostTagBySlug,
@@ -96,7 +96,9 @@ export async function loadSiteConfig(db: Db, env: Env): Promise<SiteConfig> {
     logoUrl: row.logoUrl?.trim() || null,
     authorPhotoUrl: row.authorPhotoUrl?.trim() || null,
     shortBio: row.shortBio?.trim() || null,
-    socialLinks: row.socialLinks ?? [],
+    // From the keyed `profile.social`. The old free-form `social_links` column
+    // is no longer read (see the schema note on it).
+    socialLinks: socialList(readProfile(row.profile).social),
     longBio: hasLongBio(row) ? { json: (row.longBioJson as DocNode | null) ?? null, md: row.longBioMd ?? '' } : null,
     profile: readProfile(row.profile),
   }

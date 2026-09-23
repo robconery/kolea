@@ -2,13 +2,8 @@ import { Hono } from 'hono'
 import { storeMedia } from '../core/media.ts'
 import { listAllPostTags, listPublicTags, setHomeTopics } from '../core/post-tags.ts'
 import { listPosts } from '../core/posts.ts'
-import {
-  formatSocialLinks,
-  getSiteSettings,
-  parseSocialLinks,
-  saveSiteSettings,
-} from '../core/site-settings.ts'
-import { PROFILE_ICONS, readProfile, validateProfile } from '../core/site-profile.ts'
+import { getSiteSettings, saveSiteSettings } from '../core/site-settings.ts'
+import { PROFILE_ICONS, SOCIAL, readProfile, validateProfile } from '../core/site-profile.ts'
 import { siteConfig } from '../core/theme/site.ts'
 import { getDb } from '../db/index.ts'
 import type { Env } from '../types.ts'
@@ -132,16 +127,21 @@ siteAdmin.get('/site', async (c) => {
               </p>
             </div>
             <div class="field">
-              <label>Links</label>
-              <textarea
-                name="social_links"
-                rows={5}
-                style="min-height:0"
-                placeholder={'GitHub https://github.com/you\nPodcast https://…'}
-              >
-                {formatSocialLinks(s?.socialLinks ?? [])}
-              </textarea>
-              <p class="faint" style="margin:8px 0 0">One per line: a label, then the URL.</p>
+              <label>Social</label>
+              <p class="faint" style="margin:6px 0 12px">The full URL of each profile. Leave any empty.</p>
+              <div class="row">
+                {SOCIAL.map((net) => (
+                  <div class="field" style="flex:1 1 30%;min-width:220px;margin:0 0 12px">
+                    <label style="font-size:10px">{net.label}</label>
+                    <input
+                      type="url"
+                      name={`social_${net.key}`}
+                      value={profile.social[net.key] ?? ''}
+                      placeholder="https://…"
+                    />
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         </div>
@@ -298,7 +298,8 @@ siteAdmin.post('/site', async (c) => {
     const title = str(`link_title_${i}`)
     if (title) links.push({ kind: str(`link_kind_${i}`), title, url: str(`link_url_${i}`), blurb: str(`link_blurb_${i}`) })
   }
-  const checked = validateProfile({ lede: str('profile_lede'), what_i_do, links })
+  const social = Object.fromEntries(SOCIAL.map((net) => [net.key, str(`social_${net.key}`)]))
+  const checked = validateProfile({ lede: str('profile_lede'), what_i_do, links, social })
   if (!checked.ok) {
     // Nothing is saved: a half-saved form is harder to reason about than a refused one.
     return c.redirect(`/site?flash=${encodeURIComponent(`Not saved. ${checked.error}`)}&kind=warn`)
@@ -313,7 +314,6 @@ siteAdmin.post('/site', async (c) => {
     authorName: text('author_name'),
     authorPhotoUrl: (photo as string | null) ?? text('author_photo_url'),
     shortBio: String(form.get('short_bio') ?? '').trim() || null,
-    socialLinks: parseSocialLinks(String(form.get('social_links') ?? '')),
     longBioJson: bio.bodyJson,
     longBioMd: bio.bodyMd || null,
   })

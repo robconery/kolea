@@ -163,7 +163,7 @@ Set on **System → Profile** in the admin. Available on every page.
 | `@author.short_bio` | A few sentences, plain text |
 | `@author.short_bio_html` | The same, as `<p>` paragraphs. Print with `{{@author.short_bio_html}}` |
 | `@author.url` | `/about` when there's a long bio, otherwise empty. Link to it only when set |
-| `@author.social` | Links: each has `label` and `url` |
+| `@author.social` | The author's social profiles that are set, in a fixed order: each has `key` (`website`, `github`, `linkedin`, `x`, `mastodon`, `bluesky`, `youtube`, `facebook`, `instagram`), `label` and `url` |
 
 ### The front page's content: `@profile`
 

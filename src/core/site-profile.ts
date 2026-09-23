@@ -35,17 +35,50 @@ export const ProfileLink = z.object({
   blurb: text(200).default(''),
 })
 
+/**
+ * The social profiles a site can link to, by key. Keyed rather than a free list
+ * so onboarding (and Claude) can set exactly one, and every theme can show them
+ * in the same order with the same names. Adding one is a line here.
+ */
+export const SOCIAL = [
+  { key: 'website', label: 'Website' },
+  { key: 'github', label: 'GitHub' },
+  { key: 'linkedin', label: 'LinkedIn' },
+  { key: 'x', label: 'X' },
+  { key: 'mastodon', label: 'Mastodon' },
+  { key: 'bluesky', label: 'Bluesky' },
+  { key: 'youtube', label: 'YouTube' },
+  { key: 'facebook', label: 'Facebook' },
+  { key: 'instagram', label: 'Instagram' },
+] as const
+
+export type SocialKey = (typeof SOCIAL)[number]['key']
+
+/** An http(s) URL, or empty for "not set". */
+const optionalUrl = z.union([httpUrl, z.literal('')]).optional()
+
+export const SocialSchema = z
+  .object(Object.fromEntries(SOCIAL.map((s) => [s.key, optionalUrl])) as Record<SocialKey, typeof optionalUrl>)
+  .transform((o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v)) as Partial<Record<SocialKey, string>>)
+
 export const ProfileSchema = z.object({
   /** One paragraph under the headline. */
   lede: text(600).default(''),
   what_i_do: z.array(WhatIDoItem).max(6).default([]),
   links: z.array(ProfileLink).max(8).default([]),
+  /** The author's social profiles, keyed: `{ github: 'https://…', x: 'https://…' }`. */
+  social: SocialSchema.default({}),
 })
 
 export type Profile = z.infer<typeof ProfileSchema>
 export type ProfileInput = z.input<typeof ProfileSchema>
 
-export const EMPTY_PROFILE: Profile = { lede: '', what_i_do: [], links: [] }
+export const EMPTY_PROFILE: Profile = { lede: '', what_i_do: [], links: [], social: {} }
+
+/** The set social profiles as a list, in the fixed order, for themes to loop over. */
+export function socialList(social: Profile['social']): { key: SocialKey; label: string; url: string }[] {
+  return SOCIAL.flatMap((s) => (social[s.key] ? [{ key: s.key, label: s.label, url: social[s.key] as string }] : []))
+}
 
 /**
  * Read a stored profile. Never throws: a document that no longer matches the

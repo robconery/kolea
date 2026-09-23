@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm'
 import type { Db } from '../db/index.ts'
-import { type DocNode, type SiteSettings, type SocialLink, siteSettings } from '../db/schema.ts'
+import { type DocNode, type SiteSettings, siteSettings } from '../db/schema.ts'
 import { docIsEmpty } from './render-doc.ts'
 
 /**
@@ -42,35 +42,6 @@ export function hasLongBio(s: Pick<SiteSettings, 'longBioJson' | 'longBioMd'> | 
   if (!s) return false
   if (s.longBioJson && !docIsEmpty(s.longBioJson as DocNode)) return true
   return Boolean(s.longBioMd?.trim())
-}
-
-/**
- * "Label https://…" per line → links. Lines without a URL are dropped; a bare
- * URL is labelled with its host, so pasting a list of links just works.
- */
-export function parseSocialLinks(text: string): SocialLink[] {
-  const out: SocialLink[] = []
-  for (const raw of text.split('\n')) {
-    const line = raw.trim()
-    if (!line) continue
-    const m = /(https?:\/\/\S+)/i.exec(line)
-    if (!m) continue
-    const url = m[1] as string
-    let label = line.replace(url, '').replace(/[|:–—-]\s*$/, '').trim()
-    if (!label) {
-      try {
-        label = new URL(url).host.replace(/^www\./, '')
-      } catch {
-        continue
-      }
-    }
-    out.push({ label, url })
-  }
-  return out.slice(0, 20)
-}
-
-export function formatSocialLinks(links: SocialLink[]): string {
-  return links.map((l) => `${l.label} ${l.url}`).join('\n')
 }
 
 /** Plain-text paragraphs, split on blank lines — how the short bio is written. */
