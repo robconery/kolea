@@ -268,7 +268,9 @@ describe('Feature: sending a broadcast to the list', () => {
       world = createWorld()
       await aPerson(world, { email: 'ada@example.test' })
       const id = await aBroadcast(world)
-      response = await world.post(`/broadcasts/${id}/send`, {})
+      // Through the confirmation screen's own button: it carries the audience
+      // size the operator saw. See the-send-confirmation.spec.ts.
+      response = await world.post(`/broadcasts/${id}/send`, { confirm: 'send', expected: '1' })
     })
 
     it('sends the operator back to the broadcast', () => {

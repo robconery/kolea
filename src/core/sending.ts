@@ -238,6 +238,23 @@ export async function sendMessages(
   )
   const bcastById = new Map(bcasts.map((b) => [b.id, b]))
 
+  // A cancelled broadcast stops here, whatever is still in the queue for it.
+  // Mark those rows failed so they never go out, and drop them from the batch.
+  const cancelledIds = queued
+    .filter((m) => m.kind === 'broadcast' && m.broadcastId && bcastById.get(m.broadcastId)?.status === 'cancelled')
+    .map((m) => m.id)
+  if (cancelledIds.length) {
+    for (let i = 0; i < cancelledIds.length; i += 90) {
+      await db
+        .update(messages)
+        .set({ status: 'failed', error: 'broadcast cancelled' })
+        .where(inArray(messages.id, cancelledIds.slice(i, i + 90)))
+    }
+    const dropped = new Set(cancelledIds)
+    for (let i = queued.length - 1; i >= 0; i--) if (dropped.has((queued[i] as (typeof queued)[number]).id)) queued.splice(i, 1)
+    if (queued.length === 0) return outcomes
+  }
+
   const steps = await loadByIds(
     queued.flatMap((m) => (m.kind === 'sequence' && m.sequenceStepId ? [m.sequenceStepId] : [])),
     (chunk) => db.select().from(sequenceSteps).where(inArray(sequenceSteps.id, chunk)).all(),
