@@ -4,7 +4,7 @@ import { type DocNode, type SiteSettings, type SocialLink, siteSettings } from '
 import { docIsEmpty } from './render-doc.ts'
 
 /**
- * Who the site is and who writes it: one row, edited on the Site screen (and,
+ * Who the site is and who writes it: one row, edited on the Profile screen (and,
  * later, filled in by the onboarding interview).
  *
  * Every field is optional. An unset field falls back to the `SITE_*`

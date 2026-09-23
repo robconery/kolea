@@ -138,7 +138,7 @@ output is then passed to `default.hbs` as `{{{body}}}`.
 
 | Value | What it is |
 |---|---|
-| `@site.title`, `@site.description` | The site's name and tagline (Site screen, falling back to the `SITE_*` settings) |
+| `@site.title`, `@site.description` | The site's name and tagline (Profile screen, falling back to the `SITE_*` settings) |
 | `@site.url` | The site's origin, e.g. `https://a.bigmachine.io` |
 | `@site.author` | The author's name |
 | `@site.navigation` | Home, Writing, About (when there's a long bio), then the busiest topics: each has `label`, `url`, `hue`, `hue_cool` |
@@ -146,7 +146,7 @@ output is then passed to `default.hbs` as `{{{body}}}`.
 | `@site.search_url` | `/search` |
 | `@site.writing_url`, `@site.about_url` | `/writing`, and `/about` (empty when there's no long bio) |
 | `@site.topics` | Just the busiest topics, without Home, Writing and About |
-| `@site.logo` | Logo URL from the Site screen, or empty |
+| `@site.logo` | Logo URL from the Profile screen, or empty |
 | `@site.now` | The current time, e.g. for `{{date @site.now format="YYYY"}}` |
 | `@site.locale` | `en` |
 | `@custom.<key>` | This theme's settings (from `package.json`) |
@@ -154,7 +154,7 @@ output is then passed to `default.hbs` as `{{{body}}}`.
 
 ### The writer: `@author`
 
-Set on the admin's **Site** screen. Available on every page.
+Set on **System → Profile** in the admin. Available on every page.
 
 | Value | What it is |
 |---|---|
@@ -167,7 +167,7 @@ Set on the admin's **Site** screen. Available on every page.
 
 ### The front page's content: `@profile`
 
-Set on the **Site** screen, or by Claude through the `site_update` MCP tool.
+Set on **System → Profile**, or by Claude through the `site_update` MCP tool.
 Stored as one JSON document, validated on every write. Available on every page.
 
 | Value | What it is |

@@ -64,7 +64,7 @@ export interface SiteConfig {
   profile: Profile
 }
 
-/** The site from environment variables alone — what renders before the Site screen is ever saved. */
+/** The site from environment variables alone — what renders before the Profile screen is ever saved. */
 export function siteConfig(env: Env): SiteConfig {
   const publicUrl = (env.PUBLIC_URL ?? '').replace(/\/$/, '')
   return {
@@ -82,7 +82,7 @@ export function siteConfig(env: Env): SiteConfig {
   }
 }
 
-/** The Site screen's values over the environment's. Unset fields keep the environment's. */
+/** The Profile screen's values over the environment's. Unset fields keep the environment's. */
 export async function loadSiteConfig(db: Db, env: Env): Promise<SiteConfig> {
   const base = siteConfig(env)
   const row = await getSiteSettings(db)
@@ -470,7 +470,7 @@ async function render(req: SiteRequest, view: View): Promise<Rendered> {
         url: cfg.longBio ? '/about' : null,
         social: cfg.socialLinks,
       },
-      // The front page's structured content, from the Site screen (or MCP).
+      // The front page's structured content, from the Profile screen (or MCP).
       profile: {
         lede: cfg.profile.lede,
         what_i_do: cfg.profile.what_i_do,

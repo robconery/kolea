@@ -1848,7 +1848,7 @@ export interface SocialLink {
  * Who the site is and who writes it. Exactly one row (`id = 1`), created on
  * first save. Every column is nullable on purpose: null means "not set", and
  * the site falls back to the `SITE_*` environment variables, so an install
- * that has never opened the Site screen renders exactly as it did before.
+ * that has never opened the Profile screen renders exactly as it did before.
  */
 export const siteSettings = sqliteTable('site_settings', {
   id: integer('id').primaryKey(),

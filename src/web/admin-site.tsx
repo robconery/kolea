@@ -15,7 +15,7 @@ import type { Env } from '../types.ts'
 import { Flash, Layout, RichEditor, readEditorBody } from './layout.tsx'
 
 /**
- * The Site screen: who the site is and who writes it. Everything here feeds the
+ * The Profile screen: who the site is and who writes it. Everything here feeds the
  * public site's front page and `/about`, through whichever theme is live.
  *
  * Deliberately a handful of fields, not a page builder. Themes decide how a
@@ -40,10 +40,10 @@ siteAdmin.get('/site', async (c) => {
   const linkRows = [...profile.links, ...Array(8).fill(null)].slice(0, 8)
 
   return c.html(
-    <Layout title="Site" nav="site" editor>
+    <Layout title="Profile" nav="site" editor>
       <div class="head">
         <div>
-          <h1>Site</h1>
+          <h1>Profile</h1>
           <div class="sub">
             Who the site is and who writes it. The live theme decides how it looks.
             {siteUrl ? (

@@ -3,7 +3,7 @@ import * as z from 'zod/v4'
 /**
  * The front page's structured content — one JSON document on the
  * `site_settings` row, validated here on every write, whichever door it came
- * in by (the Site screen, or Claude through the `site_update` MCP tool).
+ * in by (the Profile screen, or Claude through the `site_update` MCP tool).
  *
  * Themes read it as `@profile`. It belongs to the site, not the theme:
  * switching themes restyles it and never loses it. Adding a section later is

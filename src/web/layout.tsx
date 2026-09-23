@@ -997,6 +997,8 @@ const ICONS: Record<string, string> = {
   forms: 'M6.2 3.8h11.6v16.4H6.2V3.8Zm2.8 4.2h6M9 11.2h3.2M14.8 12.6v5m0 0 2-2m-2 2-2-2',
   camp: 'M12 3.6a8.4 8.4 0 1 0 0 16.8 8.4 8.4 0 0 0 0-16.8Zm0 4.6a3.8 3.8 0 1 0 0 7.6 3.8 3.8 0 0 0 0-7.6Zm0 3.3a.5.5 0 1 0 0 1 .5.5 0 0 0 0-1Z',
   store: 'M5.6 8.2h12.8l1 11.4H4.6l1-11.4Zm3.4 0V6.4a3 3 0 0 1 6 0v1.8',
+  /* A dollar sign: the mail that goes out after money comes in. */
+  pmail: 'M12 3.6v16.8M16.2 7.6c-.8-1.3-2.3-2-4.2-2-2.5 0-4.1 1.2-4.1 3.1 0 4.3 8.6 2.3 8.6 6.9 0 2-1.8 3.3-4.5 3.3-2.1 0-3.7-.8-4.5-2.2',
   /* A receipt, torn off at the bottom: the line items, after the fact. */
   sales:
     'M6.6 3.8h10.8v16.8l-1.8-1.4-1.8 1.4-1.8-1.4-1.8 1.4-1.8-1.4-1.8 1.4V3.8Zm2.8 4.4h5.2M9.4 11.8h5.2',
@@ -1089,10 +1091,11 @@ const NAV: ({ grp: string } | { href: string; key: string; label: string })[] = 
   { href: '/store/offers', key: 'offers', label: 'Offers' },
   { href: '/store/customers', key: 'cust', label: 'Customers' },
   { href: '/store/ideas', key: 'ideas', label: 'Segment ideas' },
-  { grp: 'Site' },
-  { href: '/site', key: 'site', label: 'Site' },
-  { href: '/themes', key: 'theme', label: 'Themes' },
+  // Who the site is (the profile) and how it looks (themes) sit with the rest
+  // of the setup, not in a group of their own.
   { grp: 'System' },
+  { href: '/site', key: 'site', label: 'Profile' },
+  { href: '/themes', key: 'theme', label: 'Themes' },
   { href: '/consent', key: 'cons', label: 'Consent' },
   { href: '/settings', key: 'set', label: 'Settings' },
   { href: '/help', key: 'help', label: 'Help' },
