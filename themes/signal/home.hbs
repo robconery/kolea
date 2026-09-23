@@ -1,52 +1,59 @@
 {{!< default}}
-{{!-- The front page: a magazine cover that sells the writer. Masthead with the
-      signup under it, the ticker, the author, what to read first, a shelf per
-      chosen topic, and the signup again. Empty sections don't render. --}}
-<section class="mast">
-    <p class="mast-line reveal" style="--d:0">
-        <span class="chip chip--live"><span class="chip-dot"></span>By {{@author.name}}</span>
-        {{#if post_count}}<span class="mono">{{plural post_count empty="" singular="1 story" plural="% stories"}}</span>{{/if}}
-    </p>
-    <h1 class="mast-word" aria-label="{{@site.title}}">
-        {{#foreach (split @site.title separator=" ")}}<span class="mast-w"><span style="--d:{{@index}}">{{this}}</span></span>{{/foreach}}
-    </h1>
-    {{#if @site.description}}<p class="mast-dek reveal" style="--d:3">{{@site.description}}</p>{{/if}}
-    {{#if @site.signup_action}}
-    <form class="field field--hero reveal" style="--d:4" method="post" action="{{@site.signup_action}}">
-        <label class="visually-hidden" for="hero-email">Email address</label>
-        <input id="hero-email" type="email" name="email" required placeholder="you@example.com" autocomplete="email">
-        <button class="pill pill--ink magnetic" type="submit"><span>Get every story</span><span class="pill-orb" aria-hidden="true">↗</span></button>
-    </form>
-    {{/if}}
+{{!-- The front page: a personal landing page with magazine energy, turned
+      down a notch. Cover and byline side by side, the ticker, what I do,
+      where to start, a shelf per chosen topic, and notable links.
+
+      ⚠️ DEMO: the lede, "What I do" and "Notable links" are placeholder copy
+      written into this template. Kōlea has no data for them yet; they move to
+      the Site screen when it does. Everything else is real data. --}}
+
+<section class="lp-hero">
+    <div class="lp-intro">
+        <p class="mast-line reveal" style="--d:0">
+            <span class="chip chip--live"><span class="chip-dot"></span>{{@site.title}}</span>
+            {{#if post_count}}<span class="mono">{{plural post_count empty="" singular="1 story" plural="% stories"}}</span>{{/if}}
+        </p>
+        <h1 class="lp-title">{{#foreach (split @site.description separator=" ")}}<span class="mast-w"><span style="--d:{{@index}}">{{this}}</span></span>{{/foreach}}</h1>
+        <p class="lp-lede reveal" style="--d:3">Lorem ipsum dolor sit amet, consectetur adipiscing elit. Integer posuere erat a ante venenatis dapibus, posuere velit aliquet. One email when there's a new story.</p>
+        {{#if @site.signup_action}}
+        <form class="field field--hero reveal" style="--d:4" method="post" action="{{@site.signup_action}}">
+            <label class="visually-hidden" for="hero-email">Email address</label>
+            <input id="hero-email" type="email" name="email" required placeholder="you@example.com" autocomplete="email">
+            <button class="pill pill--ink magnetic" type="submit"><span>Subscribe</span><span class="pill-orb" aria-hidden="true">↗</span></button>
+        </form>
+        {{/if}}
+    </div>
+
+    <aside class="lp-me reveal" style="--d:2; --hue: 284" aria-labelledby="about-title">
+        <p class="mono">Who's writing</p>
+        <div class="lp-me-top">
+            {{#if @author.photo}}<img class="lp-avatar" src="{{@author.photo}}" alt="{{@author.name}}">{{/if}}
+            <h2 class="lp-me-name" id="about-title">{{@author.name}}</h2>
+        </div>
+        {{#if @author.short_bio}}<div class="lp-me-bio">{{@author.short_bio_html}}</div>{{/if}}
+        <p class="lp-me-links">
+            {{#foreach @author.social}}<a class="chip chip--ink" href="{{url}}" rel="me noopener">{{label}}</a>{{/foreach}}
+        </p>
+        {{#if @author.url}}<a class="pill pill--ink lp-me-more" href="{{@author.url}}"><span>More about me</span><span class="pill-orb" aria-hidden="true">→</span></a>{{/if}}
+    </aside>
 </section>
 
 {{#if @custom.ticker}}{{> ticker}}{{/if}}
 
-{{#if @author.short_bio}}
-<section class="byline-block reveal" style="--hue: 284" aria-labelledby="about-title">
-    <div class="byline-in">
-        {{#if @author.photo}}
-        <div class="bezel byline-photo"><div class="bezel-core"><img src="{{@author.photo}}" alt="{{@author.name}}"></div></div>
-        {{/if}}
-        <div class="byline-text">
-            <p class="mono">Who's writing</p>
-            <h2 class="byline-name" id="about-title">{{@author.name}}</h2>
-            <div class="byline-bio">{{@author.short_bio_html}}</div>
-            <p class="byline-links">
-                {{#if @author.url}}<a class="pill pill--ink" href="{{@author.url}}"><span>The whole story</span><span class="pill-orb" aria-hidden="true">→</span></a>{{/if}}
-                {{#foreach @author.social}}<a class="chip chip--ink" href="{{url}}" rel="me noopener">{{label}}</a>{{/foreach}}
-            </p>
-        </div>
+{{!-- DEMO copy --}}
+<section class="section-block" aria-labelledby="do-title">
+    <h2 class="block-title" id="do-title">What I do</h2>
+    <div class="lp-do">
+        <article class="lp-do-item reveal" style="--d:0; --hue: 186"><p class="mono">01</p><h3>Writing</h3><p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Nulla vitae elit libero, a pharetra augue. Essays on code, business and the long way round.</p></article>
+        <article class="lp-do-item reveal" style="--d:1; --hue: 284"><p class="mono">02</p><h3>Teaching</h3><p>Cras mattis consectetur purus sit amet fermentum. Maecenas faucibus mollis interdum. Books and courses for people who learned on the job.</p></article>
+        <article class="lp-do-item reveal" style="--d:2; --hue: 52"><p class="mono">03</p><h3>Building</h3><p>Donec ullamcorper nulla non metus auctor fringilla. Aenean lacinia bibendum nulla sed consectetur. Small tools, shipped and maintained.</p></article>
     </div>
 </section>
-{{/if}}
 
 {{#if start_here}}
 <section class="section-block" aria-labelledby="start-title">
     <h2 class="block-title" id="start-title">Start here</h2>
-    <div class="spread spread--topic">
-        {{#foreach start_here}}{{> story}}{{/foreach}}
-    </div>
+    {{#foreach start_here limit="2"}}{{> spread}}{{/foreach}}
 </section>
 {{/if}}
 
@@ -56,20 +63,27 @@
         <h2 class="block-title" id="shelf-{{tag.slug}}"><span class="shelf-swatch"></span>{{tag.name}}</h2>
         <a class="pill" href="{{tag.url}}"><span>{{plural tag.count.posts empty="" singular="1 story" plural="All %"}}</span><span class="pill-orb" aria-hidden="true">→</span></a>
     </div>
-    <div class="more-row">
-        {{#foreach posts}}{{> story compact=true}}{{/foreach}}
-    </div>
+    <div class="more-row">{{#foreach posts}}{{> story compact=true}}{{/foreach}}</div>
 </section>
 {{/foreach}}
 
 {{#unless start_here}}{{#unless shelves}}
 <section class="section-block" aria-labelledby="latest-title">
     <h2 class="block-title" id="latest-title">Latest</h2>
-    <div class="spread spread--topic">
-        {{#foreach latest}}{{> story}}{{/foreach}}
-    </div>
+    <div class="more-row lp-pad">{{#foreach latest limit="6"}}{{> story compact=true}}{{/foreach}}</div>
 </section>
 {{/unless}}{{/unless}}
+
+{{!-- DEMO copy --}}
+<section class="section-block" aria-labelledby="links-title">
+    <h2 class="block-title" id="links-title">Notable links</h2>
+    <div class="lp-links">
+        <a class="lp-link reveal" style="--d:0; --hue: 284" href="https://example.com/podcast"><span class="mono lp-link-kind">Podcast</span><span class="lp-link-title">Lorem Ipsum Radio</span><span class="lp-link-dek">Vestibulum id ligula porta felis euismod semper. Weekly conversations.</span><span class="lp-link-host mono">example.com/podcast ↗</span></a>
+        <a class="lp-link reveal" style="--d:1; --hue: 186" href="https://example.com/book"><span class="mono lp-link-kind">Book</span><span class="lp-link-title">The Dolor Sit Handbook</span><span class="lp-link-dek">Etiam porta sem malesuada magna mollis euismod. The fundamentals you skipped.</span><span class="lp-link-host mono">example.com/book ↗</span></a>
+        <a class="lp-link reveal" style="--d:2; --hue: 148" href="https://github.com/example/amet"><span class="mono lp-link-kind">Open source</span><span class="lp-link-title">amet-cli</span><span class="lp-link-dek">Nullam quis risus eget urna mollis ornare vel eu leo. A small tool that does one thing.</span><span class="lp-link-host mono">github.com/example/amet ↗</span></a>
+        <a class="lp-link reveal" style="--d:3; --hue: 334" href="https://example.com/course"><span class="mono lp-link-kind">Course</span><span class="lp-link-title">Consectetur, From Scratch</span><span class="lp-link-dek">Maecenas sed diam eget risus varius blandit sit amet non magna. Twelve lessons.</span><span class="lp-link-host mono">example.com/course ↗</span></a>
+    </div>
+</section>
 
 {{#if post_count}}
 <p class="everything"><a class="pill pill--ink" href="/writing"><span>Every story</span><span class="pill-orb" aria-hidden="true">→</span></a></p>

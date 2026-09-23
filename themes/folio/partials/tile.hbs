@@ -1,0 +1,9 @@
+<article class="tile reveal" style="--d: {{@index}}">
+    <a class="tile-link" href="{{url}}">
+        {{#if feature_image}}<span class="tile-art"><img src="{{img_url feature_image size="m"}}" alt="" loading="lazy" style="view-transition-name: plate-{{id}}"></span>{{/if}}
+        {{#primary_tag}}<span class="entry-kicker">{{name}}</span>{{/primary_tag}}
+        <span class="tile-title" style="view-transition-name: title-{{id}}">{{title}}</span>
+        {{#if excerpt}}<span class="tile-dek">{{excerpt words="22"}}</span>{{/if}}
+        <time class="tile-date" datetime="{{date format="YYYY-MM-DD"}}">{{date format="D MMM YYYY"}}</time>
+    </a>
+</article>

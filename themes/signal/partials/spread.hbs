@@ -1,0 +1,11 @@
+<article class="lp-spread{{#if @even}} lp-spread--flip{{/if}} reveal" style="--hue: {{hue}}">
+    <a class="lp-spread-art" href="{{url}}" tabindex="-1" aria-hidden="true">
+        {{#if feature_image}}<span class="bezel"><span class="bezel-core"><img src="{{img_url feature_image size="l"}}" alt="" loading="lazy" style="view-transition-name: art-{{id}}"></span></span>{{else}}<span class="lp-spread-blank"><span>{{#primary_tag}}{{name}}{{/primary_tag}}</span></span>{{/if}}
+    </a>
+    <div class="lp-spread-text">
+        <p class="story-meta">{{#primary_tag}}<span class="chip">{{name}}</span>{{/primary_tag}}<span class="mono">{{reading_time minute="1 min read" minutes="% min read"}}</span></p>
+        <h3 class="lp-spread-title"><a href="{{url}}">{{title}}</a></h3>
+        {{#if excerpt}}<p class="lp-spread-dek">{{excerpt words="48"}}</p>{{/if}}
+        <a class="pill" href="{{url}}"><span>Read it</span><span class="pill-orb" aria-hidden="true">→</span></a>
+    </div>
+</article>

@@ -822,6 +822,101 @@ img { display: block; max-width: 100%; height: auto; }
   .subscribe-form--hero button { justify-content: space-between; }
 }
 
+/* ── The landing page: two columns up top, then quiet sections divided by
+      the contents rule. Paper, ink, one vermilion. */
+
+.lp-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
+  gap: clamp(2.5rem, 6vw, 5.5rem);
+  align-items: end;
+  max-width: 78rem;
+  margin: 0 auto;
+  padding: clamp(5rem, 12vw, 9rem) var(--gutter) clamp(3.5rem, 8vw, 6rem);
+}
+.lp-title {
+  margin: 1.3rem 0 0;
+  max-width: 17ch;
+  font-weight: 340;
+  font-size: clamp(2.4rem, 5.4vw, 4.6rem);
+  line-height: 1.02;
+  letter-spacing: -0.03em;
+  font-variation-settings: 'opsz' 60;
+  text-wrap: balance;
+}
+.lp-lede { margin: 1.4rem 0 0; max-width: 44ch; font-size: 1.2rem; line-height: 1.6; color: var(--ink-soft); }
+.lp-intro .subscribe-form--hero { margin-top: 2rem; }
+
+.lp-me {
+  padding: 1.8rem 1.8rem 2rem;
+  border-top: 2px solid var(--ink);
+  background: var(--paper-deep);
+}
+.lp-me-top { display: flex; align-items: center; gap: 1rem; margin-top: 1.1rem; }
+.lp-avatar { width: 4rem; height: 4rem; border-radius: 50%; object-fit: cover; filter: grayscale(0.35) sepia(0.12); }
+.lp-me-name { margin: 0; font-weight: 400; font-size: 1.7rem; line-height: 1.05; letter-spacing: -0.02em; font-variation-settings: 'opsz' 60; }
+.lp-me-bio { margin-top: 1.1rem; font-size: 1.02rem; line-height: 1.6; color: var(--ink-soft); }
+.lp-me-bio p { margin: 0; }
+.lp-me-bio p + p { margin-top: 0.7em; }
+.lp-me .author-links { margin-top: 1.2rem; }
+
+.lp-section { max-width: 78rem; margin: clamp(4rem, 9vw, 6rem) auto 0; padding: 0 var(--gutter); }
+.home-template .everything { margin-inline: auto; }
+.lp-section > .contents-label { margin-bottom: 2rem; }
+
+.lp-do { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(1.5rem, 4vw, 3rem); }
+.lp-do-no { margin: 0; font-size: 1.6rem; font-weight: 300; font-style: italic; color: var(--vermilion); }
+.lp-do-item h3 { margin: 0.5rem 0 0; font-weight: 450; font-size: 1.45rem; letter-spacing: -0.015em; }
+.lp-do-item p:last-child { margin: 0.6rem 0 0; font-size: 1.02rem; line-height: 1.6; color: var(--ink-soft); }
+
+.lp-spread { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: clamp(2rem, 5vw, 4rem); align-items: center; }
+.lp-spread + .lp-spread { margin-top: clamp(3rem, 7vw, 4.5rem); }
+.lp-spread--flip .lp-spread-art { order: 2; }
+.lp-spread-art { display: block; overflow: hidden; border-radius: 2px; background: var(--paper-deep); }
+.lp-spread-art img { width: 100%; aspect-ratio: 3 / 2; object-fit: cover; filter: saturate(0.85); transition: transform 1.4s var(--arrive), filter 1s var(--arrive); }
+.lp-spread-art:hover img { transform: scale(1.03); filter: none; }
+.lp-spread-blank { display: grid; place-items: center; aspect-ratio: 3 / 2; font-size: 3rem; color: var(--vermilion); }
+.lp-spread-title { margin: 0.7rem 0 0; font-weight: 380; font-size: clamp(1.7rem, 3vw, 2.4rem); line-height: 1.08; letter-spacing: -0.02em; font-variation-settings: 'opsz' 60; text-wrap: balance; }
+.lp-spread-title a { text-decoration: none; }
+.lp-spread-title a:hover { color: var(--vermilion); }
+.lp-spread-dek { margin: 1rem 0 1.2rem; max-width: 44ch; font-size: 1.05rem; line-height: 1.6; color: var(--ink-soft); }
+
+.lp-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(1.5rem, 3vw, 2.5rem); }
+.tile-link { display: flex; flex-direction: column; gap: 0.6rem; height: 100%; text-decoration: none; }
+.tile-art { display: block; overflow: hidden; border-radius: 2px; margin-bottom: 0.4rem; }
+.tile-art img { width: 100%; aspect-ratio: 3 / 2; object-fit: cover; filter: saturate(0.85); transition: transform 1.3s var(--arrive); }
+.tile-link:hover .tile-art img { transform: scale(1.04); }
+.tile-title { font-size: 1.3rem; font-weight: 450; line-height: 1.2; letter-spacing: -0.01em; text-wrap: balance; transition: color 0.35s var(--respond); }
+.tile-link:hover .tile-title { color: var(--vermilion); }
+.tile-dek { font-size: 0.98rem; line-height: 1.55; color: var(--ink-soft); }
+.tile-date { margin-top: auto; padding-top: 0.4rem; font: 400 0.8125rem/1 var(--label); color: var(--ink-faint); }
+
+.lp-links { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 clamp(2rem, 5vw, 4rem); }
+.lp-link {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.3rem 1rem;
+  padding: 1.3rem 0;
+  border-bottom: 1px solid var(--rule);
+  text-decoration: none;
+}
+.lp-link-kind { grid-column: 1 / -1; font: 500 0.6875rem/1 var(--label); letter-spacing: 0.16em; text-transform: uppercase; color: var(--vermilion); }
+.lp-link-title { font-size: 1.3rem; font-weight: 450; letter-spacing: -0.01em; transition: color 0.35s var(--respond); }
+.lp-link-dek { grid-column: 1; font-size: 0.98rem; line-height: 1.5; color: var(--ink-soft); }
+.lp-link-host { grid-column: 2; grid-row: 2 / 4; align-self: center; font: 400 0.8125rem/1 var(--label); color: var(--ink-faint); }
+.lp-link:hover .lp-link-title { color: var(--vermilion); }
+
+@media (max-width: 900px) {
+  .lp-hero { grid-template-columns: minmax(0, 1fr); align-items: start; }
+  .lp-do, .lp-tiles { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 760px) {
+  .lp-spread, .lp-spread--flip { grid-template-columns: minmax(0, 1fr); }
+  .lp-spread--flip .lp-spread-art { order: 0; }
+  .lp-links, .lp-link { grid-template-columns: minmax(0, 1fr); }
+  .lp-link-host { grid-column: 1; grid-row: auto; }
+}
+
 /* ── Reading progress: a vermilion thread across the top of an essay. */
 
 .progress {
