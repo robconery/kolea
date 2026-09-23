@@ -5,6 +5,7 @@ import {
   broadcastStats,
   createBroadcast,
   reviseSentBroadcast,
+  resumeBroadcast,
   startBroadcast,
 } from '../core/broadcasts.ts'
 import { listCampaigns } from '../core/campaigns.ts'
@@ -566,6 +567,14 @@ mail.get('/broadcasts/:id', async (c) => {
   // different. There is no autosave and no send: every save rewrites a live
   // page, so it happens when the Save button is pressed and not before.
   const save = revising ? <button class="btn primary">Save changes</button> : null
+  // A cancelled send can be picked up where it stopped. A link, not a submit:
+  // it opens its own confirmation screen and never sends from here.
+  const resume =
+    b.status === 'cancelled' && !asMailed ? (
+      <a class="btn accent" href={`/broadcasts/${id}/resume`}>
+        Resume sending…
+      </a>
+    ) : null
   const back = asMailed ? (
     <a class="btn" href={`/broadcasts/${id}`}>
       Back to editing
@@ -593,7 +602,16 @@ mail.get('/broadcasts/:id', async (c) => {
               : 'saving never sends it again'}
         </>
       }
-      actions={save ?? back}
+      actions={
+        save || resume ? (
+          <>
+            {resume}
+            {save}
+          </>
+        ) : (
+          back
+        )
+      }
       side={
         <>
           <div class="side-sec">
@@ -1216,6 +1234,85 @@ mail.get('/broadcasts/:id/send', async (c) => {
       </div>
     </Layout>,
   )
+})
+
+/**
+ * Resume a cancelled send: its own confirmation screen, saying plainly who
+ * already has it (and won't get it again) and roughly who will.
+ */
+mail.get('/broadcasts/:id/resume', async (c) => {
+  const db = getDb(c.env)
+  const id = Number(c.req.param('id'))
+  const b = await db.select().from(broadcasts).where(eq(broadcasts.id, id)).get()
+  if (!b) return c.notFound()
+  if (b.status !== 'cancelled') {
+    return c.redirect(`/broadcasts/${id}?flash=${encodeURIComponent(`This broadcast is ${b.status}; only a cancelled send can be resumed.`)}&kind=warn`)
+  }
+  const choices = await audienceChoices(db)
+  const audienceSize = await countSegment(db, b.segment ?? {})
+  const stats = await broadcastStats(db, id)
+  const already = stats.sent + stats.suppressed
+  const remaining = Math.max(0, audienceSize - already)
+  const n = (x: number) => x.toLocaleString('en-US')
+
+  return c.html(
+    <Layout title={`Resume · ${b.subject}`} nav="bc">
+      <div class="head">
+        <div>
+          <h1>Resume this send?</h1>
+          <div class="sub">
+            <a href={`/broadcasts/${id}`}>← Back to the broadcast</a>
+          </div>
+        </div>
+      </div>
+      <Flash msg={c.req.query('flash')} kind={c.req.query('kind')} />
+      <div class="card">
+        <div class="card-b">
+          <p style="margin:0 0 6px;font-size:22px;line-height:1.35">
+            Resume <strong>“{b.subject || 'Untitled'}”</strong>: about <strong>{n(remaining)} more people</strong> will
+            get it.
+          </p>
+          <p class="faint" style="margin:0 0 22px">
+            {describeRule(b.segment ?? {}, choices.allTags)} · {n(audienceSize)} in the audience now.
+          </p>
+          <ul style="margin:0 0 22px;padding-left:18px;line-height:1.7">
+            <li>
+              <strong>{n(stats.sent)}</strong> already got it. They will not get it again: every person has one message
+              per broadcast, and sent ones are never re-sent.
+            </li>
+            <li>It picks up after the last person reached, and anyone who joined since is included.</li>
+            <li>
+              Everyone from here on gets the <strong>current</strong> version
+              {b.revisedAt ? ', with the correction you saved' : ''}.
+            </li>
+          </ul>
+          <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+            <a class="btn" href={`/broadcasts/${id}`}>
+              Not now
+            </a>
+            {remaining > 0 ? (
+              <form method="post" action={`/broadcasts/${id}/resume`} style="display:inline">
+                <input type="hidden" name="confirm" value="resume" />
+                <button class="btn accent">Resume: send to about {n(remaining)} people</button>
+              </form>
+            ) : (
+              <span class="faint">Everyone in the audience already has it.</span>
+            )}
+          </div>
+        </div>
+      </div>
+    </Layout>,
+  )
+})
+
+mail.post('/broadcasts/:id/resume', async (c) => {
+  const db = getDb(c.env)
+  const id = Number(c.req.param('id'))
+  const form = await c.req.formData()
+  if (String(form.get('confirm') ?? '') !== 'resume') return c.redirect(`/broadcasts/${id}/resume`)
+  const r = await resumeBroadcast(c.env, db, id)
+  if (!r.ok) return c.redirect(`/broadcasts/${id}?flash=${encodeURIComponent(`Not resumed: ${r.reason}.`)}&kind=warn`)
+  return c.redirect(`/broadcasts/${id}?flash=${encodeURIComponent('Resumed. It continues where it stopped; nobody gets it twice.')}`)
 })
 
 mail.post('/broadcasts/:id/send', async (c) => {

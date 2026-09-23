@@ -7,7 +7,7 @@ import { beforeAll, describe, expect, it } from 'bun:test'
 import { eq } from 'drizzle-orm'
 import { reviseSentBroadcast, startBroadcast } from '../../src/core/broadcasts.ts'
 import { drainQueued } from '../../src/core/sending.ts'
-import { broadcasts, messages } from '../../src/db/schema.ts'
+import { broadcasts, devOutbox, messages } from '../../src/db/schema.ts'
 import { aBroadcast, aPerson } from '../support/factories.ts'
 import { createWorld, type World } from '../support/world.ts'
 
@@ -204,6 +204,98 @@ describe('Feature: cancelling really stops a send', () => {
     it('⭐ never sends the rest', async () => {
       const rows = await w.db.select().from(messages).where(eq(messages.broadcastId, id)).all()
       expect(rows.every((r) => r.status === 'failed')).toBe(true)
+    })
+  })
+})
+
+describe('Feature: resuming a cancelled send', () => {
+  describe('Scenario: a send cancelled partway, resumed', () => {
+    let w: World
+    let id: number
+    let res: Response
+    const count = async (email: string) => (await w.outbox()).filter((m) => m.toEmail === email).length
+
+    beforeAll(async () => {
+      w = createWorld()
+      await aPerson(w, { email: 'already@example.test' })
+      await aPerson(w, { email: 'stranded@example.test' })
+      id = await aBroadcast(w, { subject: 'Resumable' })
+      await startBroadcast(w.env, w.db, id)
+      // What a cancel mid-send leaves behind: one row the provider never took…
+      const stranded = await w.db.select().from(messages).where(eq(messages.toEmail, 'stranded@example.test')).get()
+      await w.db.update(messages).set({ status: 'failed', error: 'broadcast cancelled', providerMessageId: null }).where(eq(messages.id, stranded!.id))
+      await w.db.delete(devOutbox).where(eq(devOutbox.toEmail, 'stranded@example.test'))
+      await w.db.update(broadcasts).set({ status: 'cancelled' }).where(eq(broadcasts.id, id))
+      // …and people past the cursor the send never reached.
+      await aPerson(w, { email: 'later@example.test' })
+      res = await w.post(`/broadcasts/${id}/resume`, { confirm: 'resume' })
+      await w.settle()
+      // The minutely cron closes a send out once nothing is left, as always.
+      await w.tick()
+    })
+
+    it('⭐ does not mail anyone who already had it', async () => {
+      expect(await count('already@example.test')).toBe(1)
+    })
+
+    it('mails the one the provider never took', async () => {
+      expect(await count('stranded@example.test')).toBe(1)
+    })
+
+    it('mails the people it never reached', async () => {
+      expect(await count('later@example.test')).toBe(1)
+    })
+
+    it('finishes as sent', async () => {
+      expect(await statusOf(w, id)).toBe('sent')
+    })
+
+    it('says so', () => {
+      expect(decodeURIComponent(res.headers.get('location') ?? '')).toContain('nobody gets it twice')
+    })
+  })
+
+  describe('Scenario: resuming without the confirmation screen', () => {
+    let w: World
+    let id: number
+
+    beforeAll(async () => {
+      w = createWorld()
+      await aPerson(w)
+      id = await aBroadcast(w)
+      await w.db.update(broadcasts).set({ status: 'cancelled' }).where(eq(broadcasts.id, id))
+      await w.post(`/broadcasts/${id}/resume`, {})
+    })
+
+    it('⭐ sends nothing', async () => {
+      expect(await w.outbox()).toHaveLength(0)
+    })
+
+    it('stays cancelled', async () => {
+      expect(await statusOf(w, id)).toBe('cancelled')
+    })
+  })
+
+  describe('Scenario: the resume screen', () => {
+    let html: string
+
+    beforeAll(async () => {
+      const w = createWorld()
+      await aPerson(w)
+      const id = await aBroadcast(w, { subject: 'Half' })
+      await startBroadcast(w.env, w.db, id)
+      await w.db.update(broadcasts).set({ status: 'cancelled' }).where(eq(broadcasts.id, id))
+      await aPerson(w)
+      await aPerson(w)
+      html = await (await w.fetch(`/broadcasts/${id}/resume`)).text()
+    })
+
+    it('says how many already have it', () => {
+      expect(html).toContain('<strong>1</strong> already got it')
+    })
+
+    it('says how many more will get it', () => {
+      expect(html).toContain('about <strong>2 more people</strong>')
     })
   })
 })

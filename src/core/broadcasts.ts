@@ -1,4 +1,4 @@
-import { and, count, desc, eq, sql } from 'drizzle-orm'
+import { and, count, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm'
 import type { Db } from '../db/index.ts'
 import type { DocNode, SegmentRule } from '../db/schema.ts'
 import { broadcasts, events, messages } from '../db/schema.ts'
@@ -205,6 +205,59 @@ export async function cancelBroadcast(
     .set({ status: 'failed', error: 'broadcast cancelled' })
     .where(and(eq(messages.broadcastId, id), eq(messages.status, 'queued')))
   return { ok: true, alreadySent: sent?.n ?? 0 }
+}
+
+/**
+ * Pick a cancelled send back up where it stopped, without mailing anyone twice.
+ *
+ * Duplicates are impossible by construction, not by care:
+ *  - every broadcast message has the idempotency key `broadcast:<id>:<subscriber>`
+ *    under a unique index, so the resumed walk can't create a second row for
+ *    someone who already has one;
+ *  - the walk continues from `cursor_subscriber_id`, after the last person reached;
+ *  - `sendMessages` only mails rows still `queued`, and only rows the provider
+ *    never accepted (no `provider_message_id`) are put back in the queue.
+ *
+ * Everyone reached from here on gets the broadcast's *current* subject and body,
+ * so a correction saved while it was cancelled is what they read.
+ */
+export async function resumeBroadcast(
+  env: Env,
+  db: Db,
+  id: number,
+): Promise<{ ok: boolean; reason?: string; requeued?: number; materialized?: number }> {
+  const b = await getBroadcast(db, id)
+  if (!b) return { ok: false, reason: 'no such broadcast' }
+  if (b.status !== 'cancelled') return { ok: false, reason: `broadcast is ${b.status}, not cancelled` }
+
+  const stranded = await db
+    .select({ id: messages.id })
+    .from(messages)
+    .where(
+      and(
+        eq(messages.broadcastId, id),
+        isNull(messages.providerMessageId),
+        or(
+          eq(messages.status, 'queued'),
+          and(eq(messages.status, 'failed'), eq(messages.error, 'broadcast cancelled')),
+        ),
+      ),
+    )
+    .all()
+  const ids = stranded.map((m) => m.id)
+  for (let i = 0; i < ids.length; i += 90) {
+    await db
+      .update(messages)
+      .set({ status: 'queued', error: null })
+      .where(inArray(messages.id, ids.slice(i, i + 90)))
+  }
+
+  // Straight back to `sending`, not `scheduled`: that transition publishes the
+  // post and stamps the start, and both already happened.
+  await db.update(broadcasts).set({ status: 'sending' }).where(eq(broadcasts.id, id))
+  await dispatch(env, db, ids)
+  const materialized = await sendBroadcastNow(env, db, id)
+  return { ok: true, requeued: ids.length, materialized }
 }
 
 /**
