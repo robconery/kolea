@@ -1863,6 +1863,13 @@ export const siteSettings = sqliteTable('site_settings', {
   /** The /about page, authored in the same editor as a post. */
   longBioJson: text('long_bio_json', { mode: 'json' }).$type<DocNode | null>(),
   longBioMd: text('long_bio_md'),
+  /**
+   * The front page's structured content: the lede, "What I do", notable links.
+   * One JSON document validated by `core/site-profile.ts` on every write, so it
+   * can grow new sections without a migration and Claude can edit it through
+   * MCP without anyone touching a template.
+   */
+  profile: text('profile', { mode: 'json' }).notNull().$type<Record<string, unknown>>().default({}),
   updatedAt: ts('updated_at').notNull(),
 })
 

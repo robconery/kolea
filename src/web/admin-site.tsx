@@ -8,6 +8,7 @@ import {
   parseSocialLinks,
   saveSiteSettings,
 } from '../core/site-settings.ts'
+import { PROFILE_ICONS, readProfile, validateProfile } from '../core/site-profile.ts'
 import { siteConfig } from '../core/theme/site.ts'
 import { getDb } from '../db/index.ts'
 import type { Env } from '../types.ts'
@@ -33,6 +34,10 @@ siteAdmin.get('/site', async (c) => {
   const counts = new Map((await listPublicTags(db, 500)).map((t) => [t.id, t.posts]))
   const { posts: featured } = await listPosts(db, { featured: true, limit: 50 })
   const siteUrl = env.origin
+  const profile = readProfile(s?.profile)
+  // Always a few empty rows to fill in; blank rows are ignored on save.
+  const doRows = [...profile.what_i_do, ...Array(6).fill(null)].slice(0, 6)
+  const linkRows = [...profile.links, ...Array(8).fill(null)].slice(0, 8)
 
   return c.html(
     <Layout title="Site" nav="site" editor>
@@ -159,6 +164,63 @@ siteAdmin.get('/site', async (c) => {
           </div>
           <div class="card-b">
             <div class="field">
+              <label>Lede</label>
+              <textarea
+                name="profile_lede"
+                rows={3}
+                style="min-height:0;font:15px/1.6 var(--sans)"
+                placeholder="One paragraph under the headline: what you do and why someone should subscribe."
+              >
+                {profile.lede}
+              </textarea>
+            </div>
+
+            <div class="field">
+              <label>What I do</label>
+              <p class="faint" style="margin:6px 0 12px">Up to six. Leave a title empty to skip that row.</p>
+              {doRows.map((item, i) => (
+                <div class="row" style="margin-bottom:10px">
+                  <div class="field" style="flex:0 0 190px;margin:0">
+                    <input type="text" name={`do_title_${i}`} value={item?.title ?? ''} placeholder="Title" />
+                  </div>
+                  <div class="field" style="flex:0 0 130px;min-width:0;margin:0">
+                    <select name={`do_icon_${i}`}>
+                      {PROFILE_ICONS.map((ic) => (
+                        <option value={ic} selected={(item?.icon ?? 'pen') === ic}>
+                          {ic}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div class="field" style="margin:0">
+                    <input type="text" name={`do_body_${i}`} value={item?.body ?? ''} placeholder="A sentence or two" />
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div class="field">
+              <label>Notable links</label>
+              <p class="faint" style="margin:6px 0 12px">Up to eight: a podcast, a book, a repo, anything. Leave a title empty to skip.</p>
+              {linkRows.map((l, i) => (
+                <div class="row" style="margin-bottom:10px">
+                  <div class="field" style="flex:0 0 130px;min-width:0;margin:0">
+                    <input type="text" name={`link_kind_${i}`} value={l?.kind ?? ''} placeholder="Kind" />
+                  </div>
+                  <div class="field" style="flex:0 0 200px;margin:0">
+                    <input type="text" name={`link_title_${i}`} value={l?.title ?? ''} placeholder="Title" />
+                  </div>
+                  <div class="field" style="flex:0 0 240px;margin:0">
+                    <input type="url" name={`link_url_${i}`} value={l?.url ?? ''} placeholder="https://…" />
+                  </div>
+                  <div class="field" style="margin:0">
+                    <input type="text" name={`link_blurb_${i}`} value={l?.blurb ?? ''} placeholder="One line about it" />
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div class="field">
               <label>Start here</label>
               {featured.length ? (
                 <ul style="margin:6px 0 0;padding-left:18px">
@@ -225,8 +287,26 @@ siteAdmin.post('/site', async (c) => {
     if (r && typeof r === 'object') return c.redirect(`/site?flash=${encodeURIComponent(r.error)}&kind=warn`)
   }
 
+  const str = (k: string) => String(form.get(k) ?? '').trim()
+  const what_i_do = []
+  for (let i = 0; i < 6; i++) {
+    const title = str(`do_title_${i}`)
+    if (title) what_i_do.push({ title, body: str(`do_body_${i}`), icon: str(`do_icon_${i}`) || 'pen' })
+  }
+  const links = []
+  for (let i = 0; i < 8; i++) {
+    const title = str(`link_title_${i}`)
+    if (title) links.push({ kind: str(`link_kind_${i}`), title, url: str(`link_url_${i}`), blurb: str(`link_blurb_${i}`) })
+  }
+  const checked = validateProfile({ lede: str('profile_lede'), what_i_do, links })
+  if (!checked.ok) {
+    // Nothing is saved: a half-saved form is harder to reason about than a refused one.
+    return c.redirect(`/site?flash=${encodeURIComponent(`Not saved. ${checked.error}`)}&kind=warn`)
+  }
+
   const bio = readEditorBody(form)
   await saveSiteSettings(db, {
+    profile: checked.profile,
     title: text('title'),
     tagline: text('tagline'),
     logoUrl: (logo as string | null) ?? text('logo_url'),

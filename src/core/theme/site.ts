@@ -2,6 +2,7 @@ import type { Db } from '../../db/index.ts'
 import type { DocNode, PostTag, SocialLink } from '../../db/schema.ts'
 import type { Env } from '../../types.ts'
 import { slugify } from '../ids.ts'
+import { EMPTY_PROFILE, type Profile, displayHost, readProfile } from '../site-profile.ts'
 import { getSiteSettings, hasLongBio, paragraphs } from '../site-settings.ts'
 import {
   getPostTagBySlug,
@@ -59,6 +60,8 @@ export interface SiteConfig {
   socialLinks: SocialLink[]
   /** The /about page's body, or null when there isn't one. */
   longBio: { json: DocNode | null; md: string } | null
+  /** The front page's structured content: lede, What I do, notable links. */
+  profile: Profile
 }
 
 /** The site from environment variables alone — what renders before the Site screen is ever saved. */
@@ -75,6 +78,7 @@ export function siteConfig(env: Env): SiteConfig {
     shortBio: null,
     socialLinks: [],
     longBio: null,
+    profile: EMPTY_PROFILE,
   }
 }
 
@@ -94,6 +98,7 @@ export async function loadSiteConfig(db: Db, env: Env): Promise<SiteConfig> {
     shortBio: row.shortBio?.trim() || null,
     socialLinks: row.socialLinks ?? [],
     longBio: hasLongBio(row) ? { json: (row.longBioJson as DocNode | null) ?? null, md: row.longBioMd ?? '' } : null,
+    profile: readProfile(row.profile),
   }
 }
 
@@ -464,6 +469,12 @@ async function render(req: SiteRequest, view: View): Promise<Rendered> {
         short_bio_html: safe(paragraphs(cfg.shortBio).map((p) => `<p>${escapeHtml(p)}</p>`).join('')),
         url: cfg.longBio ? '/about' : null,
         social: cfg.socialLinks,
+      },
+      // The front page's structured content, from the Site screen (or MCP).
+      profile: {
+        lede: cfg.profile.lede,
+        what_i_do: cfg.profile.what_i_do,
+        links: cfg.profile.links.map((l) => ({ ...l, host: displayHost(l.url) })),
       },
       custom: theme.custom,
       config: { posts_per_page: theme.postsPerPage },
