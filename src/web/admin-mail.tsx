@@ -10,6 +10,7 @@ import {
 import { listCampaigns } from '../core/campaigns.ts'
 import { storeMedia } from '../core/media.ts'
 import { clearFeatureImage, publishPost, setFeatureImage, unpublishPost } from '../core/posts.ts'
+import { postPlainText } from '../core/render-web.ts'
 import { type Photo, searchPhotos, triggerDownload, unsplashConfigured } from '../core/unsplash.ts'
 import { aiConfigured, modelFor, modelLabel } from '../core/ai/openrouter.ts'
 import { countSegment, describeRule, listSegments } from '../core/segments.ts'
@@ -477,8 +478,11 @@ mail.get('/broadcasts/:id', async (c) => {
         }
         actions={
           <>
-            <button class="btn accent" form="send-now">
-              Send now
+            {/* A submit in the composer's own form, like the preview button:
+                the draft is saved first, so what's confirmed and sent is what's
+                on screen. It never sends; it opens the confirmation screen. */}
+            <button class="btn accent" name="send" value="1">
+              Send…
             </button>
             <button class="btn primary">Save</button>
           </>
@@ -537,9 +541,6 @@ mail.get('/broadcasts/:id', async (c) => {
             <button class="btn primary">Save</button>
           </>
         }
-        // Sending posts somewhere else, so it is its own form reached by id —
-        // forms cannot nest.
-        extra={<form id="send-now" method="post" action={`/broadcasts/${id}/send`} hidden />}
       >
         <Subject value={b.subject} />
         <RichEditor json={b.bodyJson} md={b.bodyMd} bare footer={broadcastFooter} />
@@ -548,8 +549,10 @@ mail.get('/broadcasts/:id', async (c) => {
   }
 
   // Only a finished send can be corrected: while it is scheduled or going out,
-  // the body on this row is still what the queue will mail.
-  const revisable = b.status === 'sent'
+  // the body on this row is still what the queue will mail. A cancelled send is
+  // finished too — part of it went out, and its web page is live.
+  const revisable = b.status === 'sent' || b.status === 'cancelled'
+  const locked = b.status === 'sending' || b.status === 'scheduled'
   const asMailed = b.revisedAt !== null && c.req.query('as') === 'mailed'
   // A sent broadcast opens straight into the editor. The as-mailed copy is a
   // record, so it stays read-only.
@@ -582,7 +585,12 @@ mail.get('/broadcasts/:id', async (c) => {
       heading={b.subject || 'Untitled'}
       sub={
         <>
-          {statusPill(b.status)} {asMailed ? 'as it was mailed' : 'saving never sends it again'}
+          {statusPill(b.status)}{' '}
+          {locked
+            ? 'editing unlocks when the send finishes: the queue is still mailing this text'
+            : asMailed
+              ? 'as it was mailed'
+              : 'saving never sends it again'}
         </>
       }
       actions={save ?? back}
@@ -1095,6 +1103,7 @@ mail.post('/broadcasts/:id/edit', async (c) => {
       `/broadcasts/${id}${await previewFlash(c.env, db, { kind: 'broadcast', broadcastId: id, subject })}`,
     )
   }
+  if (String(form.get('send') ?? '') === '1') return c.redirect(`/broadcasts/${id}/send`)
   return c.redirect(`/broadcasts/${id}?flash=Saved.`)
 })
 
@@ -1119,9 +1128,116 @@ mail.post('/broadcasts/:id/revise', async (c) => {
   return c.redirect(`/broadcasts/${id}?flash=${encodeURIComponent('Saved. Nothing was sent.')}`)
 })
 
+/**
+ * The confirmation screen: the last stop before real inboxes. It names the
+ * audience and its size as of now, shows how the piece opens, and warns when
+ * it looks unfinished. The send route below refuses anything that didn't come
+ * through here, so a stray click can never mail the list.
+ */
+mail.get('/broadcasts/:id/send', async (c) => {
+  const db = getDb(c.env)
+  const id = Number(c.req.param('id'))
+  const b = await db.select().from(broadcasts).where(eq(broadcasts.id, id)).get()
+  if (!b) return c.notFound()
+  if (b.status !== 'draft') {
+    return c.redirect(`/broadcasts/${id}?flash=${encodeURIComponent(`This broadcast is ${b.status}; only a draft can be sent.`)}&kind=warn`)
+  }
+
+  const choices = await audienceChoices(db)
+  const audienceSize = await countSegment(db, b.segment ?? {})
+  const text = postPlainText({ json: b.bodyJson, md: b.bodyMd })
+  const words = text ? text.split(/\s+/).length : 0
+  const opening = text.split(/\s+/).slice(0, 60).join(' ')
+
+  const blockers: string[] = []
+  if (!b.subject.trim()) blockers.push('It has no subject.')
+  if (words === 0) blockers.push('It has no body.')
+  if (audienceSize === 0) blockers.push('Nobody is in the audience.')
+  const warnings: string[] = []
+  if (words > 0 && words < 150) warnings.push(`It's short: ${words} words. Is it finished?`)
+  if (/\b(TODO|TK|XXX|lorem ipsum)\b/i.test(`${b.subject} ${text}`)) warnings.push('It contains a placeholder (TODO, TK, XXX or lorem ipsum).')
+
+  const people = `${audienceSize.toLocaleString('en-US')} ${audienceSize === 1 ? 'person' : 'people'}`
+
+  return c.html(
+    <Layout title={`Send · ${b.subject}`} nav="bc">
+      <div class="head">
+        <div>
+          <h1>Send this broadcast?</h1>
+          <div class="sub">
+            <a href={`/broadcasts/${id}`}>← Back to editing</a>
+          </div>
+        </div>
+      </div>
+      <Flash msg={c.req.query('flash')} kind={c.req.query('kind')} />
+      <div class="card">
+        <div class="card-b">
+          <p style="margin:0 0 6px;font-size:22px;line-height:1.35">
+            You are about to send <strong>“{b.subject || 'Untitled'}”</strong> to <strong>{people}</strong>.
+          </p>
+          <p class="faint" style="margin:0 0 22px">
+            {describeRule(b.segment ?? {}, choices.allTags)} · counted just now. Once it starts, mail that has gone
+            out can't be recalled.
+          </p>
+
+          <div class="field">
+            <label>How it opens</label>
+            <p style="margin:6px 0 0;max-width:70ch;line-height:1.6">
+              {opening || <span class="faint">(empty)</span>}
+              {words > 60 ? '…' : ''}
+            </p>
+            <p class="faint" style="margin:8px 0 0">{words.toLocaleString('en-US')} words</p>
+          </div>
+
+          {blockers.length ? (
+            <div class="flash warn" style="margin:0 0 20px">
+              <strong>Can't send yet.</strong> {blockers.join(' ')}
+            </div>
+          ) : null}
+          {warnings.length ? (
+            <div class="flash warn" style="margin:0 0 20px">
+              <strong>Check before sending.</strong> {warnings.join(' ')}
+            </div>
+          ) : null}
+
+          <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+            <a class="btn" href={`/broadcasts/${id}`}>
+              Back to editing
+            </a>
+            {blockers.length ? null : (
+              <form method="post" action={`/broadcasts/${id}/send`} style="display:inline">
+                <input type="hidden" name="confirm" value="send" />
+                <input type="hidden" name="expected" value={String(audienceSize)} />
+                <button class="btn accent">Send to {people}</button>
+              </form>
+            )}
+          </div>
+        </div>
+      </div>
+    </Layout>,
+  )
+})
+
 mail.post('/broadcasts/:id/send', async (c) => {
   const db = getDb(c.env)
   const id = Number(c.req.param('id'))
+  const b = await db.select().from(broadcasts).where(eq(broadcasts.id, id)).get()
+  if (!b) return c.notFound()
+  const form = await c.req.formData()
+
+  // Only the confirmation screen's own button carries these. Anything else —
+  // an old tab, a stray form, a double submit — goes back to that screen.
+  if (String(form.get('confirm') ?? '') !== 'send') return c.redirect(`/broadcasts/${id}/send`)
+
+  // The audience can change between the screen and the click (people join,
+  // leave, bounce). If it did, show the new number rather than send to it.
+  const audienceSize = await countSegment(db, b.segment ?? {})
+  if (String(form.get('expected') ?? '') !== String(audienceSize)) {
+    return c.redirect(
+      `/broadcasts/${id}/send?flash=${encodeURIComponent('The audience changed since you looked. Check the new count.')}&kind=warn`,
+    )
+  }
+
   const n = await startBroadcast(c.env, db, id)
   return c.redirect(`/broadcasts/${id}?flash=${encodeURIComponent(`Queued ${n} message(s).`)}`)
 })

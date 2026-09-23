@@ -105,7 +105,10 @@ export async function reviseSentBroadcast(
 ): Promise<{ ok: boolean; reason?: string }> {
   const b = await getBroadcast(db, id)
   if (!b) return { ok: false, reason: 'no such broadcast' }
-  if (b.status !== 'sent') return { ok: false, reason: `broadcast is ${b.status}, not sent` }
+  // Cancelled counts as finished: part of it went out, and its page is live.
+  if (b.status !== 'sent' && b.status !== 'cancelled') {
+    return { ok: false, reason: `broadcast is ${b.status}, not sent` }
+  }
   if (!patch.subject.trim()) return { ok: false, reason: 'the subject is empty' }
   if (!patch.bodyJson && !patch.bodyMd.trim()) return { ok: false, reason: 'the body is empty' }
 
