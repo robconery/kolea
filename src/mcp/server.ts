@@ -12,6 +12,7 @@ import { registerDeliverability } from './tools/deliverability.ts'
 import { registerForms } from './tools/forms.ts'
 import { registerOps } from './tools/ops.ts'
 import { registerPosts } from './tools/posts.ts'
+import { registerSite } from './tools/site.ts'
 import { registerSales } from './tools/sales.ts'
 import { registerSegments } from './tools/segments.ts'
 import { registerSequences } from './tools/sequences.ts'
@@ -81,6 +82,7 @@ export async function handleMcp(
     registerCampaigns(server, ctx)
     registerForms(server, ctx)
     registerPosts(server, ctx)
+    registerSite(server, ctx)
     registerSales(server, ctx)
     registerStripe(server, ctx)
     registerDeliverability(server, ctx)

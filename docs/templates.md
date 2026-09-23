@@ -165,6 +165,20 @@ Set on the admin's **Site** screen. Available on every page.
 | `@author.url` | `/about` when there's a long bio, otherwise empty. Link to it only when set |
 | `@author.social` | Links: each has `label` and `url` |
 
+### The front page's content: `@profile`
+
+Set on the **Site** screen, or by Claude through the `site_update` MCP tool.
+Stored as one JSON document, validated on every write. Available on every page.
+
+| Value | What it is |
+|---|---|
+| `@profile.lede` | One paragraph under the headline, or empty |
+| `@profile.what_i_do` | Up to six: each has `title`, `body`, `icon` (`pen`, `book`, `cap`, `chat`, `code`, `mic`, `video`, `compass`) |
+| `@profile.links` | Up to eight: each has `kind` ("Podcast"), `title`, `url`, `blurb`, and `host` (the address without `https://`, for display) |
+
+Wrap each in `{{#if}}`: all three are empty on a new site. A theme that doesn't
+draw an icon name just shows no icon.
+
 ### The front page: `home.hbs`
 
 The front page sells the person who writes the site. It gets these, and **each is
@@ -178,9 +192,10 @@ empty unless the operator has set it up**, so every section must be wrapped in a
 | `latest` | The six newest posts. Use it as a fallback when there's no `start_here` and no `shelves` |
 | `post_count` | How many posts are published; link to `/writing` for all of them |
 
-A front page, in order: **the hero with the signup form in it** (above the fold),
-the author (`@author`), `start_here`, `shelves`, the fallback `latest`, a link to
-`/writing`, and a closing signup. The built-in themes' `home.hbs` files are the
+A front page, in order: **the hero with the signup form in it** (above the fold,
+with `@profile.lede`), the author (`@author`), `@profile.what_i_do`, `start_here`,
+`shelves`, the fallback `latest`, `@profile.links`, a link to `/writing`, and a
+closing signup. The built-in themes' `home.hbs` files are the
 reference.
 
 ### A post (`post`, and each item in `posts`)

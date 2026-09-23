@@ -3,9 +3,8 @@
       down a notch. Cover and byline side by side, the ticker, what I do,
       where to start, a shelf per chosen topic, and notable links.
 
-      ⚠️ DEMO: the lede, "What I do" and "Notable links" are placeholder copy
-      written into this template. Kōlea has no data for them yet; they move to
-      the Site screen when it does. Everything else is real data. --}}
+      The lede, "What I do" and "Notable links" come from `@profile` (the Site
+      screen, or Claude via the site_update MCP tool). Empty ones don't render. --}}
 
 <section class="lp-hero">
     <div class="lp-intro">
@@ -14,7 +13,7 @@
             {{#if post_count}}<span class="mono">{{plural post_count empty="" singular="1 story" plural="% stories"}}</span>{{/if}}
         </p>
         <h1 class="lp-title">{{#if @site.description}}{{#foreach (split @site.description separator=" ")}}<span class="mast-w"><span style="--d:{{@index}}">{{this}}</span></span>{{/foreach}}{{else}}{{#foreach (split @site.title separator=" ")}}<span class="mast-w"><span style="--d:{{@index}}">{{this}}</span></span>{{/foreach}}{{/if}}</h1>
-        <p class="lp-lede reveal" style="--d:3">Lorem ipsum dolor sit amet, consectetur adipiscing elit. Integer posuere erat a ante venenatis dapibus, posuere velit aliquet. One email when there's a new story.</p>
+        {{#if @profile.lede}}<p class="lp-lede reveal" style="--d:3">{{@profile.lede}}</p>{{/if}}
         {{#if @site.signup_action}}
         <form class="field field--hero reveal" style="--d:4" method="post" action="{{@site.signup_action}}">
             <label class="visually-hidden" for="hero-email">Email address</label>
@@ -43,15 +42,16 @@
 
 {{#if @custom.ticker}}{{> ticker}}{{/if}}
 
-{{!-- DEMO copy --}}
+{{#if @profile.what_i_do}}
 <section class="section-block" aria-labelledby="do-title">
     <h2 class="block-title" id="do-title">What I do</h2>
     <div class="lp-do">
-        <article class="lp-do-item reveal" style="--d:0; --hue: 186"><p class="mono">01</p><h3>Writing</h3><p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Nulla vitae elit libero, a pharetra augue. Essays on code, business and the long way round.</p></article>
-        <article class="lp-do-item reveal" style="--d:1; --hue: 284"><p class="mono">02</p><h3>Teaching</h3><p>Cras mattis consectetur purus sit amet fermentum. Maecenas faucibus mollis interdum. Books and courses for people who learned on the job.</p></article>
-        <article class="lp-do-item reveal" style="--d:2; --hue: 52"><p class="mono">03</p><h3>Building</h3><p>Donec ullamcorper nulla non metus auctor fringilla. Aenean lacinia bibendum nulla sed consectetur. Small tools, shipped and maintained.</p></article>
+        {{#foreach @profile.what_i_do}}
+        <article class="lp-do-item reveal" style="--d:{{@index}}; --hue: {{#has number="nth:3"}}52{{else}}{{#has number="nth:2"}}284{{else}}186{{/has}}{{/has}}"><p class="mono">0{{@number}}</p><h3>{{title}}</h3>{{#if body}}<p>{{body}}</p>{{/if}}</article>
+        {{/foreach}}
     </div>
 </section>
+{{/if}}
 
 {{#if start_here}}
 <section class="section-block" aria-labelledby="start-title">
@@ -77,16 +77,16 @@
 </section>
 {{/unless}}{{/unless}}
 
-{{!-- DEMO copy --}}
+{{#if @profile.links}}
 <section class="section-block" aria-labelledby="links-title">
     <h2 class="block-title" id="links-title">Notable links</h2>
     <div class="lp-links">
-        <a class="lp-link reveal" style="--d:0; --hue: 284" href="https://example.com/podcast"><span class="mono lp-link-kind">Podcast</span><span class="lp-link-title">Lorem Ipsum Radio</span><span class="lp-link-dek">Vestibulum id ligula porta felis euismod semper. Weekly conversations.</span><span class="lp-link-host mono">example.com/podcast ↗</span></a>
-        <a class="lp-link reveal" style="--d:1; --hue: 186" href="https://example.com/book"><span class="mono lp-link-kind">Book</span><span class="lp-link-title">The Dolor Sit Handbook</span><span class="lp-link-dek">Etiam porta sem malesuada magna mollis euismod. The fundamentals you skipped.</span><span class="lp-link-host mono">example.com/book ↗</span></a>
-        <a class="lp-link reveal" style="--d:2; --hue: 148" href="https://github.com/example/amet"><span class="mono lp-link-kind">Open source</span><span class="lp-link-title">amet-cli</span><span class="lp-link-dek">Nullam quis risus eget urna mollis ornare vel eu leo. A small tool that does one thing.</span><span class="lp-link-host mono">github.com/example/amet ↗</span></a>
-        <a class="lp-link reveal" style="--d:3; --hue: 334" href="https://example.com/course"><span class="mono lp-link-kind">Course</span><span class="lp-link-title">Consectetur, From Scratch</span><span class="lp-link-dek">Maecenas sed diam eget risus varius blandit sit amet non magna. Twelve lessons.</span><span class="lp-link-host mono">example.com/course ↗</span></a>
+        {{#foreach @profile.links}}
+        <a class="lp-link reveal" style="--d:{{@index}}; --hue: {{#has number="nth:3"}}52{{else}}{{#has number="nth:2"}}284{{else}}186{{/has}}{{/has}}" href="{{url}}" rel="noopener">{{#if kind}}<span class="mono lp-link-kind">{{kind}}</span>{{/if}}<span class="lp-link-title">{{title}}</span>{{#if blurb}}<span class="lp-link-dek">{{blurb}}</span>{{/if}}<span class="lp-link-host mono">{{host}} ↗</span></a>
+        {{/foreach}}
     </div>
 </section>
+{{/if}}
 
 {{#if post_count}}
 <p class="everything"><a class="pill pill--ink" href="/writing"><span>Every story</span><span class="pill-orb" aria-hidden="true">→</span></a></p>

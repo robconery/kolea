@@ -183,6 +183,13 @@
       "when": 1790191597853,
       "tag": "0025_easy_blazing_skull",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1790194598731,
+      "tag": "0026_odd_maximus",
+      "breakpoints": true
     }
   ]
 }

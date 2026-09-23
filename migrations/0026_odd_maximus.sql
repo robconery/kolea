@@ -1,0 +1,1 @@
+ALTER TABLE `site_settings` ADD `profile` text DEFAULT '{}' NOT NULL;
