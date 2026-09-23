@@ -1,7 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/server'
 import * as z from 'zod/v4'
 import { setPostTags, tagsForPost, tagsForPosts } from '../../core/post-tags.ts'
-import { getPostBySlug, listPosts, postPath, postStatus, publishPost, unpublishPost } from '../../core/posts.ts'
+import { getPostBySlug, listPosts, postPath, postStatus, publishPost, setPostFeatured, unpublishPost } from '../../core/posts.ts'
 import { renderPostHtml } from '../../core/render-web.ts'
 import { type Ctx, defineTool, fail, ok } from '../kit.ts'
 
@@ -86,22 +86,24 @@ export function registerPosts(server: McpServer, ctx: Ctx): void {
     'post_publish',
     {
       description:
-        'Put one broadcast on the public site. Sends nothing and changes nothing about the send — it sets a publish date, a slug and the card metadata. Re-running on a live post updates the metadata and keeps the original publish date. Omit slug/excerpt/featureImage to derive them from the subject and body. `tags` are post topics (never subscriber tags): the first is the primary topic and the first URL segment, so ["AI"] publishes at /ai/<slug>. Omit to leave the current topics alone; pass [] to clear them.',
+        'Put one broadcast on the public site. Sends nothing and changes nothing about the send — it sets a publish date, a slug and the card metadata. Re-running on a live post updates the metadata and keeps the original publish date. Omit slug/excerpt/featureImage to derive them from the subject and body. `tags` are post topics (never subscriber tags): the first is the primary topic and the first URL segment, so ["AI"] publishes at /ai/<slug>. Omit to leave the current topics alone; pass [] to clear them. `featured: true` puts it in the front page\'s "Start here" (newest first).',
       inputSchema: z.object({
         broadcastId: z.number().int(),
         slug: z.string().optional(),
         excerpt: z.string().optional(),
         featureImage: z.string().optional(),
         tags: z.array(z.string()).optional(),
+        featured: z.boolean().optional(),
       }),
     },
-    async ({ broadcastId, slug, excerpt, featureImage, tags }) => {
+    async ({ broadcastId, slug, excerpt, featureImage, tags, featured }) => {
       if (!ctx.env.SITE_URL) return offline()
       const before = await postStatus(ctx.db, broadcastId)
       if (!before) return fail('No such broadcast.')
 
       const post = await publishPost(ctx.db, broadcastId, { slug, excerpt, featureImage })
       const topics = tags ? await setPostTags(ctx.db, broadcastId, tags) : await tagsForPost(ctx.db, broadcastId)
+      if (featured !== undefined) await setPostFeatured(ctx.db, broadcastId, featured)
       return ok({
         published: true,
         alreadyLive: Boolean(before.publishedAt),

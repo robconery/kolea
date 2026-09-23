@@ -891,6 +891,70 @@ img { display: block; max-width: 100%; height: auto; }
 .foot-links a { text-decoration: none; }
 .foot-links a:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 0.25em; }
 
+/* ── The front page: signup under the masthead, the byline, shelves. */
+
+.field--hero { margin-top: clamp(1.6rem, 3vw, 2.4rem); max-width: 36rem; }
+
+.byline-block {
+  max-width: var(--page);
+  margin: clamp(1rem, 3vw, 2rem) auto clamp(4rem, 9vw, 6rem);
+  padding: 0 var(--gutter);
+}
+.byline-in {
+  display: grid;
+  grid-template-columns: minmax(0, 20rem) minmax(0, 1fr);
+  gap: clamp(1.5rem, 4vw, 3.5rem);
+  align-items: center;
+  padding: clamp(1.5rem, 4vw, 3rem);
+  border-radius: calc(var(--radius) + 0.5rem);
+  background: var(--flood);
+}
+.byline-photo { background: oklch(99% 0.004 95 / 0.55); }
+.byline-photo img { width: 100%; aspect-ratio: 4 / 5; object-fit: cover; }
+.byline-text .mono { color: oklch(17% 0.02 265 / 0.7); }
+.byline-name {
+  margin: 0.8rem 0 0;
+  font: 800 clamp(2.4rem, 6vw, 5rem)/0.88 var(--display);
+  font-variation-settings: 'wdth' 78, 'opsz' 96;
+  letter-spacing: -0.035em;
+  text-transform: uppercase;
+}
+.byline-bio { max-width: 46ch; margin-top: 1.2rem; font-size: 1.15rem; line-height: 1.55; }
+.byline-bio p { margin: 0; }
+.byline-bio p + p { margin-top: 0.8em; }
+.byline-links { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin: 1.6rem 0 0; }
+
+.section-block { max-width: var(--page); margin: clamp(4rem, 9vw, 6rem) auto 0; }
+.section-block > .spread { padding-top: 0; }
+.block-title {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  margin: 0 0 1.4rem;
+  padding: 0 var(--gutter);
+  font: 800 clamp(2rem, 4.4vw, 3.4rem)/0.95 var(--display);
+  font-variation-settings: 'wdth' 78, 'opsz' 96;
+  letter-spacing: -0.035em;
+  text-transform: uppercase;
+}
+.shelf-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding-right: var(--gutter); }
+.shelf-head .block-title { margin-bottom: 1.4rem; }
+.shelf-head .pill { margin-bottom: 1.4rem; }
+.shelf-swatch { width: 0.7em; height: 0.7em; border-radius: 0.2em; background: var(--flood-strong); }
+.shelf .more-row { padding: 0 var(--gutter); }
+
+.everything { max-width: var(--page); margin: clamp(3rem, 6vw, 4rem) auto 0; padding: 0 var(--gutter); }
+
+.feature-art--portrait { max-width: 30rem; }
+.feature-art--portrait .bezel-core img { aspect-ratio: 4 / 5; }
+
+@media (max-width: 720px) {
+  .byline-in { grid-template-columns: minmax(0, 1fr); }
+  .byline-photo { max-width: 14rem; }
+  .shelf-head { flex-direction: column; align-items: flex-start; padding-right: 0; }
+  .shelf-head .pill { margin: -0.6rem 0 1.4rem var(--gutter); }
+}
+
 /* ── Reading progress in the story's colour */
 
 .progress {

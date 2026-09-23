@@ -3,7 +3,7 @@ import { Hono } from 'hono'
 import type { Context } from 'hono'
 import { listAllPostTags, listPublicTags } from '../core/post-tags.ts'
 import { ADAPT_GHOST_THEME_PROMPT } from '../core/theme/adapt-prompt.ts'
-import { renderIndex, renderPost, siteConfig } from '../core/theme/site.ts'
+import { loadSiteConfig, renderHome, renderPost } from '../core/theme/site.ts'
 import {
   ThemeInstallError,
   DEFAULT_THEME,
@@ -374,7 +374,7 @@ themesAdmin.get('/themes/:id/preview', async (c) => {
   const adminOrigin = new URL(c.req.url).origin
   const req = {
     db,
-    cfg: siteConfig(c.env),
+    cfg: await loadSiteConfig(db, c.env),
     theme,
     path: '/',
     assetBase: `${adminOrigin}/themes/${raw}/assets`,
@@ -386,10 +386,10 @@ themesAdmin.get('/themes/:id/preview', async (c) => {
     const post = posts[0]
     if (post) rendered = await renderPost({ ...req, path: `/${post.slug}` }, post, await tagsForPost(db, post.id))
   }
-  rendered ??= await renderIndex(req, 1)
+  rendered ??= await renderHome(req)
   if (!rendered) return c.text('Nothing published to preview with yet.', 404)
 
-  const base = siteConfig(c.env).origin
+  const base = req.cfg.origin
   const banner = `<div style="position:fixed;z-index:2147483647;left:12px;bottom:12px;padding:8px 12px;border-radius:8px;background:#111;color:#fff;font:12px/1.3 system-ui;box-shadow:0 4px 18px rgba(0,0,0,.4)">Preview: ${theme.name} · <a style="color:#7dd3fc" href="${adminOrigin}/themes/${raw}/preview${c.req.query('post') ? '' : '?post=1'}">${c.req.query('post') ? 'archive' : 'a post'}</a></div>`
   const html = rendered.html
     .replace(/<head([^>]*)>/i, `<head$1><base href="${base}/">`)

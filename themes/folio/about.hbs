@@ -1,0 +1,20 @@
+{{!< default}}
+{{#post}}
+<article class="chapter">
+    <header class="chapter-head">
+        <p class="chapter-kicker reveal" style="--d:0">About the author</p>
+        <h1 class="chapter-title">{{@author.name}}</h1>
+        {{#if @author.social}}
+        <p class="chapter-byline reveal" style="--d:2">
+            {{#foreach @author.social}}<a href="{{url}}" rel="me noopener">{{label}}</a>{{#unless @last}}<span class="dot" aria-hidden="true"></span>{{/unless}}{{/foreach}}
+        </p>
+        {{/if}}
+    </header>
+    {{#if @author.photo}}
+    <figure class="plate plate--portrait reveal" style="--d:3"><img src="{{@author.photo}}" alt="{{@author.name}}"></figure>
+    {{/if}}
+    <div class="text">{{content}}</div>
+    <p class="endmark" aria-hidden="true">❧</p>
+</article>
+{{/post}}
+{{> subscribe-block}}

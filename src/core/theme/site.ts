@@ -1,9 +1,11 @@
 import type { Db } from '../../db/index.ts'
-import type { PostTag } from '../../db/schema.ts'
+import type { DocNode, PostTag, SocialLink } from '../../db/schema.ts'
 import type { Env } from '../../types.ts'
 import { slugify } from '../ids.ts'
+import { getSiteSettings, hasLongBio, paragraphs } from '../site-settings.ts'
 import {
   getPostTagBySlug,
+  homeTopics,
   listPublicTags,
   tagsForPost,
   tagsForPosts,
@@ -50,8 +52,16 @@ export interface SiteConfig {
   author: string
   /** The signup form endpoint on the admin host, or null. */
   signupAction: string | null
+  logoUrl: string | null
+  authorPhotoUrl: string | null
+  /** Plain text, paragraphs split on blank lines. */
+  shortBio: string | null
+  socialLinks: SocialLink[]
+  /** The /about page's body, or null when there isn't one. */
+  longBio: { json: DocNode | null; md: string } | null
 }
 
+/** The site from environment variables alone — what renders before the Site screen is ever saved. */
 export function siteConfig(env: Env): SiteConfig {
   const publicUrl = (env.PUBLIC_URL ?? '').replace(/\/$/, '')
   return {
@@ -60,6 +70,30 @@ export function siteConfig(env: Env): SiteConfig {
     tagline: env.SITE_TAGLINE ?? '',
     author: env.SITE_AUTHOR ?? env.FROM_NAME ?? '',
     signupAction: env.SITE_FORM_SLUG && publicUrl ? `${publicUrl}/f/${env.SITE_FORM_SLUG}` : null,
+    logoUrl: null,
+    authorPhotoUrl: null,
+    shortBio: null,
+    socialLinks: [],
+    longBio: null,
+  }
+}
+
+/** The Site screen's values over the environment's. Unset fields keep the environment's. */
+export async function loadSiteConfig(db: Db, env: Env): Promise<SiteConfig> {
+  const base = siteConfig(env)
+  const row = await getSiteSettings(db)
+  if (!row) return base
+  const pick = (v: string | null | undefined, fallback: string) => (v?.trim() ? v.trim() : fallback)
+  return {
+    ...base,
+    title: pick(row.title, base.title),
+    tagline: pick(row.tagline, base.tagline),
+    author: pick(row.authorName, base.author),
+    logoUrl: row.logoUrl?.trim() || null,
+    authorPhotoUrl: row.authorPhotoUrl?.trim() || null,
+    shortBio: row.shortBio?.trim() || null,
+    socialLinks: row.socialLinks ?? [],
+    longBio: hasLongBio(row) ? { json: (row.longBioJson as DocNode | null) ?? null, md: row.longBioMd ?? '' } : null,
   }
 }
 
@@ -138,9 +172,9 @@ export function ghostAuthor(cfg: SiteConfig, posts = 0): GhostAuthor {
     name: cfg.author,
     slug,
     url: `/author/${slug}`,
-    profile_image: null,
+    profile_image: cfg.authorPhotoUrl,
     cover_image: null,
-    bio: null,
+    bio: cfg.shortBio,
     website: null,
     location: null,
     twitter: null,
@@ -339,6 +373,12 @@ async function render(req: SiteRequest, view: View): Promise<Rendered> {
   if (!template) return { status: view.status ?? 500, html: bareError(view.status ?? 500, cfg) }
 
   const topTags = await listPublicTags(db, 8)
+  const topicNav = topTags.map((t) => ({
+    label: t.name,
+    url: `/${t.slug}`,
+    hue: hueForTag(t.id),
+    hue_cool: coolHueForTag(t.id),
+  }))
   let gets = 0
 
   const services: ThemeServices = {
@@ -377,7 +417,7 @@ async function render(req: SiteRequest, view: View): Promise<Rendered> {
         title: cfg.title,
         description: cfg.tagline,
         url: cfg.origin,
-        logo: null,
+        logo: cfg.logoUrl,
         icon: '/favicon.png',
         cover_image: null,
         accent_color: '#0ea5e9',
@@ -386,15 +426,17 @@ async function render(req: SiteRequest, view: View): Promise<Rendered> {
         timezone: 'Etc/UTC',
         // Tags are the navigation. No menu editor to keep in sync: the topics
         // you actually write about, busiest first.
+        // Home, the archive, the About page when there is one, then the
+        // topics you actually write about, busiest first. No menu editor to
+        // keep in sync.
         navigation: [
           { label: 'Home', url: '/', hue: 236, hue_cool: 258 },
-          ...topTags.map((t) => ({
-            label: t.name,
-            url: `/${t.slug}`,
-            hue: hueForTag(t.id),
-            hue_cool: coolHueForTag(t.id),
-          })),
+          { label: 'Writing', url: '/writing', hue: 186, hue_cool: 222 },
+          ...(cfg.longBio ? [{ label: 'About', url: '/about', hue: 284, hue_cool: 292 }] : []),
+          ...topicNav,
         ],
+        /** Just the topics, for themes that list them on their own (a ticker, a index of subjects). */
+        topics: topicNav,
         secondary_navigation: [],
         members_enabled: Boolean(cfg.signupAction),
         allow_self_signup: Boolean(cfg.signupAction),
@@ -409,7 +451,19 @@ async function render(req: SiteRequest, view: View): Promise<Rendered> {
         author: cfg.author,
         signup_action: cfg.signupAction,
         search_url: '/search',
+        writing_url: '/writing',
+        about_url: cfg.longBio ? '/about' : null,
+        social: cfg.socialLinks,
         now: new Date().toISOString(),
+      },
+      // The person behind the site: the front page's About, and /about.
+      author: {
+        name: cfg.author,
+        photo: cfg.authorPhotoUrl,
+        short_bio: cfg.shortBio,
+        short_bio_html: safe(paragraphs(cfg.shortBio).map((p) => `<p>${escapeHtml(p)}</p>`).join('')),
+        url: cfg.longBio ? '/about' : null,
+        social: cfg.socialLinks,
       },
       custom: theme.custom,
       config: { posts_per_page: theme.postsPerPage },
@@ -461,7 +515,62 @@ async function runGet(
 
 // ─────────────────────────────────────────────────────────── views
 
-export async function renderIndex(req: SiteRequest, page: number): Promise<Rendered | null> {
+/**
+ * The front page: a landing page for the person who writes the site. The theme's
+ * `home.hbs` lays it out from sections that exist only when they have content:
+ * the author (`@author`), `start_here` (featured posts), `shelves` (topics ticked
+ * for the front page) and `latest`.
+ *
+ * A theme with no `home.hbs` (most Ghost themes) gets page one of the archive
+ * instead, which is what its `index.hbs` was written to show.
+ */
+export async function renderHome(req: SiteRequest): Promise<Rendered | null> {
+  const { db, cfg, theme } = req
+  if (!theme.hasTemplate('home')) return renderIndex(req, 1, { atRoot: true })
+
+  const [featured, topics, latest, total] = await Promise.all([
+    listPosts(db, { featured: true, limit: 12 }),
+    homeTopics(db),
+    listPosts(db, { limit: 6 }),
+    countPosts(db),
+  ])
+  const shelves = []
+  for (const tag of topics.slice(0, 8)) {
+    const { posts } = await listPosts(db, { tagId: tag.id, limit: 3 })
+    shelves.push({ tag: ghostTag(tag, tag.posts), posts: await ghostPosts(db, posts, cfg) })
+  }
+
+  return render(req, {
+    templates: ['home'],
+    contexts: ['home'],
+    root: {
+      start_here: await ghostPosts(db, featured.posts, cfg),
+      shelves,
+      latest: await ghostPosts(db, latest.posts, cfg),
+      post_count: total,
+      pagination: pagination(1, theme.postsPerPage, total),
+    },
+    meta: {
+      title: cfg.title,
+      description: cfg.tagline || null,
+      image: cfg.authorPhotoUrl,
+      type: 'website',
+      publishedAt: null,
+      noindex: false,
+    },
+    pageUrl: (n) => (n <= 1 ? '/writing' : `/writing/page/${n}`),
+  })
+}
+
+/**
+ * The archive: every post, newest first, at `/writing`. `atRoot` is the
+ * fallback for themes without a `home.hbs`, where page one is the front page.
+ */
+export async function renderIndex(
+  req: SiteRequest,
+  page: number,
+  opts: { atRoot?: boolean } = {},
+): Promise<Rendered | null> {
   const { db, cfg, theme } = req
   const limit = theme.postsPerPage
   const [{ posts }, total] = await Promise.all([
@@ -469,24 +578,45 @@ export async function renderIndex(req: SiteRequest, page: number): Promise<Rende
     countPosts(db),
   ])
   if (page > 1 && posts.length === 0) return null
-  const home = page === 1
+  const contexts = opts.atRoot ? ['home', 'index'] : page > 1 ? ['index', 'writing', 'paged'] : ['index', 'writing']
   return render(req, {
-    templates: home ? ['home', 'index'] : ['index'],
-    contexts: home ? ['home', 'index'] : ['index', 'paged'],
+    templates: opts.atRoot ? ['home', 'index'] : ['index'],
+    contexts,
     root: {
       posts: numbered(await ghostPosts(db, posts, cfg), total, (page - 1) * limit),
       pagination: pagination(page, limit, total),
     },
     meta: {
-      title: home ? cfg.title : `${cfg.title} (Page ${page})`,
+      title: opts.atRoot ? cfg.title : page > 1 ? `Writing (Page ${page}) · ${cfg.title}` : `Writing · ${cfg.title}`,
       description: cfg.tagline || null,
       image: null,
       type: 'website',
       publishedAt: null,
       // Paginated archive pages stay out of the index: one post, one URL.
-      noindex: !home,
+      noindex: page > 1,
     },
-    pageUrl: (n) => (n <= 1 ? '/' : `/page/${n}`),
+    pageUrl: (n) => (n <= 1 ? '/writing' : `/writing/page/${n}`),
+  })
+}
+
+/** `/about`: the long bio, in the theme's `about.hbs`, or its page layout. Null when there's no long bio. */
+export async function renderAbout(req: SiteRequest): Promise<Rendered | null> {
+  const { cfg } = req
+  if (!cfg.longBio) return null
+  const html = renderPostHtml(cfg.longBio)
+  const page = syntheticPage(`About ${cfg.author || cfg.title}`.trim(), html, '/about', cfg)
+  return render(req, {
+    templates: ['about', 'page', 'post'],
+    contexts: ['page', 'about'],
+    root: { post: page },
+    meta: {
+      title: `About · ${cfg.title}`,
+      description: cfg.shortBio ? (paragraphs(cfg.shortBio)[0] ?? null) : cfg.tagline || null,
+      image: cfg.authorPhotoUrl,
+      type: 'website',
+      publishedAt: null,
+      noindex: false,
+    },
   })
 }
 

@@ -284,6 +284,8 @@ export const broadcasts = sqliteTable(
      * public URL.
      */
     publishOnSend: integer('publish_on_send', { mode: 'boolean' }).notNull().default(true),
+    /** Shown in the front page's "Start here", newest first. Web only; mail never reads it. */
+    featured: integer('featured', { mode: 'boolean' }).notNull().default(false),
     /** URL identity. Unique across published and unpublished alike, so taking a
         post down never frees its slug for something else to claim. */
     slug: text('slug'),
@@ -1748,6 +1750,8 @@ export const postTags = sqliteTable(
     slug: text('slug').notNull(),
     name: text('name').notNull(),
     description: text('description'),
+    /** Gets a shelf of its newest posts on the front page. Off until the operator ticks it. */
+    showOnHome: integer('show_on_home', { mode: 'boolean' }).notNull().default(false),
     createdAt: ts('created_at').notNull(),
   },
   (t) => [uniqueIndex('post_tags_slug_key').on(t.slug)],
@@ -1831,3 +1835,35 @@ export const themeFiles = sqliteTable(
 )
 
 export type Theme = typeof themes.$inferSelect
+
+// ─────────────────────────────────────────────────────────── site settings
+
+/** One link in the author's list: GitHub, X, a podcast, anything. */
+export interface SocialLink {
+  label: string
+  url: string
+}
+
+/**
+ * Who the site is and who writes it. Exactly one row (`id = 1`), created on
+ * first save. Every column is nullable on purpose: null means "not set", and
+ * the site falls back to the `SITE_*` environment variables, so an install
+ * that has never opened the Site screen renders exactly as it did before.
+ */
+export const siteSettings = sqliteTable('site_settings', {
+  id: integer('id').primaryKey(),
+  title: text('title'),
+  tagline: text('tagline'),
+  logoUrl: text('logo_url'),
+  socialLinks: text('social_links', { mode: 'json' }).notNull().$type<SocialLink[]>().default([]),
+  authorName: text('author_name'),
+  authorPhotoUrl: text('author_photo_url'),
+  /** A few sentences, plain text: the front page's About. */
+  shortBio: text('short_bio'),
+  /** The /about page, authored in the same editor as a post. */
+  longBioJson: text('long_bio_json', { mode: 'json' }).$type<DocNode | null>(),
+  longBioMd: text('long_bio_md'),
+  updatedAt: ts('updated_at').notNull(),
+})
+
+export type SiteSettings = typeof siteSettings.$inferSelect

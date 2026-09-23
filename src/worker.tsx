@@ -30,6 +30,7 @@ import { sequenceTemplatesAdmin } from './web/admin-sequence-templates.tsx'
 import { aiAdmin } from './web/admin-ai.ts'
 import { store } from './web/admin-store.tsx'
 import { tagging } from './web/admin-tags.tsx'
+import { siteAdmin } from './web/admin-site.tsx'
 import { themesAdmin } from './web/admin-themes.tsx'
 import { requireOperator } from './web/auth.ts'
 import { isSiteHost, site } from './web/site.tsx'
@@ -118,6 +119,7 @@ app.route('/', aiAdmin)
 app.route('/', store)
 // The public site's look. Operator-only like everything below `requireOperator`;
 // the site itself is a separate app, reached by hostname.
+app.route('/', siteAdmin)
 app.route('/', themesAdmin)
 // Ahead of `mail`, which owns `/sequences/:id` and would read "templates" as an id.
 app.route('/', sequenceTemplatesAdmin)

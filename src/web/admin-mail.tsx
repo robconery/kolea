@@ -10,7 +10,7 @@ import {
 import { listCampaigns } from '../core/campaigns.ts'
 import { storeMedia } from '../core/media.ts'
 import { setPostTags, tagSlug, tagsForPost } from '../core/post-tags.ts'
-import { clearFeatureImage, postPath, publishPost, setFeatureImage, unpublishPost } from '../core/posts.ts'
+import { clearFeatureImage, postPath, publishPost, setFeatureImage, setPostFeatured, unpublishPost } from '../core/posts.ts'
 import { type Photo, searchPhotos, triggerDownload, unsplashConfigured } from '../core/unsplash.ts'
 import { aiConfigured, modelFor, modelLabel } from '../core/ai/openrouter.ts'
 import { countSegment, describeRule, listSegments } from '../core/segments.ts'
@@ -1035,6 +1035,10 @@ const Publishing: FC<{ env: Env; b: Broadcast; topics: string[] }> = ({ env, b, 
             Comma-separated. The first is the topic in the URL. These tag the <em>post</em>, never the people
             who got it. Old links keep working if you change it: the site redirects.
           </p>
+          <label style="display:flex;gap:10px;align-items:center;text-transform:none;letter-spacing:0;font:14px var(--sans)">
+            <input type="checkbox" name="featured" checked={b.featured} />
+            <span>Featured: show it in the front page's "Start here"</span>
+          </label>
           <label>
             <span>Excerpt</span>
             <textarea name="excerpt" rows={3} placeholder="derived from the first lines of the body">
@@ -1059,6 +1063,7 @@ mail.post('/broadcasts/:id/publish', async (c) => {
     slug: String(form.get('slug') ?? '').trim() || null,
     excerpt: String(form.get('excerpt') ?? '').trim() || null,
   })
+  await setPostFeatured(db, id, form.get('featured') !== null)
   const tags = await setPostTags(
     db,
     id,

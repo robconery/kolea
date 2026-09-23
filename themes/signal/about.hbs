@@ -1,0 +1,36 @@
+{{!< default}}
+{{#post}}
+<article class="feature" style="--hue: 284">
+    <header class="feature-head">
+        <div class="feature-flood" aria-hidden="true"></div>
+        <div class="feature-headline">
+            <p class="feature-kicker reveal" style="--d:0"><span class="chip chip--ink">About</span></p>
+            <h1 class="feature-title">
+                {{#foreach (split @author.name separator=" ")}}<span class="mast-w"><span style="--d:{{@index}}">{{this}}</span></span> {{/foreach}}
+            </h1>
+            {{#if @site.description}}<p class="feature-by reveal" style="--d:3">{{@site.description}}</p>{{/if}}
+        </div>
+    </header>
+
+    {{#if @author.photo}}
+    <figure class="feature-art feature-art--portrait">
+        <div class="bezel"><div class="bezel-core"><img src="{{@author.photo}}" alt="{{@author.name}}"></div></div>
+    </figure>
+    {{/if}}
+
+    <div class="feature-body">
+        <aside class="rail" aria-label="Elsewhere">
+            <div class="rail-in">
+                {{#if @author.social}}
+                <p class="mono">Elsewhere</p>
+                {{#foreach @author.social}}<p><a href="{{url}}" rel="me noopener">{{label}}</a></p>{{/foreach}}
+                {{/if}}
+                <p class="mono">Reading</p>
+                <p><a href="/writing">Every story</a></p>
+            </div>
+        </aside>
+        <div class="copy">{{content}}</div>
+    </div>
+</article>
+{{/post}}
+{{> subscribe-block}}

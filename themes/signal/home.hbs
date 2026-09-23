@@ -1,0 +1,78 @@
+{{!< default}}
+{{!-- The front page: a magazine cover that sells the writer. Masthead with the
+      signup under it, the ticker, the author, what to read first, a shelf per
+      chosen topic, and the signup again. Empty sections don't render. --}}
+<section class="mast">
+    <p class="mast-line reveal" style="--d:0">
+        <span class="chip chip--live"><span class="chip-dot"></span>By {{@author.name}}</span>
+        {{#if post_count}}<span class="mono">{{plural post_count empty="" singular="1 story" plural="% stories"}}</span>{{/if}}
+    </p>
+    <h1 class="mast-word" aria-label="{{@site.title}}">
+        {{#foreach (split @site.title separator=" ")}}<span class="mast-w"><span style="--d:{{@index}}">{{this}}</span></span>{{/foreach}}
+    </h1>
+    {{#if @site.description}}<p class="mast-dek reveal" style="--d:3">{{@site.description}}</p>{{/if}}
+    {{#if @site.signup_action}}
+    <form class="field field--hero reveal" style="--d:4" method="post" action="{{@site.signup_action}}">
+        <label class="visually-hidden" for="hero-email">Email address</label>
+        <input id="hero-email" type="email" name="email" required placeholder="you@example.com" autocomplete="email">
+        <button class="pill pill--ink magnetic" type="submit"><span>Get every story</span><span class="pill-orb" aria-hidden="true">↗</span></button>
+    </form>
+    {{/if}}
+</section>
+
+{{#if @custom.ticker}}{{> ticker}}{{/if}}
+
+{{#if @author.short_bio}}
+<section class="byline-block reveal" style="--hue: 284" aria-labelledby="about-title">
+    <div class="byline-in">
+        {{#if @author.photo}}
+        <div class="bezel byline-photo"><div class="bezel-core"><img src="{{@author.photo}}" alt="{{@author.name}}"></div></div>
+        {{/if}}
+        <div class="byline-text">
+            <p class="mono">Who's writing</p>
+            <h2 class="byline-name" id="about-title">{{@author.name}}</h2>
+            <div class="byline-bio">{{@author.short_bio_html}}</div>
+            <p class="byline-links">
+                {{#if @author.url}}<a class="pill pill--ink" href="{{@author.url}}"><span>The whole story</span><span class="pill-orb" aria-hidden="true">→</span></a>{{/if}}
+                {{#foreach @author.social}}<a class="chip chip--ink" href="{{url}}" rel="me noopener">{{label}}</a>{{/foreach}}
+            </p>
+        </div>
+    </div>
+</section>
+{{/if}}
+
+{{#if start_here}}
+<section class="section-block" aria-labelledby="start-title">
+    <h2 class="block-title" id="start-title">Start here</h2>
+    <div class="spread spread--topic">
+        {{#foreach start_here}}{{> story}}{{/foreach}}
+    </div>
+</section>
+{{/if}}
+
+{{#foreach shelves}}
+<section class="section-block shelf" style="--hue: {{tag.hue}}" aria-labelledby="shelf-{{tag.slug}}">
+    <div class="shelf-head">
+        <h2 class="block-title" id="shelf-{{tag.slug}}"><span class="shelf-swatch"></span>{{tag.name}}</h2>
+        <a class="pill" href="{{tag.url}}"><span>{{plural tag.count.posts empty="" singular="1 story" plural="All %"}}</span><span class="pill-orb" aria-hidden="true">→</span></a>
+    </div>
+    <div class="more-row">
+        {{#foreach posts}}{{> story compact=true}}{{/foreach}}
+    </div>
+</section>
+{{/foreach}}
+
+{{#unless start_here}}{{#unless shelves}}
+<section class="section-block" aria-labelledby="latest-title">
+    <h2 class="block-title" id="latest-title">Latest</h2>
+    <div class="spread spread--topic">
+        {{#foreach latest}}{{> story}}{{/foreach}}
+    </div>
+</section>
+{{/unless}}{{/unless}}
+
+{{#if post_count}}
+<p class="everything"><a class="pill pill--ink" href="/writing"><span>Every story</span><span class="pill-orb" aria-hidden="true">→</span></a></p>
+{{/if}}
+
+{{> subscribe-block}}

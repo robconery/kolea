@@ -1,0 +1,21 @@
+{{!< default}}
+{{#post}}
+<article class="log" style="--h: 292">
+    <header class="log-head">
+        {{> horizon-strip}}
+        <p class="tag reveal" style="--d:0"><span class="tag-dot"></span>Who's on air</p>
+        <h1 class="log-title">{{@author.name}}</h1>
+        {{#if @author.social}}
+        <p class="log-links reveal" style="--d:2">{{#foreach @author.social}}<a class="chip" href="{{url}}" rel="me noopener">{{label}}</a>{{/foreach}}</p>
+        {{/if}}
+    </header>
+    {{#if @author.photo}}
+    <figure class="screen screen--portrait reveal" style="--d:3">
+        <div class="shell"><div class="core crt"><img src="{{@author.photo}}" alt="{{@author.name}}"></div></div>
+    </figure>
+    {{/if}}
+    <div class="words">{{content}}</div>
+    <footer class="log-end">{{> scope}}<p class="mono">End of transmission</p></footer>
+</article>
+{{/post}}
+{{> tune-in}}

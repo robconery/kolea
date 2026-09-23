@@ -1,34 +1,20 @@
 {{!< default}}
-{{#is "home"}}
-<section class="titlepage">
-    <p class="eyebrow reveal" style="--d:0">Essays by {{@site.author}}</p>
-    <h1 class="titlepage-title reveal" style="--d:1">{{@site.title}}</h1>
-    {{#if @site.description}}<p class="titlepage-sub reveal" style="--d:2">{{@site.description}}</p>{{/if}}
-    <div class="titlepage-rule reveal" style="--d:3" aria-hidden="true"></div>
-</section>
-{{/is}}
-
 {{#is "author"}}
 <header class="section-head">
     <p class="eyebrow">The collected essays of</p>
     <h1 class="section-title">{{author.name}}</h1>
 </header>
-{{/is}}
-
-{{#is "paged"}}
-<header class="section-head section-head--quiet">
-    <p class="eyebrow">Contents, continued</p>
-    <h1 class="section-title">Page {{pagination.page}} <em>of {{pagination.pages}}</em></h1>
+{{else}}
+<header class="section-head{{#is "paged"}} section-head--quiet{{/is}}">
+    <p class="eyebrow">{{#is "paged"}}Contents, continued{{else}}Every essay, newest first{{/is}}</p>
+    <h1 class="section-title">{{#is "paged"}}Page {{pagination.page}} <em>of {{pagination.pages}}</em>{{else}}The contents{{/is}}</h1>
 </header>
 {{/is}}
 
-<section class="contents" aria-labelledby="contents-label">
-    <h2 class="contents-label" id="contents-label"><span>Contents</span></h2>
+<section class="contents" aria-label="Essays">
     <ol class="toc">
         {{#foreach posts}}{{> entry}}{{/foreach}}
     </ol>
 </section>
 
 {{pagination}}
-
-{{#is "home"}}{{> subscribe-block}}{{/is}}

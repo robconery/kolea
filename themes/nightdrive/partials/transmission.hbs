@@ -2,7 +2,7 @@
     <a class="shell card-link" href="{{url}}">
         <span class="core card-core">
             <span class="card-top">
-                <span class="mono card-no">SIG·{{number}}</span>
+                {{#if number}}<span class="mono card-no">SIG·{{number}}</span>{{/if}}
                 {{#primary_tag}}<span class="chip">{{name}}</span>{{/primary_tag}}
                 <time class="mono card-date" datetime="{{date format="YYYY-MM-DD"}}">{{date format="YYYY.MM.DD"}}</time>
             </span>

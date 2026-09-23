@@ -176,6 +176,13 @@
       "when": 1790113492726,
       "tag": "0024_steep_carnage",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1790191597853,
+      "tag": "0025_easy_blazing_skull",
+      "breakpoints": true
     }
   ]
 }

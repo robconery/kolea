@@ -1,0 +1,69 @@
+{{!< default}}
+{{!-- The front page: the book's front matter. Title page with the signup on
+      it, the author, where to start, the subjects, and the reply card. Every
+      section appears only when it has something in it. --}}
+<section class="titlepage">
+    <p class="eyebrow reveal" style="--d:0">Essays by {{@author.name}}</p>
+    <h1 class="titlepage-title reveal" style="--d:1">{{@site.title}}</h1>
+    {{#if @site.description}}<p class="titlepage-sub reveal" style="--d:2">{{@site.description}}</p>{{/if}}
+    {{#if @site.signup_action}}
+    <form class="subscribe-form subscribe-form--hero reveal" style="--d:3" method="post" action="{{@site.signup_action}}">
+        <label class="visually-hidden" for="hero-email">Email address</label>
+        <input id="hero-email" type="email" name="email" required placeholder="you@example.com" autocomplete="email">
+        <button type="submit"><span>Subscribe</span><span class="btn-mark" aria-hidden="true">→</span></button>
+    </form>
+    <p class="titlepage-note reveal" style="--d:4">New essays by email, the day they're printed. One click stops them.</p>
+    {{/if}}
+    <div class="titlepage-rule reveal" style="--d:5" aria-hidden="true"></div>
+</section>
+
+{{#if @author.short_bio}}
+<section class="colophon-author reveal" aria-labelledby="about-title">
+    {{#if @author.photo}}<figure class="author-plate"><img src="{{@author.photo}}" alt="{{@author.name}}"></figure>{{/if}}
+    <div class="author-text">
+        <p class="eyebrow">About the author</p>
+        <h2 class="author-name" id="about-title">{{@author.name}}</h2>
+        <div class="author-bio">{{@author.short_bio_html}}</div>
+        <p class="author-links">
+            {{#if @author.url}}<a class="textlink" href="{{@author.url}}">The longer story</a>{{/if}}
+            {{#foreach @author.social}}<a href="{{url}}" rel="me noopener">{{label}}</a>{{/foreach}}
+        </p>
+    </div>
+</section>
+{{/if}}
+
+{{#if start_here}}
+<section class="contents" aria-labelledby="start-label">
+    <h2 class="contents-label" id="start-label"><span>Start here</span></h2>
+    <ol class="toc">
+        {{#foreach start_here}}{{> entry lead=@first}}{{/foreach}}
+    </ol>
+</section>
+{{/if}}
+
+{{#foreach shelves}}
+<section class="contents shelf" aria-labelledby="shelf-{{tag.slug}}">
+    <h2 class="contents-label" id="shelf-{{tag.slug}}">
+        <span>{{tag.name}}</span>
+        <a class="shelf-all" href="{{tag.url}}">{{plural tag.count.posts empty="" singular="The one essay" plural="All % essays"}} →</a>
+    </h2>
+    <ol class="toc">
+        {{#foreach posts}}{{> entry}}{{/foreach}}
+    </ol>
+</section>
+{{/foreach}}
+
+{{#unless start_here}}{{#unless shelves}}
+<section class="contents" aria-labelledby="latest-label">
+    <h2 class="contents-label" id="latest-label"><span>Latest</span></h2>
+    <ol class="toc">
+        {{#foreach latest}}{{> entry lead=@first}}{{/foreach}}
+    </ol>
+</section>
+{{/unless}}{{/unless}}
+
+{{#if post_count}}
+<p class="everything"><a class="textlink" href="/writing">The complete contents: {{plural post_count empty="" singular="one essay" plural="% essays"}}</a></p>
+{{/if}}
+
+{{> subscribe-block}}

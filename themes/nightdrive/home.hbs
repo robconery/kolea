@@ -1,0 +1,74 @@
+{{!< default}}
+{{!-- The front page: a broadcast that sells the broadcaster. Sunset hero with
+      the signup in it, who's on air, where to start, a frequency per chosen
+      topic, and the signup again. Empty sections don't render. --}}
+<section class="hero">
+    <div class="hero-copy">
+        <p class="tag reveal" style="--d:0"><span class="tag-dot"></span>On air · {{@author.name}}</p>
+        <h1 class="hero-title" data-echo="{{@site.title}}">{{@site.title}}</h1>
+        {{#if @site.description}}<p class="hero-dek reveal" style="--d:2">{{@site.description}}</p>{{/if}}
+        {{#if @site.signup_action}}
+        <form class="dial dial--hero reveal" style="--d:3" method="post" action="{{@site.signup_action}}">
+            <label class="visually-hidden" for="hero-email">Email address</label>
+            <input id="hero-email" type="email" name="email" required placeholder="you@example.com" autocomplete="email">
+            <button class="beam beam--solid magnetic" type="submit"><span>Tune in</span><span class="beam-orb" aria-hidden="true">↗</span></button>
+        </form>
+        {{/if}}
+        <p class="hero-actions reveal" style="--d:4">
+            <a class="beam" href="#frequencies"><span>Start reading</span><span class="beam-orb" aria-hidden="true">↓</span></a>
+        </p>
+    </div>
+    {{#if @custom.horizon}}{{> horizon}}{{/if}}
+</section>
+
+{{#if @author.short_bio}}
+<section class="operator reveal" aria-labelledby="about-title">
+    <div class="shell shell--big">
+        <div class="core operator-core">
+            {{#if @author.photo}}<div class="operator-photo"><img src="{{@author.photo}}" alt="{{@author.name}}"></div>{{/if}}
+            <div class="operator-text">
+                <p class="tag"><span class="tag-dot"></span>Who's on air</p>
+                <h2 class="operator-name" id="about-title">{{@author.name}}</h2>
+                <div class="operator-bio">{{@author.short_bio_html}}</div>
+                <p class="operator-links">
+                    {{#if @author.url}}<a class="beam beam--solid" href="{{@author.url}}"><span>Full transmission</span><span class="beam-orb" aria-hidden="true">→</span></a>{{/if}}
+                    {{#foreach @author.social}}<a class="chip" href="{{url}}" rel="me noopener" style="--h: {{#if @odd}}292{{else}}206{{/if}}">{{label}}</a>{{/foreach}}
+                </p>
+            </div>
+        </div>
+    </div>
+</section>
+{{/if}}
+
+<div id="frequencies"></div>
+
+{{#if start_here}}
+<section class="freq" aria-labelledby="start-title">
+    <header class="freq-head"><p class="tag"><span class="tag-dot"></span>Start here</p><h2 class="freq-title" id="start-title">Tune in with these</h2></header>
+    <div class="cascade">{{#foreach start_here}}{{> transmission}}{{/foreach}}</div>
+</section>
+{{/if}}
+
+{{#foreach shelves}}
+<section class="freq" style="--h: {{tag.hue_cool}}" aria-labelledby="shelf-{{tag.slug}}">
+    <header class="freq-head">
+        <p class="tag"><span class="tag-dot"></span>Frequency</p>
+        <h2 class="freq-title" id="shelf-{{tag.slug}}">{{tag.name}}</h2>
+        <a class="beam" href="{{tag.url}}"><span>{{plural tag.count.posts empty="" singular="1 transmission" plural="All %"}}</span><span class="beam-orb" aria-hidden="true">→</span></a>
+    </header>
+    <div class="cascade">{{#foreach posts}}{{> transmission}}{{/foreach}}</div>
+</section>
+{{/foreach}}
+
+{{#unless start_here}}{{#unless shelves}}
+<section class="freq" aria-labelledby="latest-title">
+    <header class="freq-head"><p class="tag"><span class="tag-dot"></span>Latest</p><h2 class="freq-title" id="latest-title">Recent transmissions</h2></header>
+    <div class="cascade">{{#foreach latest}}{{> transmission}}{{/foreach}}</div>
+</section>
+{{/unless}}{{/unless}}
+
+{{#if post_count}}
+<p class="everything"><a class="beam" href="/writing"><span>The full archive · {{post_count}}</span><span class="beam-orb" aria-hidden="true">→</span></a></p>
+{{/if}}
+
+{{> tune-in}}

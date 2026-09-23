@@ -80,6 +80,7 @@ export interface Post {
   publishedAt: Date
   bodyJson: (typeof broadcasts.$inferSelect)['bodyJson']
   bodyMd: string
+  featured: boolean
 }
 
 /** Only these columns leave the module — a post is a *page*, not a broadcast. */
@@ -94,6 +95,7 @@ const postColumns = {
   publishedAt: broadcasts.publishedAt,
   bodyJson: broadcasts.bodyJson,
   bodyMd: broadcasts.bodyMd,
+  featured: broadcasts.featured,
 }
 
 /** `published_at is not null` is the only thing that makes a row public. */
@@ -206,6 +208,11 @@ export async function setFeatureImage(db: Db, id: number, image: FeatureImage): 
     .where(eq(broadcasts.id, id))
 }
 
+/** Mark (or unmark) a post for the front page's "Start here". Touches nothing else. */
+export async function setPostFeatured(db: Db, id: number, featured: boolean): Promise<void> {
+  await db.update(broadcasts).set({ featured }).where(eq(broadcasts.id, id))
+}
+
 export async function clearFeatureImage(db: Db, id: number): Promise<void> {
   await db
     .update(broadcasts)
@@ -226,6 +233,8 @@ export interface PostQuery {
   excludeIds?: number[]
   /** Newest first unless told otherwise. */
   order?: 'newest' | 'oldest'
+  /** Only posts marked for the front page's "Start here". */
+  featured?: boolean
 }
 
 export interface PostPage {
@@ -297,6 +306,7 @@ function postFilter(db: Db, query: PostQuery): SQL | undefined {
     )
   }
   if (query.excludeIds?.length) clauses.push(notInArray(broadcasts.id, query.excludeIds))
+  if (query.featured !== undefined) clauses.push(eq(broadcasts.featured, query.featured))
   return and(...clauses)
 }
 
@@ -382,6 +392,7 @@ export async function postStatus(db: Db, id: number) {
       featureImageCreditUrl: broadcasts.featureImageCreditUrl,
       publishedAt: broadcasts.publishedAt,
       subject: broadcasts.subject,
+      featured: broadcasts.featured,
     })
     .from(broadcasts)
     .where(eq(broadcasts.id, id))

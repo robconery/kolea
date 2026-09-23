@@ -1,6 +1,6 @@
-<li class="entry{{#if @first}}{{#is "home"}} entry--lead{{/is}}{{/if}} reveal" style="--d:{{@index}}">
+<li class="entry{{#if lead}} entry--lead{{/if}} reveal" style="--d:{{@index}}">
     <a class="entry-link" href="{{url}}">
-        <span class="entry-no" aria-hidden="true">{{number}}</span>
+        <span class="entry-no" aria-hidden="true">{{#if number}}{{number}}{{else}}{{@number}}{{/if}}</span>
         <span class="entry-body">
             {{#primary_tag}}<span class="entry-kicker">{{name}}</span>{{/primary_tag}}
             <span class="entry-title" style="view-transition-name: title-{{id}}">{{title}}</span>
@@ -10,8 +10,8 @@
             <time datetime="{{date format="YYYY-MM-DD"}}">{{date format="D MMM YYYY"}}</time>
             <span>{{reading_time minute="1 min" minutes="% min"}}</span>
         </span>
-        {{#if @first}}{{#is "home"}}{{#if feature_image}}
+        {{#if lead}}{{#if feature_image}}
         <span class="entry-plate"><img src="{{img_url feature_image size="m"}}" alt="" loading="lazy" style="view-transition-name: plate-{{id}}"></span>
-        {{/if}}{{/is}}{{/if}}
+        {{/if}}{{/if}}
     </a>
 </li>

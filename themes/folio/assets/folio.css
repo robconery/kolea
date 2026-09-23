@@ -746,6 +746,82 @@ img { display: block; max-width: 100%; height: auto; }
 .colophon-small a { text-decoration: none; }
 .colophon-small a:hover { color: var(--vermilion); }
 
+/* ── The front page: signup on the title page, the author, shelves. */
+
+.subscribe-form--hero { margin: 2.6rem 0 0; max-width: 28rem; }
+.titlepage-note { margin: 0.9rem 0 0; font: 400 0.875rem/1.4 var(--label); color: var(--ink-faint); }
+
+.colophon-author {
+  display: grid;
+  grid-template-columns: minmax(0, 15rem) minmax(0, 36rem);
+  gap: clamp(2rem, 5vw, 4rem);
+  align-items: start;
+  max-width: 78rem;
+  margin: 0 0 clamp(4rem, 9vw, 6.5rem);
+  padding: 0 var(--gutter);
+}
+.author-plate { margin: 0; }
+.author-plate img {
+  width: 100%;
+  aspect-ratio: 4 / 5;
+  object-fit: cover;
+  border-radius: 2px;
+  filter: grayscale(0.35) sepia(0.12) contrast(1.02);
+}
+.author-name {
+  margin: 0.9rem 0 0;
+  font-weight: 380;
+  font-size: clamp(2rem, 4vw, 3rem);
+  line-height: 1.02;
+  letter-spacing: -0.025em;
+  font-variation-settings: 'opsz' 60;
+}
+.author-bio { margin-top: 1.1rem; font-size: 1.15rem; line-height: 1.62; color: var(--ink-soft); }
+.author-bio p { margin: 0; }
+.author-bio p + p { margin-top: 0.8em; }
+.author-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.3rem;
+  margin: 1.5rem 0 0;
+  font: 500 0.875rem/1.3 var(--label);
+}
+.author-links a:not(.textlink) { color: var(--ink-faint); text-decoration: none; }
+.author-links a:not(.textlink):hover { color: var(--vermilion); }
+
+.shelf { margin-top: clamp(3.5rem, 8vw, 5.5rem); }
+.contents + .contents { margin-top: clamp(3.5rem, 8vw, 5.5rem); }
+.shelf-all {
+  order: 3;
+  font: 500 0.75rem/1 var(--label);
+  letter-spacing: 0.12em;
+  color: var(--vermilion);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.shelf-all:hover { text-decoration: underline; text-underline-offset: 0.3em; }
+
+.everything {
+  max-width: 78rem;
+  margin: 2.5rem 0 0;
+  padding: 0 var(--gutter);
+  font-style: italic;
+  font-size: 1.15rem;
+}
+
+.plate--portrait { grid-column: text; justify-self: center; width: min(100%, 22rem); }
+.plate--portrait img { aspect-ratio: 4 / 5; }
+.chapter-byline a { color: inherit; text-decoration: none; }
+.chapter-byline a:hover { color: var(--vermilion); }
+
+@media (max-width: 760px) {
+  .colophon-author { grid-template-columns: minmax(0, 1fr); }
+  .author-plate { max-width: 12rem; }
+  .subscribe-form--hero { flex-direction: column; border-radius: 1.2rem; padding: 0.5rem; }
+  .subscribe-form--hero input { padding: 0.8rem 0.6rem; }
+  .subscribe-form--hero button { justify-content: space-between; }
+}
+
 /* ── Reading progress: a vermilion thread across the top of an essay. */
 
 .progress {

@@ -7,8 +7,11 @@ import {
   type Rendered,
   type SiteConfig,
   type SiteRequest,
+  loadSiteConfig,
+  renderAbout,
   renderAuthor,
   renderError,
+  renderHome,
   renderIndex,
   renderPost,
   renderSearch,
@@ -36,7 +39,9 @@ import type { Env } from '../types.ts'
  * decides which view a URL is. The URL scheme is fixed and opinionated — there
  * is no routes file:
  *
- *   /                      the archive          /page/2    …and on
+ *   /                      the front page: a landing page for the writer
+ *   /writing               every post, newest first     /writing/page/2
+ *   /about                 the long bio, when there is one
  *   /<tag>                 a topic's archive    /<tag>/page/2
  *   /<tag>/<slug>          a post whose primary tag is <tag>
  *   /<slug>                a post with no tags — or a redirect to /<tag>/<slug>
@@ -65,7 +70,8 @@ export function isSiteHost(request: Request, env: Env): boolean {
 
 async function siteRequest(c: Ctx): Promise<SiteRequest> {
   const db = getDb(c.env)
-  return { db, cfg: siteConfig(c.env), theme: await loadActiveTheme(db), path: c.req.path }
+  const [cfg, theme] = await Promise.all([loadSiteConfig(db, c.env), loadActiveTheme(db)])
+  return { db, cfg, theme, path: c.req.path }
 }
 
 /**
@@ -105,21 +111,37 @@ site.use('*', async (c, next) => {
 // ─────────────────────────────────────────────────────────── pages
 
 site.get('/', async (c) => {
-  // The archive used to take `?q=` and `?page=`. Links to those are out there.
+  // The archive used to live here and take `?q=` and `?page=`. Links to those are out there.
   const q = c.req.query('q')
   if (q !== undefined) return c.redirect(q ? `/search?q=${encodeURIComponent(q)}` : '/search', 301)
   const legacyPage = pageParam(c.req.query('page'))
-  if (legacyPage && legacyPage > 1) return c.redirect(`/page/${legacyPage}`, 301)
+  if (legacyPage && legacyPage > 1) return c.redirect(`/writing/page/${legacyPage}`, 301)
 
+  const req = await siteRequest(c)
+  return send(c, await renderHome(req), req)
+})
+
+site.get('/writing', async (c) => {
   const req = await siteRequest(c)
   return send(c, await renderIndex(req, 1), req)
 })
 
-site.get('/page/:n', async (c) => {
+site.get('/writing/page/:n', async (c) => {
   const n = pageParam(c.req.param('n'))
-  if (n === 1) return c.redirect('/', 301)
+  if (n === 1) return c.redirect('/writing', 301)
   const req = await siteRequest(c)
   return send(c, n ? await renderIndex(req, n) : null, req)
+})
+
+/** The archive's old pages, from before the front page became a landing page. */
+site.get('/page/:n', (c) => {
+  const n = pageParam(c.req.param('n'))
+  return c.redirect(n && n > 1 ? `/writing/page/${n}` : '/writing', 301)
+})
+
+site.get('/about', async (c) => {
+  const req = await siteRequest(c)
+  return send(c, await renderAbout(req), req)
 })
 
 site.get('/search', async (c) => {
@@ -168,7 +190,7 @@ site.get('/feed.xml', async (c) => {
     db,
     posts.map((p) => p.id),
   )
-  return new Response(rss(siteConfig(c.env), posts, tags), {
+  return new Response(rss(await loadSiteConfig(db, c.env), posts, tags), {
     headers: {
       'Content-Type': 'application/rss+xml; charset=utf-8',
       'Cache-Control': 'public, max-age=600',
@@ -178,7 +200,7 @@ site.get('/feed.xml', async (c) => {
 
 site.get('/sitemap.xml', async (c) => {
   const db = getDb(c.env)
-  const cfg = siteConfig(c.env)
+  const cfg = await loadSiteConfig(db, c.env)
   const rows = await allPostSlugs(db)
   const tags = await tagsForPosts(
     db,
@@ -187,6 +209,8 @@ site.get('/sitemap.xml', async (c) => {
   const topics = await listPublicTags(db, 500)
   const urls = [
     `<url><loc>${escapeHtml(cfg.origin)}/</loc></url>`,
+    `<url><loc>${escapeHtml(cfg.origin)}/writing</loc></url>`,
+    ...(cfg.longBio ? [`<url><loc>${escapeHtml(cfg.origin)}/about</loc></url>`] : []),
     ...topics.map((t) => `<url><loc>${escapeHtml(`${cfg.origin}/${t.slug}`)}</loc></url>`),
     ...rows.map(
       (r) =>

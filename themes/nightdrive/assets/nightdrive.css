@@ -984,6 +984,77 @@ img { display: block; max-width: 100%; height: auto; }
 .outro-links a { text-decoration: none; }
 .outro-links a:hover { color: var(--cyan); text-shadow: 0 0 12px oklch(85% 0.14 210 / 0.7); }
 
+/* ── The front page: signup in the hero, who's on air, frequencies. */
+
+.dial--hero { margin-top: 2.2rem; max-width: 30rem; }
+.dial--hero + .hero-actions { margin-top: 1rem; }
+
+.operator { max-width: 76rem; margin: clamp(3rem, 7vw, 5rem) auto 0; padding: 0 var(--gutter); --h: 292; }
+.operator-core {
+  display: grid;
+  grid-template-columns: minmax(0, 17rem) minmax(0, 1fr);
+  gap: clamp(1.5rem, 5vw, 4rem);
+  align-items: center;
+  padding: clamp(1.8rem, 5vw, 4rem);
+  background:
+    radial-gradient(60% 90% at 0% 0%, oklch(40% 0.2 300 / 0.55), transparent 70%),
+    radial-gradient(50% 80% at 100% 100%, oklch(40% 0.18 250 / 0.45), transparent 70%),
+    oklch(12% 0.045 282);
+}
+.operator-photo {
+  position: relative;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  padding: 0.35rem;
+  background: conic-gradient(from 200deg, var(--cyan), var(--violet), var(--orchid), var(--cyan));
+  box-shadow: 0 0 calc(50px * var(--glow)) -10px oklch(68% 0.23 302 / 0.9);
+}
+.operator-photo img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; border: 0.3rem solid oklch(12% 0.045 282); }
+.operator-name {
+  margin: 1.2rem 0 0;
+  font: 800 clamp(2.2rem, 5.4vw, 4.4rem)/0.95 var(--wide);
+  letter-spacing: -0.03em;
+  text-transform: uppercase;
+  text-shadow: 0 0 calc(0.4em * var(--glow)) oklch(68% 0.23 302 / 0.55);
+}
+.operator-bio { max-width: 48ch; margin-top: 1.2rem; font-size: 1.1rem; line-height: 1.65; color: var(--ink-soft); }
+.operator-bio p { margin: 0; }
+.operator-bio p + p { margin-top: 0.8em; }
+.operator-links { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin: 1.6rem 0 0; }
+
+.freq { margin-top: clamp(4rem, 9vw, 6.5rem); }
+.freq .cascade { padding-top: clamp(1.5rem, 4vw, 2.5rem); }
+.freq-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 0.9rem 1.4rem;
+  max-width: 66rem;
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+}
+.freq-head .tag { grid-column: 1 / -1; justify-self: start; }
+.freq-title {
+  margin: 0;
+  font: 800 clamp(1.9rem, 4.6vw, 3.6rem)/0.95 var(--wide);
+  letter-spacing: -0.03em;
+  text-transform: uppercase;
+  text-shadow: 0 0 calc(0.35em * var(--glow)) var(--neon-hot), 0 0 calc(1em * var(--glow)) var(--neon-deep);
+}
+
+.everything { max-width: 66rem; margin: clamp(3rem, 6vw, 4rem) auto 0; padding: 0 var(--gutter); }
+
+.log-links { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 1.4rem 0 0; }
+.screen--portrait { max-width: 30rem; }
+.screen--portrait .crt img { aspect-ratio: 4 / 5; }
+
+@media (max-width: 760px) {
+  .operator-core { grid-template-columns: minmax(0, 1fr); }
+  .operator-photo { max-width: 11rem; }
+  .freq-head { grid-template-columns: minmax(0, 1fr); }
+  .freq-head .beam { justify-self: start; }
+}
+
 /* ── Reading progress: a neon line across the top */
 
 .progress {

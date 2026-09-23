@@ -1,30 +1,13 @@
 {{!< default}}
-{{#is "home"}}
-<section class="mast">
-    <p class="mast-line reveal" style="--d:0">
-        <span class="chip chip--live"><span class="chip-dot"></span>New every issue</span>
-        <span class="mono">{{pagination.total}} stories</span>
-    </p>
-    <h1 class="mast-word" aria-label="{{@site.title}}">
-        {{#foreach (split @site.title separator=" ")}}<span class="mast-w"><span style="--d:{{@index}}">{{this}}</span></span>{{/foreach}}
-    </h1>
-    {{#if @site.description}}<p class="mast-dek reveal" style="--d:3">{{@site.description}}</p>{{/if}}
-</section>
-
-{{#if @custom.ticker}}{{> ticker}}{{/if}}
-{{/is}}
-
 {{#is "author"}}
 <section class="topic-head" style="--hue: 236">
     <p class="mono reveal">Everything by</p>
     <h1 class="topic-word">{{author.name}}</h1>
 </section>
-{{/is}}
-
-{{#is "paged"}}
-<section class="topic-head topic-head--quiet">
-    <p class="mono">The archive</p>
-    <h1 class="topic-word">Page {{pagination.page}}</h1>
+{{else}}
+<section class="topic-head{{#is "paged"}} topic-head--quiet{{/is}}" style="--hue: 186">
+    <p class="mono reveal">{{#is "paged"}}The archive{{else}}{{plural pagination.total empty="Nothing yet" singular="1 story" plural="% stories"}}{{/is}}</p>
+    <h1 class="topic-word">{{#is "paged"}}Page {{pagination.page}}{{else}}Writing{{/is}}</h1>
 </section>
 {{/is}}
 
@@ -33,5 +16,3 @@
 </section>
 
 {{pagination}}
-
-{{#is "home"}}{{> subscribe-block}}{{/is}}

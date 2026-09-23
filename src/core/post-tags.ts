@@ -21,6 +21,7 @@ import { slugify } from './ids.ts'
  * "Author" gets `author-tag`, so `/author/rob` keeps meaning the author page.
  */
 export const RESERVED_TAG_SLUGS = new Set([
+  'about',
   'assets',
   'author',
   'd',
@@ -39,6 +40,7 @@ export const RESERVED_TAG_SLUGS = new Set([
   'sitemap.xml',
   'subscribe',
   'tag',
+  'writing',
 ])
 
 export function tagSlug(name: string): string {
@@ -145,4 +147,30 @@ export async function countTagPosts(db: Db, tagId: number): Promise<number> {
     .where(and(eq(broadcastPostTags.postTagId, tagId), isNotNull(broadcasts.publishedAt)))
     .get()
   return row?.n ?? 0
+}
+
+/** Topics ticked "show on the front page" that have a published post, busiest first. */
+export async function homeTopics(db: Db): Promise<TagWithCount[]> {
+  const n = count(broadcastPostTags.broadcastId)
+  const rows = await db
+    .select({ tag: postTags, posts: n })
+    .from(postTags)
+    .innerJoin(broadcastPostTags, eq(broadcastPostTags.postTagId, postTags.id))
+    .innerJoin(broadcasts, eq(broadcasts.id, broadcastPostTags.broadcastId))
+    .where(and(eq(postTags.showOnHome, true), isNotNull(broadcasts.publishedAt)))
+    .groupBy(postTags.id)
+    .orderBy(desc(n), asc(postTags.name))
+    .all()
+  return rows.map((r) => ({ ...r.tag, posts: r.posts }))
+}
+
+/** Exactly these topics get a shelf on the front page; every other one doesn't. */
+export async function setHomeTopics(db: Db, ids: number[]): Promise<void> {
+  await db.update(postTags).set({ showOnHome: false }).where(eq(postTags.showOnHome, true))
+  for (let i = 0; i < ids.length; i += 90) {
+    await db
+      .update(postTags)
+      .set({ showOnHome: true })
+      .where(inArray(postTags.id, ids.slice(i, i + 90)))
+  }
 }
