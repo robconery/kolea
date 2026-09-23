@@ -1,0 +1,21 @@
+{{#if @site.signup_action}}
+<section class="tune{{#if standalone}} tune--standalone{{/if}} reveal" aria-labelledby="tune-title">
+    <div class="shell shell--big">
+        <div class="core tune-core">
+            <svg class="tune-rings" viewBox="0 0 400 400" aria-hidden="true">
+                <circle cx="200" cy="200" r="60"/><circle cx="200" cy="200" r="100"/><circle cx="200" cy="200" r="140"/><circle cx="200" cy="200" r="180"/>
+            </svg>
+            <p class="tag"><span class="tag-dot"></span>The newsletter</p>
+            <h2 class="tune-title" id="tune-title">Stay on this frequency.</h2>
+            <p class="tune-note">Every post lands in your inbox the night it airs. One click turns it off, and it only turns off what you asked it to.</p>
+            <form class="dial" method="post" action="{{@site.signup_action}}">
+                <label class="visually-hidden" for="tune-email">Email address</label>
+                <input id="tune-email" type="email" name="email" required placeholder="you@example.com" autocomplete="email">
+                <button class="beam beam--solid magnetic" type="submit"><span>Tune in</span><span class="beam-orb" aria-hidden="true">↗</span></button>
+            </form>
+        </div>
+    </div>
+</section>
+{{else}}{{#if standalone}}
+<section class="band"><h1 class="band-title">Off air for now.</h1></section>
+{{/if}}{{/if}}

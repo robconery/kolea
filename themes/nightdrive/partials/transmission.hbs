@@ -1,0 +1,21 @@
+<article class="card reveal{{#if feature_image}} card--art{{/if}}" style="--h: {{hue_cool}}; --d: {{@index}}">
+    <a class="shell card-link" href="{{url}}">
+        <span class="core card-core">
+            <span class="card-top">
+                <span class="mono card-no">SIG·{{number}}</span>
+                {{#primary_tag}}<span class="chip">{{name}}</span>{{/primary_tag}}
+                <time class="mono card-date" datetime="{{date format="YYYY-MM-DD"}}">{{date format="YYYY.MM.DD"}}</time>
+            </span>
+            <span class="card-title" style="view-transition-name: title-{{id}}">{{title}}</span>
+            {{#if excerpt}}<span class="card-dek">{{excerpt words="30"}}</span>{{/if}}
+            <span class="card-foot">
+                <span class="mono">{{reading_time minute="1 min" minutes="% min"}}</span>
+                <span class="card-go" aria-hidden="true">↗</span>
+            </span>
+            {{#if feature_image}}
+            <span class="card-art"><img src="{{img_url feature_image size="m"}}" alt="" loading="lazy" style="view-transition-name: art-{{id}}"></span>
+            {{/if}}
+            <span class="card-scan" aria-hidden="true"></span>
+        </span>
+    </a>
+</article>

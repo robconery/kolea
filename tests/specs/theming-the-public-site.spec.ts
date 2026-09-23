@@ -255,8 +255,8 @@ describe('Feature: the built-in themes', () => {
       names = (await w.db.select({ name: themes.name }).from(themes).all()).map((r) => r.name).sort()
     })
 
-    it('lists Folio and Signal as themes of their own', () => {
-      expect(names).toEqual(['folio', 'signal'])
+    it('lists Folio, Nightdrive and Signal as themes of their own', () => {
+      expect(names).toEqual(['folio', 'nightdrive', 'signal'])
     })
   })
 
@@ -281,6 +281,27 @@ describe('Feature: the built-in themes', () => {
     })
   })
 
+  describe('Scenario: switching to Nightdrive', () => {
+    let html: string
+
+    beforeAll(async () => {
+      const w = siteWorld()
+      await aPost(w, 'Late Signal', ['AI'])
+      await w.fetch('/themes')
+      const row = await w.db.select().from(themes).where(eq(themes.name, 'nightdrive')).get()
+      await w.fetch(`/themes/${row?.id}/activate`, { method: 'POST' })
+      html = await (await w.fetch(`${SITE}/ai/late-signal`)).text()
+    })
+
+    it('renders the post with Nightdrive', () => {
+      expect(html).toMatch(/href="\/assets\/nightdrive\.css\?v=/)
+    })
+
+    it('colours it from the cool hues only', () => {
+      expect(html).toContain('<article class="log" style="--h: 258">')
+    })
+  })
+
   describe('Scenario: trying to delete a built-in theme', () => {
     let remaining: number
 
@@ -293,7 +314,7 @@ describe('Feature: the built-in themes', () => {
     })
 
     it('keeps it', () => {
-      expect(remaining).toBe(2)
+      expect(remaining).toBe(3)
     })
   })
 

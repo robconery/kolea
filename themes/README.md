@@ -12,6 +12,7 @@ previewed, switched on and configured like an upload, but never deleted.
 |---|---|---|
 | 📖 `folio/` (default) | A printed book. Warm paper, one vermilion ink, a table of contents instead of a feed, chapters set like a trade paperback. | Source Serif 4 · Schibsted Grotesk |
 | 📰 `signal/` | A magazine. Every topic owns a colour; stories flood in it; an asymmetric spread; big motion. | Bricolage Grotesque · Literata · Geist Mono |
+| 🌆 `nightdrive/` | After dark. Neon in blues and violets on black, an SVG sunset with wireframe mountains and a grid floor that drives toward you, cards in a tilted cascade. | Unbounded · Geist · Martian Mono |
 
 Both: cross-document view transitions, reveal-on-arrival (visible without JS, with a
 failsafe if the script never loads), a scroll-driven reading bar, and everything off
@@ -50,6 +51,7 @@ Kōlea's additions:
   `@site.author`, `@site.now`; each `@site.navigation` item carries a `hue`.
 - Every tag has a `hue` (an OKLCH hue, stable for life), and every post a `hue`
   from its primary topic. Signal sets `style="--hue: {{hue}}"` and derives its colours.
+  `hue_cool` is the same idea from blues and violets only; Nightdrive uses it.
 - Listing pages number their posts: `{{number}}`, newest = total. Folio prints it.
 - `{{kolea_head}}` prints the page's meta tags. Use it rather than `{{ghost_head}}`,
   which adds shims only Ghost themes need.

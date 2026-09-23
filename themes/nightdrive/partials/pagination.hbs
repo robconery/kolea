@@ -1,0 +1,7 @@
+{{#match pages ">" 1}}
+<nav class="pager" aria-label="Pages">
+    {{#if prev}}<a class="beam" href="{{page_url prev}}" rel="prev"><span class="beam-orb" aria-hidden="true">←</span><span>Newer</span></a>{{else}}<span></span>{{/if}}
+    <span class="mono">{{page}} / {{pages}}</span>
+    {{#if next}}<a class="beam" href="{{page_url next}}" rel="next"><span>Older</span><span class="beam-orb" aria-hidden="true">→</span></a>{{else}}<span></span>{{/if}}
+</nav>
+{{/match}}

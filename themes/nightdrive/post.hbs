@@ -1,0 +1,50 @@
+{{!< default}}
+{{#post}}
+<article class="log" style="--h: {{hue_cool}}">
+    <div class="progress" aria-hidden="true"></div>
+    <header class="log-head">
+        {{> horizon-strip}}
+        <p class="tag reveal" style="--d:0">
+            <span class="tag-dot"></span>
+            {{#primary_tag}}<a href="{{url}}">{{name}}</a>{{/primary_tag}}{{^primary_tag}}Transmission{{/primary_tag}}
+            <span class="tag-sep">·</span>{{reading_time minute="1 min" minutes="% min"}}
+        </p>
+        <h1 class="log-title" style="view-transition-name: title-{{id}}">{{title}}</h1>
+        <p class="log-meta mono reveal" style="--d:2">
+            <span>{{primary_author.name}}</span>
+            <time datetime="{{date format="YYYY-MM-DD"}}">{{date format="YYYY.MM.DD"}}</time>
+        </p>
+    </header>
+
+    {{#if feature_image}}
+    <figure class="screen reveal" style="--d:3">
+        <div class="shell">
+            <div class="core crt">
+                <img src="{{img_url feature_image size="xl"}}" alt="" style="view-transition-name: art-{{id}}">
+            </div>
+        </div>
+        {{#if feature_image_caption}}<figcaption class="mono">{{feature_image_caption}}</figcaption>{{/if}}
+    </figure>
+    {{/if}}
+
+    <div class="words">
+        {{content}}
+    </div>
+
+    <footer class="log-end">
+        {{> scope}}
+        <p class="mono">End of transmission</p>
+        <p class="log-links">
+            {{#foreach tags}}<a class="chip" href="{{url}}" style="--h: {{hue_cool}}">{{name}}</a>{{/foreach}}
+            <a class="chip chip--ghost" href="{{share_x_url}}" rel="noopener nofollow">Share on X ↗</a>
+        </p>
+    </footer>
+</article>
+
+<nav class="relay" aria-label="More">
+    {{#prev_post}}<a class="relay-link" href="{{url}}" style="--h: {{hue_cool}}"><span class="mono">← Earlier</span><span class="relay-title">{{title}}</span></a>{{/prev_post}}
+    {{#next_post}}<a class="relay-link relay-link--next" href="{{url}}" style="--h: {{hue_cool}}"><span class="mono">Later →</span><span class="relay-title">{{title}}</span></a>{{/next_post}}
+</nav>
+{{/post}}
+
+{{> tune-in}}

@@ -1,0 +1,54 @@
+{{!-- The sunset. A striped sun that sets in violet, two ranges of wireframe
+      mountains, stars, and a grid floor that runs toward you forever. The
+      floor's motion is a transform on a tall grid inside a tilted plane. --}}
+<div class="horizon" aria-hidden="true">
+    <svg class="horizon-sky" viewBox="0 0 1200 460" preserveAspectRatio="xMidYMax slice">
+        <defs>
+            <linearGradient id="sun" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#f06bff"/>
+                <stop offset="0.45" stop-color="#9a5cff"/>
+                <stop offset="1" stop-color="#3fd8ff"/>
+            </linearGradient>
+            <radialGradient id="halo" cx="0.5" cy="0.62" r="0.5">
+                <stop offset="0" stop-color="#b45cff" stop-opacity="0.55"/>
+                <stop offset="0.55" stop-color="#5b4cff" stop-opacity="0.16"/>
+                <stop offset="1" stop-color="#07061a" stop-opacity="0"/>
+            </radialGradient>
+            <mask id="slits">
+                <rect width="1200" height="460" fill="#fff"/>
+                <g class="slits">
+                    <rect x="0" y="300" width="1200" height="5" fill="#000"/>
+                    <rect x="0" y="322" width="1200" height="8" fill="#000"/>
+                    <rect x="0" y="346" width="1200" height="11" fill="#000"/>
+                    <rect x="0" y="372" width="1200" height="14" fill="#000"/>
+                    <rect x="0" y="399" width="1200" height="18" fill="#000"/>
+                    <rect x="0" y="428" width="1200" height="22" fill="#000"/>
+                </g>
+            </mask>
+            <filter id="bloom" x="-60%" y="-60%" width="220%" height="220%">
+                <feGaussianBlur stdDeviation="34"/>
+            </filter>
+            <linearGradient id="ridge" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#1a1250"/>
+                <stop offset="1" stop-color="#07061a"/>
+            </linearGradient>
+        </defs>
+
+        <rect width="1200" height="460" fill="url(#halo)"/>
+
+        <g class="stars">
+            <circle cx="120" cy="60" r="1.4"/><circle cx="260" cy="130" r="1"/><circle cx="340" cy="40" r="1.6"/>
+            <circle cx="470" cy="100" r="1"/><circle cx="560" cy="30" r="1.2"/><circle cx="700" cy="80" r="1.5"/>
+            <circle cx="820" cy="36" r="1"/><circle cx="930" cy="120" r="1.3"/><circle cx="1040" cy="56" r="1.1"/>
+            <circle cx="1130" cy="150" r="1.4"/><circle cx="60" cy="180" r="1"/><circle cx="1180" cy="20" r="1"/>
+        </g>
+
+        <circle class="sun-bloom" cx="600" cy="330" r="215" fill="url(#sun)" filter="url(#bloom)"/>
+        <circle class="sun" cx="600" cy="330" r="205" fill="url(#sun)" mask="url(#slits)"/>
+
+        <polyline class="range range--far" points="0,380 90,318 160,352 250,270 330,330 410,290 470,340 520,312 560,360 640,360 690,318 760,350 840,262 920,322 990,286 1070,340 1140,300 1200,330 1200,460 0,460"/>
+        <polyline class="range range--near" points="0,420 70,372 130,398 210,340 290,404 360,380 430,420 770,420 830,384 900,408 980,350 1050,396 1120,366 1200,402 1200,460 0,460"/>
+        <line class="horizon-line" x1="0" y1="458" x2="1200" y2="458"/>
+    </svg>
+    <div class="floor"><div class="floor-grid"></div></div>
+</div>

@@ -1,0 +1,14 @@
+{
+  "name": "nightdrive",
+  "description": "After dark. Neon on black, a sun that sets in violet, and a grid that runs to the horizon.",
+  "version": "1.0.0",
+  "license": "MIT",
+  "author": { "name": "Rob Conery" },
+  "config": {
+    "posts_per_page": 10,
+    "custom": {
+      "horizon": { "type": "boolean", "default": true, "description": "The sunset, mountains and moving grid on the front page." },
+      "glow": { "type": "select", "options": ["Neon", "Low"], "default": "Neon", "description": "How hard the lights burn." }
+    }
+  }
+}

@@ -1,0 +1,17 @@
+{{!< default}}
+<section class="band" style="--h: 206">
+    <p class="tag"><span class="tag-dot"></span>Scanning</p>
+    <h1 class="band-title">{{#if query}}{{query}}{{else}}Search the archive{{/if}}</h1>
+    <form class="dial" method="get" action="/search" role="search">
+        <label class="visually-hidden" for="q">Search</label>
+        <input id="q" type="search" name="q" value="{{query}}" placeholder="databases, testing, agents…" autocomplete="off">
+        <button class="beam beam--solid" type="submit"><span>Scan</span><span class="beam-orb" aria-hidden="true">→</span></button>
+    </form>
+    {{#if query}}<p class="mono band-count">{{plural pagination.total empty="No signal" singular="1 match" plural="% matches"}}</p>{{/if}}
+</section>
+{{#if posts}}
+<section class="cascade" aria-label="Results">
+    {{#foreach posts}}{{> transmission}}{{/foreach}}
+</section>
+{{pagination}}
+{{/if}}

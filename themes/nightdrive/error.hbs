@@ -1,0 +1,8 @@
+{{!< default}}
+<section class="band band--error" style="--h: 318">
+    {{> static}}
+    <p class="tag"><span class="tag-dot"></span>Error {{statusCode}}</p>
+    <h1 class="band-title" data-echo="{{#match statusCode 404}}Signal lost{{else}}Interference{{/match}}">{{#match statusCode 404}}Signal lost{{else}}Interference{{/match}}</h1>
+    <p class="band-dek">{{#match statusCode 404}}Nothing is broadcasting on this frequency. It may have moved, or it never aired.{{else}}Something scrambled this page. Try again in a moment.{{/match}}</p>
+    <p><a class="beam beam--solid" href="/"><span>Back to the front page</span><span class="beam-orb" aria-hidden="true">←</span></a></p>
+</section>

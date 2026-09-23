@@ -1,0 +1,37 @@
+{{!< default}}
+{{#is "home"}}
+<section class="hero">
+    <div class="hero-copy">
+        <p class="tag reveal" style="--d:0"><span class="tag-dot"></span>On air · {{pagination.total}} transmissions</p>
+        <h1 class="hero-title" data-echo="{{@site.title}}">{{@site.title}}</h1>
+        {{#if @site.description}}<p class="hero-dek reveal" style="--d:2">{{@site.description}}</p>{{/if}}
+        <p class="hero-actions reveal" style="--d:3">
+            <a class="beam beam--solid" href="#transmissions"><span>Start reading</span><span class="beam-orb" aria-hidden="true">↓</span></a>
+            {{#if @site.signup_action}}<a class="beam" href="/subscribe"><span>Tune in</span><span class="beam-orb" aria-hidden="true">↗</span></a>{{/if}}
+        </p>
+    </div>
+    {{#if @custom.horizon}}{{> horizon}}{{/if}}
+</section>
+{{/is}}
+
+{{#is "author"}}
+<section class="band">
+    <p class="tag reveal"><span class="tag-dot"></span>Every transmission from</p>
+    <h1 class="band-title">{{author.name}}</h1>
+</section>
+{{/is}}
+
+{{#is "paged"}}
+<section class="band band--quiet">
+    <p class="tag"><span class="tag-dot"></span>Deeper in the archive</p>
+    <h1 class="band-title">Page {{pagination.page}} <span class="dim">/ {{pagination.pages}}</span></h1>
+</section>
+{{/is}}
+
+<section class="cascade" id="transmissions" aria-label="Posts">
+    {{#foreach posts}}{{> transmission}}{{/foreach}}
+</section>
+
+{{pagination}}
+
+{{#is "home"}}{{> tune-in}}{{/is}}

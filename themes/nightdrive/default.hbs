@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="{{@site.locale}}" class="glow-{{@custom.glow}}">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <meta name="theme-color" content="#07061a">
+    <title>{{meta_title}}</title>
+    <link rel="icon" href="/favicon.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@300..700&family=Martian+Mono:wght@400;500&family=Unbounded:wght@300..800&display=swap">
+    <link rel="stylesheet" href="{{asset "nightdrive.css"}}">
+    <script>document.documentElement.classList.add('js');setTimeout(function(){if(!window.__arrived)document.documentElement.classList.add('arrived')},2500)</script>
+    {{kolea_head}}
+</head>
+<body class="{{body_class}}">
+    <a class="skip" href="#signal">Skip to content</a>
+    <div class="sky" aria-hidden="true"></div>
+
+    <header class="dock">
+        <a class="dock-mark" href="/" aria-label="{{@site.title}}, home">
+            {{> sun-glyph}}
+            <span>{{@site.title}}</span>
+        </a>
+        <details class="menu">
+            <summary class="menu-button" aria-label="Menu">
+                <span class="burger" aria-hidden="true"><i></i><i></i></span>
+                <span class="menu-word">Menu</span>
+            </summary>
+            <div class="menu-sheet">
+                <nav class="menu-links" aria-label="Site">
+                    {{#foreach @site.navigation limit="7"}}
+                    <a class="menu-link" href="{{url}}" style="--i: {{@index}}; --h: {{hue_cool}}">
+                        <span class="mono">{{#if @first}}00{{else}}0{{@index}}{{/if}}</span>{{label}}
+                    </a>
+                    {{/foreach}}
+                    <a class="menu-link" href="/search" style="--i: 7; --h: 206"><span class="mono">??</span>Search</a>
+                </nav>
+                {{#if @site.signup_action}}
+                <a class="beam beam--solid menu-cta" href="/subscribe" style="--i: 8"><span>Subscribe</span><span class="beam-orb" aria-hidden="true">↗</span></a>
+                {{/if}}
+            </div>
+        </details>
+    </header>
+
+    <main id="signal">
+        {{{body}}}
+    </main>
+
+    <footer class="outro">
+        {{> wave}}
+        <div class="outro-row">
+            <p class="mono">{{@site.title}} · written by {{@site.author}} · after hours</p>
+            <p class="outro-links mono">
+                <a href="/feed.xml">RSS</a>
+                <a href="/search">Search</a>
+                <a href="/subscribe">Subscribe</a>
+                <span>&copy; {{date @site.now format="YYYY"}}</span>
+            </p>
+        </div>
+    </footer>
+
+    <script src="{{asset "nightdrive.js"}}" defer></script>
+</body>
+</html>

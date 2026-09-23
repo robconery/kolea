@@ -22,6 +22,8 @@ export interface GhostTag {
   count: { posts: number }
   /** Kōlea: a stable OKLCH hue for this topic, so a theme can give every topic its own colour. */
   hue: number
+  /** Kōlea: the same, from blues and violets only. */
+  hue_cool: number
 }
 
 export interface GhostAuthor {
@@ -76,6 +78,8 @@ export interface GhostPost {
   broadcast_id: number
   /** Kōlea: the primary topic's hue, or one derived from the slug when untagged. */
   hue: number
+  /** Kōlea: the primary topic's cool hue. */
+  hue_cool: number
   /** Kōlea: the post's position in the whole archive, oldest = 1. Set on listings only. */
   number?: number
 }

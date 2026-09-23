@@ -1,0 +1,16 @@
+{{!< default}}
+{{#tag}}
+<section class="band" style="--h: {{hue_cool}}">
+    {{> wave}}
+    <p class="tag reveal" style="--d:0"><span class="tag-dot"></span>Frequency · {{plural ../pagination.total empty="silent" singular="1 transmission" plural="% transmissions"}}</p>
+    <h1 class="band-title" data-echo="{{name}}">{{name}}</h1>
+    {{#if description}}<p class="band-dek reveal" style="--d:2">{{description}}</p>{{/if}}
+</section>
+{{/tag}}
+
+<section class="cascade" aria-label="Posts">
+    {{#foreach posts}}{{> transmission}}{{/foreach}}
+</section>
+
+{{pagination}}
+{{> tune-in}}

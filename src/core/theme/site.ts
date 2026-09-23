@@ -90,6 +90,17 @@ export interface Rendered {
  */
 const HUES = [28, 52, 88, 148, 186, 236, 284, 334]
 
+/**
+ * The same idea confined to blues and violets, for themes that live at night
+ * and want no warm colour at all. Indexed the same way, so a topic's cool hue
+ * is as stable as its full one.
+ */
+const COOL_HUES = [258, 292, 206, 318, 236, 272, 222, 304]
+
+export function coolHueForTag(id: number): number {
+  return COOL_HUES[(id - 1) % COOL_HUES.length] as number
+}
+
 /** A topic's hue, by its id: the first eight topics never share a colour, and a topic keeps its colour for life. */
 export function hueForTag(id: number): number {
   return HUES[(id - 1) % HUES.length] as number
@@ -116,6 +127,7 @@ export function ghostTag(tag: PostTag, posts = 0): GhostTag {
     meta_description: null,
     count: { posts },
     hue: hueForTag(tag.id),
+    hue_cool: coolHueForTag(tag.id),
   }
 }
 
@@ -180,6 +192,7 @@ export function ghostPost(post: Post, tags: PostTag[], cfg: SiteConfig): GhostPo
     twitter_image: null,
     broadcast_id: post.id,
     hue: gTags[0]?.hue ?? hueFor(post.slug),
+    hue_cool: gTags[0]?.hue_cool ?? 258,
     share_x_url: shareOnXUrl(`${cfg.origin}${url}`, post.subject),
   } as unknown as GhostPost
 
@@ -244,6 +257,7 @@ function syntheticPage(title: string, html: string, url: string, cfg: SiteConfig
     twitter_image: null,
     broadcast_id: 0,
     hue: hueFor(slugify(title)),
+    hue_cool: 258,
   }
 }
 
@@ -373,8 +387,13 @@ async function render(req: SiteRequest, view: View): Promise<Rendered> {
         // Tags are the navigation. No menu editor to keep in sync: the topics
         // you actually write about, busiest first.
         navigation: [
-          { label: 'Home', url: '/', hue: 236 },
-          ...topTags.map((t) => ({ label: t.name, url: `/${t.slug}`, hue: hueForTag(t.id) })),
+          { label: 'Home', url: '/', hue: 236, hue_cool: 258 },
+          ...topTags.map((t) => ({
+            label: t.name,
+            url: `/${t.slug}`,
+            hue: hueForTag(t.id),
+            hue_cool: coolHueForTag(t.id),
+          })),
         ],
         secondary_navigation: [],
         members_enabled: Boolean(cfg.signupAction),
