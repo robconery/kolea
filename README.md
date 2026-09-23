@@ -68,6 +68,41 @@ not a sync job between two copies of your own writing.
 
 ## 🚀 Install
 
+### 🐦 The fast way: `/onboard`
+
+Clone it, open [Claude Code](https://claude.com/claude-code) in the folder, and type
+`/onboard`:
+
+```bash
+git clone https://github.com/robconery/kolea.git
+cd kolea
+claude          # then type: /onboard
+```
+
+It welcomes you in and asks one question at a time. Pick **look around locally** and
+you're in the admin with demo data in about two minutes. Pick **go live** and it does the
+whole production install on your own Cloudflare account, using nothing but a Cloudflare
+API token (it tells you where to get one and exactly which boxes to tick):
+
+| It asks you | It does |
+|---|---|
+| Your name, your from address, your login address | Fills in `wrangler.jsonc` from [`wrangler.template.jsonc`](wrangler.template.jsonc) |
+| Which domain, and what to call the admin host | Checks the hostnames are free, creates D1, both R2 buckets and both queues |
+| Whether you want the public site, and what it's called | Creates the Cloudflare Access login (one Allow app, eight Bypass paths) |
+| A Resend API key | Adds your domain to Resend and writes the SPF, DKIM and DMARC records into Cloudflare DNS for you, then points bounces and complaints at the webhook |
+| Stripe, Unsplash, AI help? (all optional) | Stores the keys as Worker secrets |
+| "Ready to push to production?" | Migrates, deploys, seeds your profile and signup form, mints your first admin key, and checks the login is in front of the right things |
+
+Nothing goes to production until you say yes to that last question, and **onboarding
+never sends a single email.** Your first send is a test to yourself, from the admin,
+when you're ready. Stop at any point and `/onboard` picks up where you left off. Your
+answers live in `.onboard/` (gitignored).
+
+The engine is [`scripts/onboard.ts`](scripts/onboard.ts), so you can drive it by hand
+too: `bun scripts/onboard.ts` lists the steps.
+
+### 🏝 The manual way
+
 Three commands, and it mails nobody.
 
 ```bash
@@ -92,11 +127,71 @@ series, a sent broadcast. Then open the **Outbox** to read the mail that "went o
 database to install, no Redis, no server — `wrangler dev` emulates D1, R2 and
 Queues locally.
 
-**Going live?** → **[`docs/INSTALL.md`](docs/INSTALL.md)** walks the full
+**Going live by hand?** → **[`docs/INSTALL.md`](docs/INSTALL.md)** walks the full
 deploy: D1, R2, queues, DNS and DMARC, the Cloudflare Access apps, secrets, and
 a pre-flight checklist to work through *before* you trust it with a list. It
 takes about an hour, most of it waiting for DNS, and there are two steps that
-are painful to undo.
+are painful to undo. `/onboard` does the same steps in the same order.
+
+---
+
+## 💸 How much is all of this going to cost?
+
+Running it locally costs nothing. Running it for real costs **about $25 a month** for most
+lists under 50,000 emails a month: $5 to Cloudflare and $20 to Resend. Both are flat
+fees. Kōlea doesn't charge you per subscriber the way a hosted ESP does, so a list
+that grows from 500 to 15,000 people costs about the same to run.
+
+### 🧾 The services, and which tier you need
+
+| Service | What Kōlea uses it for | Tier you need | Cost |
+|---|---|---|---|
+| **Cloudflare Workers** | The app itself, plus D1 (the database), Queues (sending) and Cron (schedules) | **Workers Paid** | **$5/month** |
+| **Cloudflare R2** | Uploaded images and lead-magnet files | Free tier: 10 GB, no bandwidth charges | Free for almost everyone. $0.015/GB-month past 10 GB |
+| **Cloudflare Zero Trust** | The login in front of your admin console | Free plan. You're one user | Free. Cloudflare asks for a card when you sign up |
+| **A domain on Cloudflare** | Your admin host, your site, your sending address | Any registrar. Cloudflare just has to run its DNS | What you already pay, roughly $10 to $15/year |
+| **Resend** | Putting mail on the wire | **Pro** once you send more than 100 emails a day | Free up to 100/day and 3,000/month. **$20/month** for 50,000, then $0.90 per 1,000 |
+| **Stripe** *(optional)* | Crediting sales to the mail that earned them | Your existing account | Nothing extra. Kōlea only reads |
+| **Unsplash** *(optional)* | Stock photos when you publish a post | Free demo tier (50 searches an hour) | Free |
+| **OpenRouter** *(optional)* | AI writing help | Pay as you go | Pennies per use. Capped at $10/month unless you change it |
+
+Resend's separate "Marketing" plans are priced per contact. You don't need them: Kōlea
+does the list management itself and only uses Resend to send.
+
+### ⚠️ Why not the free Cloudflare plan?
+
+Queues used to be paid-only, and they aren't anymore. But the free Workers plan has
+three other limits that stop Kōlea from sending, even for a small list:
+
+| Limit | Free | Paid | What breaks |
+|---|---|---|---|
+| Database queries per request | 50 | 1,000 | Kōlea writes send records 10 at a time, so a 500-person broadcast needs ~50 writes before anything else. Sequences process 200 people per tick. Both would stall. |
+| CPU time per request | 10 ms | 30 s | Building a batch of 100 personalised emails takes far more than 10 ms. |
+| Resend free tier | 100 emails/day | $20/mo for 50k | A 500-person broadcast is blocked by Resend before Cloudflare even matters. |
+
+The $5 includes more than a mailing list will use: 10 million requests, 1 million
+queue operations (about 330,000 emails, at roughly three operations each), 50 million
+database writes and 5 GB of database a month.
+
+### 📐 What that looks like for real lists
+
+| Your list | Mail a month (weekly newsletter, plus sequences) | Cloudflare | Resend | Total |
+|---|---|---|---|---|
+| 500 people | ~2,500 | $5 | $20 (the free tier's 100 a day can't fit one broadcast) | **~$25** |
+| 5,000 people | ~22,000 | $5 | $20 | **~$25** |
+| 15,000 people | ~65,000 | $5 | $20 + ~$14 overage | **~$39** |
+
+### 🪙 Getting it cheaper
+
+The biggest cost is Resend, and it's replaceable. Kōlea's mail provider is one adapter
+file (see [Make it yours](#-make-it-yours)). **Amazon SES** charges $0.10 per 1,000
+emails, so a 500-person list would cost about 5 cents a broadcast and the whole setup
+would run for about $5 a month. **There is no SES adapter yet.** It's the next thing
+worth building for small lists. A "small list" mode that fits the free Workers plan's
+limits would be a larger change to how sending works, and it isn't planned.
+
+<sub>Prices as published by each provider in September 2026. Check their pricing pages
+before you rely on a number here.</sub>
 
 ---
 
@@ -118,6 +213,116 @@ while later steps default to 1. Which means a seeded series won't finish while y
 watch it, so the dashboard has **Fast-forward the clock** (local only): it pulls every
 pending step to now and runs a tick. Use it and you'll watch step 2 skip the people
 who left that series.
+
+---
+
+## 🧭 A tour of the console
+
+Everything in the left rail, top to bottom, and what it's for. There's also a manual
+built into the app at **System → Help** (`/help`), with every URL and `curl` already
+filled in for wherever you're running it.
+
+### 🏠 Dashboard
+
+Where the list stands today: who's on it, who left what, what went out and what's in
+draft. The **Consent, by scope** panel is the one to look at. It separates people who
+left one series from people who left everything. Locally, it's also where **Seed demo
+data** and **Fast-forward the clock** live.
+
+### 👥 Audience
+
+| Screen | What it's for |
+|---|---|
+| **Subscribers** | Everyone you know about. Open anyone to see their tags, their sequences, every mail they got and what they did with it, and a link to their preference center exactly as they'd see it. CSV import is here too. |
+| **Tags & automation** | Tags are facts you store about people. *Automation* is tag rules: "clicked this link → tag them", and a tag can start a sequence. That chain (click, tag, enroll) is how someone who shows interest gets the follow-up without you doing anything. |
+| **Segments** | Saved questions about the list ("tagged `customer`, not tagged `cohort-2`, joined this year"). A broadcast goes to a segment. The count you see is the count the send will produce, from the same function. |
+
+### ✉️ Mail
+
+| Screen | What it's for |
+|---|---|
+| **Broadcasts** | One-off mail to a segment: the newsletter. Write it in the block editor, send yourself a test, schedule it or send it. A broadcast can also be published as a post on your public site. |
+| **Sequences** | Drip series: a list of steps with a delay in days between them, started by a form, a tag or a signup. People can leave one series without leaving anything else. A sequence is created paused; activating it is a deliberate click. |
+| **Templates** | Starting points for a sequence: staples like a welcome series, launches, funnels. With AI help switched on, "Make it yours" drafts the whole series for you to rewrite. |
+| **Outbox** | Every mail rendered while `EMAIL_PROVIDER=console`, exactly as it would have gone out: footer, merge tags, tracking links. Locally this is where all mail goes. In production it's your kill switch's landing pad. |
+
+### 📊 Analytics
+
+Read-only, all of it. No screen here can send or change anything. See
+[Measurement](#-measurement) below for the reasoning behind each one.
+
+| Screen | The question it answers |
+|---|---|
+| **Overview** | Is the list healthy, and is the writing good? Two separate dials, because they need opposite fixes. |
+| **Activity** | What happened, in order: signups, tags, enrollments, opt-outs, purchases. The only screen that shows events rather than totals. |
+| **Sequences** | Which series people finish, where they drop off, and what each one earned. |
+| **Broadcasts** | Every send scored against *your own* median, not an industry number. |
+| **Contribution** | Which mail actually moved a goal. |
+| **List health** | Growth, engagement, churn, delivery and money, each with a sentence on what to do. |
+
+### 💳 Money
+
+These fill in once Stripe is connected. Without it they're empty, and everything
+else works fine.
+
+| Screen | What it's for |
+|---|---|
+| **Campaigns** | A named push ("spring launch") that broadcasts, sequences and forms can belong to. A click on campaign mail counts as a *touch*, and a sale after a touch is credited to it. |
+| **Forms** | Signup endpoints. A form is a URL you post a plain HTML `<form>` to, from any site. It can tag people, start a sequence, and hand over a file (a lead magnet) by email. |
+| **Sales** | Every Stripe charge, and which mail gets the credit. Anything with no click in the window is `direct`, which is usually the honest answer. |
+| **Purchase mail** | What a buyer is sent after they buy, per product. Sending it is a button you press on a sale; the webhook never mails anyone by itself. |
+| **Goals** | Targets over a named period: "30 cohort signups in Q2". |
+| **Conversions** | The events counted against goals. One per sale, the first matching kind wins. |
+| **Store** (overview, offers, customers, segment ideas) | What sells and who buys it. *Segment ideas* proposes audiences from what people actually bought, sized with the same count a send would use. |
+
+### ⚙️ System
+
+| Screen | What it's for |
+|---|---|
+| **Profile** | Who the public site is about: name, photo, short bio, the /about page, social links. Themes read it; switching themes never loses it. |
+| **Themes** | How the public site looks. Three built-in (Folio, Signal, Nightdrive), or install a zip. Preview against your real posts, then switch. See [`docs/templates.md`](docs/templates.md) to make your own. |
+| **Consent** | Everyone who left a single series, set side by side with everyone who left entirely. |
+| **Settings** | Which provider is live, the `PUBLIC_URL` baked into mail, and how to call the transactional API. Check it after every deploy. |
+| **Help** | The in-app manual. |
+
+### 🌐 Pages your readers see
+
+None of these are behind your login. They can't be, or the mail you've already sent
+stops working.
+
+| Path | What it is |
+|---|---|
+| `/p/…` | The preference center. The unsubscribe link in every mail lands here, with the *narrow* choice first. |
+| `/f/<slug>` | Where your signup forms post. |
+| `/d/…` | Lead-magnet downloads. The link itself is the permission. |
+| `/t/…` | Open pixels and click redirects. |
+| `/media/…` | Images inside your mail. |
+| Your site host | The public blog, if you turned it on. |
+
+---
+
+## 📖 The words used here
+
+| Word | Means |
+|---|---|
+| **Broadcast** | One piece of mail to a segment, sent once. Also a post, if you publish it. |
+| **Sequence** / **step** | A drip series, and one mail in it. Delays are whole days. |
+| **Enrollment** | One person's progress through one sequence. |
+| **Segment** | A saved rule that picks people. Evaluated at send time. |
+| **Tag** / **tag rule** | A label on a person / an "when X happens, tag them" automation. |
+| **Form** | A public URL that turns a POST into a subscriber, with consent recorded. |
+| **Lead magnet** | A file a form hands over. Lives in its own bucket, leaves only by a per-person link. |
+| **Campaign** / **touch** | A named push / a click on its mail, which is what earns it credit for a sale. |
+| **Conversion** / **goal** | Something that happened (a sale, a signup) / a target you set for a period. |
+| **Opt-out** | Leaving *one* sequence. Everything else carries on. |
+| **Unsubscribed** | Leaving the newsletter (broadcasts). Series you joined carry on. Permanent: no import brings you back. |
+| **Suppression** | Off everything, forever. Written by "unsubscribe from everything", a hard bounce, or a spam complaint. |
+| **Transactional** | Receipts and downloads sent by your other apps through `/api/send`. Ignores marketing consent; blocked only by a suppression. |
+| **Provider** | What puts mail on the wire. `resend` for real, `console` for the Outbox. |
+| **Kill switch** | Setting `EMAIL_PROVIDER=console`. Mail renders into the Outbox instead of going out. |
+| **Preflight** | The one-time token an agent must fetch before it can send, which any edit invalidates. |
+| **Signal** | The 0 to 100 score for a send, the same scale for broadcasts and sequences. |
+| **Operator** | You. There's exactly one, and Cloudflare Access is what knows it's you. |
 
 ---
 
@@ -176,7 +381,10 @@ src/
   providers/      EmailProvider port + console and Resend adapters
   client/         the only browser JS in the project: the TipTap editor bundle
 migrations/       drizzle-kit generated, applied by wrangler
-scripts/          list importers, the archive publisher, and the browser smoke test
+scripts/          onboard.ts (what /onboard runs), list importers, the archive
+                  publisher, and the browser smoke test
+.claude/skills/   onboard/ — the /onboard interview, plus the conventions agents follow here
+wrangler.template.jsonc   the config /onboard fills in to make your wrangler.jsonc
 tests/            specs/ — the behavioral spec, executable (bun:test)
                   ui/    — browser tests against a real server (Playwright)
                   support/ — a D1 implementation over bun:sqlite, and factories
@@ -185,6 +393,70 @@ docs/             install guide, architecture, spec, stories, and a decision log
 
 Roughly 32k lines of TypeScript. `bun run typecheck` covers the Worker, the
 browser bundle, the scripts and the tests separately, and is clean.
+
+---
+
+## 🔍 Under the hood
+
+### What lives in your Cloudflare account
+
+| Thing | Name | Why it's there |
+|---|---|---|
+| **Worker** | `kolea` | The whole app: the admin, the public site, the API, MCP, the cron jobs and the queue consumer. One deploy. |
+| **D1** (SQLite) | `kolea` | Every subscriber, message, event, sale and audit row. Anything worth knowing later is a row here, because Worker logs vanish within a week. |
+| **R2** | `kolea-media` | Images you upload. Served at `/media/…` so they work inside mail. |
+| **R2** | `kolea-downloads` | Lead-magnet files. Nothing serves this bucket directly; files leave only through a per-person link. |
+| **Queue** | `kolea-send` | Fan-out for sending. One batch of 100 is one request to Resend. |
+| **Queue** | `kolea-dlq` | Where a message goes after three failed tries. It doesn't retry; it records the failure as a row. |
+| **Cron** | every minute | Sequence steps that are due, scheduled broadcasts, and big sends resuming where they left off. |
+| **Cron** | 09:17 UTC daily | Stripe reconciliation: books any sale the webhook missed. |
+| **Access** | 1 Allow + 8 Bypass apps | The login. Only you get into the admin; readers get into the paths they need. |
+| **Secrets** | `RESEND_API_KEY` and friends | Keys the Worker reads. Never in `wrangler.jsonc`, never in git. |
+
+Those are the names `/onboard` and the template give a new install. They're internal:
+nothing outside your account sees them, and every command addresses the database by
+its binding (`DB`) rather than its name. (The upstream author's own install still
+runs under its older `big-mailer` names, which is why you'll see them in the
+checked-in `wrangler.jsonc`.)
+
+### How a broadcast actually goes out
+
+```
+ You press Send
+     │
+     ▼
+ scheduled → sending          publish the post first, so "read online" works on arrival
+     │
+     ▼
+ materialize                  one `messages` row per recipient, written before anything
+     │                        is sent. Resumable across cron ticks for big lists
+     ▼
+ SEND_QUEUE                   batches of 100, at most 6 at once (Resend's rate limit)
+     │
+     ▼
+ consent re-check             right before the provider call, not at enqueue. Someone
+     │                        can opt out in the minutes between
+     ▼
+ Resend                       one request per batch
+     │
+     ▼
+ /webhooks/resend             delivered, bounced, complained → events, and a hard
+                              bounce or complaint writes a suppression
+ /t/open, /t/click            opens and clicks → events → tag rules → maybe a sequence
+```
+
+A sequence step takes the same road from the minutely cron instead of the Send button.
+Transactional mail from `/api/send` joins at the queue: one `messages` row, answered
+with `202` as soon as it's recorded, then checked against its own, narrower consent
+rule on the way out.
+
+### How a request finds its app
+
+One Worker answers two hostnames. `worker.tsx` looks at the host before any router
+runs: your site host goes to the public site app, everything else to the admin app.
+They never share a router, so an admin route can't leak onto the public site by being
+registered in the wrong place. The admin app then checks the Cloudflare Access token
+on every request, except the public paths listed in the tour above.
 
 ---
 
@@ -644,10 +916,41 @@ places where a spec deliberately records behaviour that diverges from SPEC.
 
 ---
 
+## ⚙️ Configuration reference
+
+Every setting Kōlea reads. **Vars** go in `wrangler.jsonc` (`/onboard` fills them in
+from [`wrangler.template.jsonc`](wrangler.template.jsonc)). **Secrets** go in
+Cloudflare with `bunx wrangler secret put NAME --env production`, and locally in
+`.dev.vars`.
+
+| Name | Kind | What it does | If unset |
+|---|---|---|---|
+| `EMAIL_PROVIDER` | var | `resend` sends for real. `console` renders into the Outbox | Required |
+| `FROM_EMAIL` / `FROM_NAME` | var | The From line on every mail | Required |
+| `PUBLIC_URL` | var | ⚠️ The admin host, baked into every link and image at send time | Required. Wrong = broken mail forever |
+| `PREVIEW_EMAIL` | var | The only address a test send may reach | Falls back to `FROM_EMAIL` |
+| `CF_ACCESS_TEAM_DOMAIN` / `CF_ACCESS_AUD` | var | Who the Access login is and which app it's for | The admin refuses everyone, you included |
+| `DEV_AUTH_BYPASS` | var | `true` skips the login. Local only | Login required (correct) |
+| `MCP_ALLOW_SEND` | var | `true` lets agents put mail on the wire | Agents can draft but not send |
+| `SITE_URL` | var | The public site's host | No public site |
+| `SITE_TITLE` / `SITE_TAGLINE` / `SITE_AUTHOR` | var | Site masthead, until the Profile screen says otherwise | Blank / `FROM_NAME` |
+| `SITE_FORM_SLUG` | var | The form the site's subscribe box posts to | No subscribe box |
+| `RESEND_API_KEY` | secret | Sending | `resend` can't send |
+| `RESEND_WEBHOOK_SECRET` | secret | Verifies bounce and complaint webhooks | ⚠️ Bounces never suppress |
+| `MCP_PATH_SECRET` | secret | The unguessable part of the MCP URL | MCP is off (404) |
+| `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` | secret | Revenue attribution | Money screens stay empty; `/webhooks/stripe` returns 503 |
+| `UNSPLASH_ACCESS_KEY` | secret | Stock photos when publishing | Picker hidden; uploads still work |
+| `OPENROUTER_KEY` | secret | AI writing help | Every AI button hidden |
+| `AI_MONTHLY_BUDGET_USD` / `AI_MODEL_*` | var | AI spend cap and model choice | $10, default models |
+
+---
+
 ## ▶️ Commands
 
 | | |
 |---|---|
+| `/onboard` | In Claude Code: the guided setup, local or production. Resumable |
+| `bun scripts/onboard.ts` | The steps `/onboard` runs, one by one (`status` shows where you are) |
 | `bun run dev` | Build the client bundle, then serve on :8787 |
 | `bun run watch:client` | Rebuild the editor bundle on change (alongside `dev`) |
 | `bun test` | The server-side suite — `docs/SPEC.md`, executable |
@@ -667,6 +970,7 @@ places where a spec deliberately records behaviour that diverges from SPEC.
 
 | | |
 |---|---|
+| **System → Help** in the app | 🧭 The in-app manual, with real URLs for wherever it's running |
 | [`docs/INSTALL.md`](docs/INSTALL.md) | 🛠 Local setup, full production deploy, integrations, troubleshooting |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 🏗 System design, invariants, code map. **Written for an LLM to read before changing anything** |
 | [`docs/SPEC.md`](docs/SPEC.md) | 📐 Numbered behavioral requirements. The reference for intended behavior |

@@ -54,3 +54,6 @@ to-do.md
 .publish-archive/
 .import-neon/
 .seed-production-store/
+
+# /onboard answers and secrets (secrets.env is 0600)
+.onboard/

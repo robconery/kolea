@@ -48,7 +48,7 @@
     "build:client": "bun build src/client/editor.ts --outdir public --target browser --minify --entry-naming editor.js && bun build src/client/charts.ts --outdir public --target browser --minify --entry-naming charts.js && cp src/client/editor.css public/editor.css",
     "watch:client": "bun build src/client/editor.ts --outdir public --target browser --entry-naming editor.js --watch",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "wrangler d1 migrations apply big-mailer --local",
+    "db:migrate": "wrangler d1 migrations apply DB --local",
     "db:studio": "drizzle-kit studio",
     "typecheck": "tsc --noEmit && tsc --noEmit -p src/client && tsc --noEmit -p scripts && tsc --noEmit -p tests",
     "test": "bun test tests/specs",

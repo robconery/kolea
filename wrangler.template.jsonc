@@ -1,0 +1,198 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// 🐦 Kōlea — the wrangler config TEMPLATE.
+//
+// `/onboard` (or `bun scripts/onboard.ts render`) fills this in from your answers
+// in `.onboard/state.json` and writes the result to `wrangler.jsonc`. Edit THIS
+// file when the shape of the config changes; edit `wrangler.jsonc` (or re-run
+// render) when your values change.
+//
+//   {{KEY}}                      replaced with the value of KEY
+//   {{#if KEY}} … {{/if}}        kept only when KEY is set (no nesting)
+//
+// Resources are named `kolea-*`. Nothing outside your Cloudflare account sees
+// the names, and the commands address the database by its binding (`DB`).
+// ─────────────────────────────────────────────────────────────────────────────
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "kolea",
+	"main": "src/worker.tsx",
+	"compatibility_date": "2025-10-01",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"assets": {
+		"directory": "./public",
+		"binding": "ASSETS",
+		// `public/robots.txt` disallows all crawling. Listing it here hands the path
+		// to the Worker first, so the public site can answer "allow" on its own host.
+		"run_worker_first": [
+			"/robots.txt"
+		]
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "kolea",
+			"database_id": "{{D1_DATABASE_ID}}",
+			"migrations_dir": "migrations"
+		}
+	],
+	// MEDIA holds uploaded images. DOWNLOADS holds lead magnets, and is a separate
+	// bucket so nothing that serves MEDIA by key can ever hand one out.
+	"r2_buckets": [
+		{
+			"binding": "MEDIA",
+			"bucket_name": "kolea-media"
+		},
+		{
+			"binding": "DOWNLOADS",
+			"bucket_name": "kolea-downloads"
+		}
+	],
+	"queues": {
+		"producers": [
+			{
+				"binding": "SEND_QUEUE",
+				"queue": "kolea-send"
+			}
+		],
+		"consumers": [
+			{
+				"queue": "kolea-send",
+				"max_batch_size": 100,
+				"max_batch_timeout": 5,
+				"max_retries": 3,
+				"dead_letter_queue": "kolea-dlq",
+				// One batch = one provider request, so this IS the request rate. Unset,
+				// Queues scales to 250 consumers and buries Resend's rate limit in 429s.
+				"max_concurrency": 6
+			},
+			{
+				// Nothing sends from here: it marks the message failed, as a row in D1.
+				"queue": "kolea-dlq",
+				"max_batch_size": 100,
+				"max_batch_timeout": 30,
+				"max_retries": 1
+			}
+		]
+	},
+	// Minutely: sequence ticks and scheduled broadcasts. Daily 09:17 UTC: the Stripe
+	// reconciliation. `worker.tsx` matches the second string as DAILY_CRON.
+	"triggers": {
+		"crons": [
+			"*/1 * * * *",
+			"17 9 * * *"
+		]
+	},
+	// ── Local development (`bun run dev`) ──────────────────────────────────────
+	"vars": {
+		// "console" writes mail to the in-app Outbox instead of sending. Keep it.
+		"EMAIL_PROVIDER": "console",
+		"FROM_EMAIL": "{{FROM_EMAIL}}",
+		"FROM_NAME": "{{FROM_NAME}}",
+		"PUBLIC_URL": "http://localhost:8787",
+		// `*.localhost` resolves to 127.0.0.1, so one `wrangler dev` serves the
+		// console on localhost:8787 and the site on site.localhost:8787.
+		"SITE_URL": "http://site.localhost:8787",
+		"SITE_TITLE": "{{SITE_TITLE}}",
+		"SITE_TAGLINE": "{{SITE_TAGLINE}}",
+		"SITE_AUTHOR": "{{FROM_NAME}}",
+		"SITE_FORM_SLUG": "newsletter",
+		// Local only: skips the Cloudflare Access check. Never set in production.
+		"DEV_AUTH_BYPASS": "true",
+		// Safe locally: the provider is "console", so an MCP send lands in the Outbox.
+		"MCP_ALLOW_SEND": "true"
+	},
+	// ── Production (`bun run deploy` always passes --env production) ───────────
+	"env": {
+		"production": {
+			// No workers.dev URL: Access can only guard a hostname on your own zone,
+			// so a workers.dev route would be an unauthenticated way around it.
+			"workers_dev": false,
+			"routes": [
+				{
+					"pattern": "{{ADMIN_HOST}}",
+					"custom_domain": true
+				}{{#if SITE_HOST}},
+				// The public site. ⚠️ Must NOT be covered by the Access app that
+				// guards {{ADMIN_HOST}}, or readers get a login page.
+				{
+					"pattern": "{{SITE_HOST}}",
+					"custom_domain": true
+				}{{/if}}
+			],
+			// ⚠️ Environments do NOT inherit bindings. Every one above is repeated here,
+			// or production deploys with env.DB === undefined.
+			"d1_databases": [
+				{
+					"binding": "DB",
+					"database_name": "kolea",
+					"database_id": "{{D1_DATABASE_ID}}",
+					"migrations_dir": "migrations"
+				}
+			],
+			"r2_buckets": [
+				{
+					"binding": "MEDIA",
+					"bucket_name": "kolea-media"
+				},
+				{
+					"binding": "DOWNLOADS",
+					"bucket_name": "kolea-downloads"
+				}
+			],
+			"queues": {
+				"producers": [
+					{
+						"binding": "SEND_QUEUE",
+						"queue": "kolea-send"
+					}
+				],
+				"consumers": [
+					{
+						"queue": "kolea-send",
+						"max_batch_size": 100,
+						"max_batch_timeout": 5,
+						"max_retries": 3,
+						"dead_letter_queue": "kolea-dlq",
+						"max_concurrency": 6
+					},
+					{
+						"queue": "kolea-dlq",
+						"max_batch_size": 100,
+						"max_batch_timeout": 30,
+						"max_retries": 1
+					}
+				]
+			},
+			"triggers": {
+				"crons": [
+					"*/1 * * * *",
+					"17 9 * * *"
+				]
+			},
+			"vars": {
+				// "resend" puts mail on the wire. "console" is the instant kill switch.
+				"EMAIL_PROVIDER": "{{EMAIL_PROVIDER}}",
+				"FROM_EMAIL": "{{FROM_EMAIL}}",
+				"FROM_NAME": "{{FROM_NAME}}",
+				// ⚠️ Baked into every tracking link and image URL at send time. A wrong
+				// value ships permanently broken mail. Must match the first route.
+				"PUBLIC_URL": "https://{{ADMIN_HOST}}",
+				{{#if SITE_HOST}}// Must match the second route exactly: canonical URL, feed, og:url.
+				"SITE_URL": "https://{{SITE_HOST}}",
+				"SITE_TITLE": "{{SITE_TITLE}}",
+				"SITE_TAGLINE": "{{SITE_TAGLINE}}",
+				"SITE_AUTHOR": "{{FROM_NAME}}",
+				// A `forms.slug`. Onboarding creates this form; renaming it hides the box.
+				"SITE_FORM_SLUG": "newsletter",
+				{{/if}}"DEV_AUTH_BYPASS": "false",
+				// Both required: `web/auth.ts` fails closed and refuses everyone without them.
+				"CF_ACCESS_TEAM_DOMAIN": "{{CF_ACCESS_TEAM_DOMAIN}}",
+				"CF_ACCESS_AUD": "{{CF_ACCESS_AUD}}",
+				// MCP can read and draft everything, but cannot send until this is "true".
+				"MCP_ALLOW_SEND": "false"
+			}
+		}
+	}
+}

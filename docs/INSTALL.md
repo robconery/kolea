@@ -6,6 +6,13 @@
 >
 > Read [Part 2](#-part-2--deploy-it-for-real) end to end before starting it.
 > There are two steps that are painful to undo.
+>
+> 🐦 **Or let Claude Code do it:** open it in the repo and type `/onboard`. It asks
+> one question at a time and runs these same steps through
+> [`scripts/onboard.ts`](../scripts/onboard.ts), using only a Cloudflare API
+> token. It fills `wrangler.jsonc` in from
+> [`wrangler.template.jsonc`](../wrangler.template.jsonc), and it deploys only
+> when you say so. This page is the reference for what it's doing.
 
 ---
 
@@ -112,21 +119,30 @@ Before anything else, know what you cannot take back:
 bunx wrangler login
 ```
 
-Throughout this guide the Cloudflare resources are named `big-mailer` — that is
-what the checked-in `wrangler.jsonc` uses, and the names are internal, so there
-is no need to change them. If you do rename them, change **every** occurrence,
-including the duplicates under `env.production`.
+Start your config from the template, not from the checked-in `wrangler.jsonc`
+(that one is the upstream author's own install):
+
+```bash
+cp wrangler.template.jsonc wrangler.jsonc
+```
+
+Then replace every `{{PLACEHOLDER}}` as you go, and delete the `{{#if SITE_HOST}}`
+blocks if you aren't running the public site (or keep what's inside them if you
+are). The resources are named `kolea-*`. The names are internal, and every command
+here addresses the database by its binding, `DB`, so nothing depends on them. If
+you do rename them, change **every** occurrence, including the duplicates under
+`env.production`.
 
 ### Step 2 — Create the D1 database
 
 ```bash
-bunx wrangler d1 create big-mailer
+bunx wrangler d1 create kolea
 ```
 
 It prints a `database_id`. Put it into `wrangler.jsonc` in **both** places:
 
 ```jsonc
-"d1_databases": [{ "binding": "DB", "database_name": "big-mailer",
+"d1_databases": [{ "binding": "DB", "database_name": "kolea",
                    "database_id": "PASTE-IT-HERE", "migrations_dir": "migrations" }],
 ```
 
@@ -137,24 +153,29 @@ It prints a `database_id`. Put it into `wrangler.jsonc` in **both** places:
 > or queue — `env.DB` is simply `undefined` at runtime, and the first request
 > 500s. The checked-in config already has both copies; keep them in sync.
 
-### Step 3 — Create the bucket and the queues
+### Step 3 — Create the buckets and the queues
 
 ```bash
-bunx wrangler r2 bucket create big-mailer-media
+bunx wrangler r2 bucket create kolea-media
+bunx wrangler r2 bucket create kolea-downloads
 
-bunx wrangler queues create big-mailer-send
-bunx wrangler queues create big-mailer-dlq
+bunx wrangler queues create kolea-send
+bunx wrangler queues create kolea-dlq
 ```
 
-R2 stores uploaded images; the `media` table is the catalogue that lets the
-library list them without paging the bucket. The dead-letter queue has **no send
+`kolea-media` stores uploaded images; the `media` table is the catalogue that
+lets the library list them without paging the bucket. `kolea-downloads` holds
+lead-magnet files, and is a separate bucket on purpose: `/media/:key` hands out
+anything in the media bucket to anyone with the key, and a lead magnet must only
+ever leave through its per-person `/d/:token` link. Deploying without this bucket
+fails, because the `DOWNLOADS` binding points at it. The dead-letter queue has **no send
 path** — its handler exists solely to mark a give-up as a row in D1, because a
 message that quietly stopped existing is the worst failure mode a mailer has.
 
 ### Step 4 — Apply the migrations to production
 
 ```bash
-bunx wrangler d1 migrations apply big-mailer --remote --env production
+bunx wrangler d1 migrations apply DB --remote --env production
 ```
 
 Never hand-write a migration. Edit `src/db/schema.ts`, then
@@ -454,7 +475,7 @@ the very first key, which is what you need to *reach* MCP, insert it directly:
 TOKEN=$(openssl rand -hex 18)
 HASH=$(printf '%s' "$TOKEN" | shasum -a 256 | cut -d' ' -f1)
 
-bunx wrangler d1 execute big-mailer --remote --env production --command \
+bunx wrangler d1 execute DB --remote --env production --command \
   "insert into api_keys (name, token_hash, scope, created_at)
    values ('MCP admin', '$HASH', 'admin', $(date +%s)000)"
 
@@ -531,7 +552,7 @@ them as reference implementations, not as a general-purpose tool.
 ```bash
 git pull
 bun install
-bunx wrangler d1 migrations apply big-mailer --remote --env production
+bunx wrangler d1 migrations apply DB --remote --env production
 bun run typecheck
 bun run deploy
 ```
@@ -540,7 +561,7 @@ Migrations are additive and applied in order. Check `git log migrations/` before
 a large jump, and take a D1 export first:
 
 ```bash
-bunx wrangler d1 export big-mailer --remote --env production --output backup.sql
+bunx wrangler d1 export kolea --remote --env production --output backup.sql
 ```
 
 ---
