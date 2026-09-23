@@ -1,0 +1,7 @@
+{{#match pages ">" 1}}
+<nav class="folios" aria-label="Pages">
+    {{#if prev}}<a class="folio-link" href="{{page_url prev}}" rel="prev">Earlier pages</a>{{else}}<span></span>{{/if}}
+    <span class="folio-no">{{page}} <em>of</em> {{pages}}</span>
+    {{#if next}}<a class="folio-link" href="{{page_url next}}" rel="next">Further back</a>{{else}}<span></span>{{/if}}
+</nav>
+{{/match}}

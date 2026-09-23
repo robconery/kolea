@@ -6,10 +6,14 @@ import { ADAPT_GHOST_THEME_PROMPT } from '../core/theme/adapt-prompt.ts'
 import { renderIndex, renderPost, siteConfig } from '../core/theme/site.ts'
 import {
   ThemeInstallError,
+  DEFAULT_THEME,
   activateTheme,
   builtinTheme,
   customSettings,
   deleteTheme,
+  ensureBuiltinRows,
+  isBuiltinRow,
+  themePackage,
   installThemeZip,
   listThemes,
   loadThemeById,
@@ -43,11 +47,13 @@ const back = (c: Ctx, msg: string, kind?: 'warn') =>
 
 themesAdmin.get('/themes', async (c) => {
   const db = getDb(c.env)
-  const all = await listThemes(db)
+  await ensureBuiltinRows(db)
+  const all = (await listThemes(db)).sort((a, b) => Number(isBuiltinRow(b)) - Number(isBuiltinRow(a)))
   const active = all.find((t) => t.isActive) ?? null
+  // Nothing active means the default built-in is what readers see.
+  const live = (t: (typeof all)[number]) => (active ? t.id === active.id : t.name === DEFAULT_THEME)
   const topics = await listAllPostTags(db)
   const counts = new Map((await listPublicTags(db, 500)).map((t) => [t.id, t.posts]))
-  const kolea = builtinTheme()
   const siteUrl = (c.env.SITE_URL ?? '').replace(/\/$/, '')
 
   return c.html(
@@ -56,7 +62,7 @@ themesAdmin.get('/themes', async (c) => {
         <div>
           <h1>Themes</h1>
           <div class="sub">
-            What the public site looks like. Ghost themes install as they are.
+            What the public site looks like. Folio and Signal ship with Kōlea; you can install your own.
             {siteUrl ? (
               <>
                 {' '}
@@ -84,29 +90,13 @@ themesAdmin.get('/themes', async (c) => {
               </tr>
             </thead>
             <tbody>
-              <tr>
-                <td>
-                  <strong>{kolea.name}</strong> <span class="faint">built in</span>{' '}
-                  {active ? null : <span class="pill ok">live</span>}
-                </td>
-                <td class="mono">{kolea.version}</td>
-                <td class="faint">ships with Kōlea</td>
-                <td style="text-align:right;white-space:nowrap">
-                  <a class="btn sm" href="/themes/builtin/preview" target="_blank">
-                    Preview
-                  </a>{' '}
-                  {active ? (
-                    <form method="post" action="/themes/builtin/activate" style="display:inline">
-                      <button class="btn sm primary">Use this</button>
-                    </form>
-                  ) : null}
-                </td>
-              </tr>
               {all.map((t) => (
                 <tr>
                   <td>
-                    <strong>{t.name}</strong> {t.isActive ? <span class="pill ok">live</span> : null}
-                    {customSettings(t.packageJson).length ? (
+                    <strong>{t.name}</strong> {isBuiltinRow(t) ? <span class="faint">built in</span> : null}{' '}
+                    {live(t) ? <span class="pill ok">live</span> : null}
+                    <div class="faint">{String(themePackage(t).description ?? '')}</div>
+                    {customSettings(themePackage(t)).length ? (
                       <div>
                         <a class="faint" href={`/themes/${t.id}`}>
                           Settings →
@@ -114,20 +104,22 @@ themesAdmin.get('/themes', async (c) => {
                       </div>
                     ) : null}
                   </td>
-                  <td class="mono">{t.version}</td>
-                  <td class="faint">{fmtDate(t.updatedAt)}</td>
+                  <td class="mono">{String(themePackage(t).version ?? t.version)}</td>
+                  <td class="faint">{isBuiltinRow(t) ? 'ships with Kōlea' : fmtDate(t.updatedAt)}</td>
                   <td style="text-align:right;white-space:nowrap">
                     <a class="btn sm" href={`/themes/${t.id}/preview`} target="_blank">
                       Preview
                     </a>{' '}
-                    {t.isActive ? null : (
+                    {live(t) ? null : (
                       <form method="post" action={`/themes/${t.id}/activate`} style="display:inline">
                         <button class="btn sm primary">Use this</button>
                       </form>
                     )}{' '}
-                    <form method="post" action={`/themes/${t.id}/delete`} style="display:inline">
-                      <button class="btn sm danger">Delete</button>
-                    </form>
+                    {isBuiltinRow(t) ? null : (
+                      <form method="post" action={`/themes/${t.id}/delete`} style="display:inline">
+                        <button class="btn sm danger">Delete</button>
+                      </form>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -143,9 +135,9 @@ themesAdmin.get('/themes', async (c) => {
         <div class="card-b">
           <form method="post" action="/themes/upload" enctype="multipart/form-data" class="stack">
             <p class="faint" style="margin:0 0 12px">
-              A zip with <code>package.json</code>, <code>index.hbs</code> and <code>post.hbs</code> at its root
-              — which is every Ghost theme, including GitHub's "Download ZIP". Uploading a theme with the same
-              name replaces it. Nothing goes live until you press <em>Use this</em>.
+              A zip with <code>package.json</code>, <code>index.hbs</code> and <code>post.hbs</code> at its root.
+              Templates are Handlebars; <code>themes/README.md</code> describes what they see. Uploading a theme
+              with the same name replaces it, and nothing goes live until you press <em>Use this</em>.
             </p>
             <input type="file" name="file" accept=".zip,application/zip" required />
             <div style="margin-top:12px">
@@ -201,20 +193,20 @@ themesAdmin.get('/themes', async (c) => {
         </div>
       </div>
 
-      <div class="card">
-        <div class="card-h">
-          <h2>Adapting a Ghost theme</h2>
-        </div>
+      <details class="card">
+        <summary class="card-h" style="cursor:pointer">
+          <h2>Bringing a theme from Ghost?</h2>
+        </summary>
         <div class="card-b">
           <p class="faint" style="margin:0 0 12px">
-            Most Ghost themes work as they are. When one leans on paid membership, Portal or a helper Kōlea doesn't
-            have, the install tells you which — then give this prompt, and the theme's files, to Claude.
+            The template language is compatible, so most install as they are. When one leans on paid membership or
+            a helper Kōlea doesn't have, the install names it; give this prompt and the theme's files to Claude.
           </p>
-          <textarea readonly rows={14} style="width:100%;font:12.5px/1.5 var(--mono)">
+          <textarea readonly rows={12} style="width:100%;font:12.5px/1.5 var(--mono)">
             {ADAPT_GHOST_THEME_PROMPT}
           </textarea>
         </div>
-      </div>
+      </details>
     </Layout>,
   )
 })
@@ -247,7 +239,7 @@ themesAdmin.post('/themes/upload', async (c) => {
 
 themesAdmin.post('/themes/builtin/activate', async (c) => {
   await activateTheme(getDb(c.env), null)
-  return back(c, 'The built-in theme is live.')
+  return back(c, `${DEFAULT_THEME} is live.`)
 })
 
 themesAdmin.post('/themes/:id/activate', async (c) => {
@@ -264,6 +256,7 @@ themesAdmin.post('/themes/:id/delete', async (c) => {
   const id = Number(c.req.param('id'))
   const row = await db.select().from(themes).where(eq(themes.id, id)).get()
   if (!row) return back(c, 'No such theme.', 'warn')
+  if (isBuiltinRow(row)) return back(c, `${row.name} ships with Kōlea and can't be deleted.`, 'warn')
   await deleteTheme(db, c.env.MEDIA, id)
   return back(c, row.isActive ? `Deleted ${row.name}. The built-in theme is live again.` : `Deleted ${row.name}.`)
 })
@@ -287,7 +280,7 @@ themesAdmin.get('/themes/:id', async (c) => {
   const row = await db.select().from(themes).where(eq(themes.id, id)).get()
   if (!row) return c.notFound()
   const theme = await loadThemeById(db, id)
-  const defs = customSettings(row.packageJson)
+  const defs = customSettings(themePackage(row))
 
   return c.html(
     <Layout title={`${row.name} · Themes`} nav="theme">
@@ -355,7 +348,7 @@ themesAdmin.post('/themes/:id/settings', async (c) => {
   if (!row) return c.notFound()
   const form = await c.req.formData()
   const input: Record<string, string | null> = {}
-  for (const d of customSettings(row.packageJson)) {
+  for (const d of customSettings(themePackage(row))) {
     const v = form.get(d.key)
     input[d.key] = typeof v === 'string' ? v : null
   }

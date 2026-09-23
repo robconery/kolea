@@ -1,0 +1,14 @@
+{
+  "name": "signal",
+  "description": "A magazine. Every topic has its own colour, every story gets art direction, and the page moves.",
+  "version": "1.0.0",
+  "license": "MIT",
+  "author": { "name": "Rob Conery" },
+  "config": {
+    "posts_per_page": 13,
+    "custom": {
+      "ticker": { "type": "boolean", "default": true, "description": "The moving band of topics under the masthead." },
+      "motion": { "type": "select", "options": ["Full", "Calm"], "default": "Full", "description": "Calm keeps the page transitions and drops the flourishes." }
+    }
+  }
+}

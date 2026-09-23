@@ -1,0 +1,22 @@
+{{!< default}}
+<header class="section-head">
+    <p class="eyebrow">The index</p>
+    <h1 class="section-title">{{#if query}}“{{query}}”{{else}}Find an essay{{/if}}</h1>
+    <form class="finder" method="get" action="/search" role="search">
+        <label class="visually-hidden" for="q">Search the essays</label>
+        <input id="q" type="search" name="q" value="{{query}}" placeholder="A word, a name, an idea" autocomplete="off">
+        <button type="submit">Look it up</button>
+    </form>
+    {{#if query}}
+    <p class="section-count">{{plural pagination.total empty="Nothing in the book matches that." singular="One essay mentions it." plural="% essays mention it."}}</p>
+    {{/if}}
+</header>
+
+{{#if posts}}
+<section class="contents" aria-label="Results">
+    <ol class="toc">
+        {{#foreach posts}}{{> entry}}{{/foreach}}
+    </ol>
+</section>
+{{pagination}}
+{{/if}}

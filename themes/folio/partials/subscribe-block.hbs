@@ -1,0 +1,14 @@
+{{#if @site.signup_action}}
+<section class="subscribe{{#if standalone}} subscribe--standalone{{/if}} reveal" aria-labelledby="subscribe-title">
+    <p class="eyebrow">By post</p>
+    <h2 class="subscribe-title" id="subscribe-title">New essays, delivered the day they're printed.</h2>
+    <p class="subscribe-note">One email per essay. Every one carries a single link that stops them, and it stops only what you asked.</p>
+    <form class="subscribe-form" method="post" action="{{@site.signup_action}}">
+        <label class="visually-hidden" for="subscribe-email">Email address</label>
+        <input id="subscribe-email" type="email" name="email" required placeholder="you@example.com" autocomplete="email">
+        <button type="submit"><span>Subscribe</span><span class="btn-mark" aria-hidden="true">→</span></button>
+    </form>
+</section>
+{{else}}{{#if standalone}}
+<section class="errata"><h1 class="section-title">The list is closed for now.</h1></section>
+{{/if}}{{/if}}

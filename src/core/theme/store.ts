@@ -2,7 +2,7 @@ import { and, eq } from 'drizzle-orm'
 import { unzipSync } from 'fflate'
 import type { Db } from '../../db/index.ts'
 import { type Theme, themeFiles, themes } from '../../db/schema.ts'
-import { KOLEA_THEME } from '../../themes/kolea.gen.ts'
+import { BUILTIN_THEMES } from '../../themes/builtin.gen.ts'
 import { helpers } from './helpers.ts'
 import { type Node, parse, type Template, TemplateSyntaxError } from './parser.ts'
 
@@ -15,11 +15,34 @@ import { type Node, parse, type Template, TemplateSyntaxError } from './parser.t
  * `assets/` — go in R2 under `themes/<id>/`, and the site streams them back from
  * `/assets/*`.
  *
- * The built-in `kolea` theme is compiled into the bundle (`src/themes/`, built by
- * `scripts/build-theme.ts`) and renders whenever no uploaded theme is active.
- * Deactivating everything is therefore always safe: there is no state in which
- * the site has no theme.
+ * The built-in themes (`folio`, `signal`) are compiled into the bundle
+ * (`src/themes/`, built by `scripts/build-theme.ts`). Each also gets a `themes`
+ * row — flagged `builtin` in its package data, with no `theme_files` — so it can
+ * be activated, previewed and configured through exactly the same paths as an
+ * upload. With no row active, `folio` renders: there is no state in which the
+ * site has no theme.
  */
+
+/** What renders when nothing is active. */
+export const DEFAULT_THEME = 'folio'
+
+export function isBuiltinName(name: string): boolean {
+  return Object.hasOwn(BUILTIN_THEMES, name)
+}
+
+function builtinPkg(name: string): Record<string, unknown> {
+  const files = BUILTIN_THEMES[name]?.files ?? {}
+  return JSON.parse(files['package.json'] ?? '{}') as Record<string, unknown>
+}
+
+/** A row's package data — the bundle's for a built-in, which is newer than the row's copy. */
+export function themePackage(row: Theme): Record<string, unknown> {
+  return row.packageJson.builtin === true && isBuiltinName(row.name) ? builtinPkg(row.name) : row.packageJson
+}
+
+export function isBuiltinRow(row: Theme): boolean {
+  return row.packageJson.builtin === true && isBuiltinName(row.name)
+}
 
 export interface SettingDef {
   key: string
@@ -31,9 +54,11 @@ export interface SettingDef {
 }
 
 export interface LoadedTheme {
-  /** Null for the built-in theme. */
+  /** Null when rendering a built-in theme with no row (a fresh install). */
   id: number | null
   name: string
+  /** Files compiled into the Worker, for built-in themes. Assets come from here, not R2. */
+  bundled: Record<string, string> | null
   version: string
   /** Changes whenever the theme does — asset URLs carry it so caches bust on re-upload. */
   stamp: string
@@ -72,56 +97,91 @@ export async function loadActiveTheme(db: Db): Promise<LoadedTheme> {
   return loadThemeById(db, row.id)
 }
 
-/** A specific uploaded theme, active or not — the admin preview uses this. */
+/** A specific theme by row, active or not — the admin preview uses this. */
 export async function loadThemeById(db: Db, id: number): Promise<LoadedTheme> {
   const row = await db.select().from(themes).where(eq(themes.id, id)).get()
   if (!row) return builtinTheme()
-  const key = `${row.id}:${row.updatedAt.getTime()}`
+  const builtin = row.packageJson.builtin === true && isBuiltinName(row.name)
+  const bundle = builtin ? BUILTIN_THEMES[row.name] : undefined
+  const key = `${row.id}:${row.updatedAt.getTime()}:${bundle?.hash ?? ''}`
   const hit = cache.get(key)
   if (hit) return hit
 
-  const files = await db
-    .select({ path: themeFiles.path, body: themeFiles.body })
-    .from(themeFiles)
-    .where(eq(themeFiles.themeId, id))
-    .all()
-  const map = Object.fromEntries(files.map((f) => [f.path, f.body]))
+  let files: Record<string, string>
+  if (bundle) {
+    files = bundle.files
+  } else {
+    const rows = await db
+      .select({ path: themeFiles.path, body: themeFiles.body })
+      .from(themeFiles)
+      .where(eq(themeFiles.themeId, id))
+      .all()
+    files = Object.fromEntries(rows.map((f) => [f.path, f.body]))
+  }
   return remember(
     key,
     makeTheme({
       id: row.id,
       name: row.name,
       version: row.version,
-      stamp: row.updatedAt.getTime().toString(36),
-      files: map,
-      pkg: row.packageJson,
+      // A built-in's stamp changes with a deploy as well as with its settings.
+      stamp: bundle ? `${bundle.hash}${row.updatedAt.getTime().toString(36)}` : row.updatedAt.getTime().toString(36),
+      files,
+      bundled: bundle ? bundle.files : null,
+      // The bundle's package.json is the truth for a built-in; the row's copy may predate a deploy.
+      pkg: bundle ? builtinPkg(row.name) : row.packageJson,
       settings: row.settings,
     }),
   )
 }
 
-export function builtinTheme(): LoadedTheme {
-  const key = `builtin:${KOLEA_THEME.hash}`
+/** A built-in theme with default settings — what renders before anything is chosen. */
+export function builtinTheme(name = DEFAULT_THEME): LoadedTheme {
+  const bundle = BUILTIN_THEMES[name] ?? BUILTIN_THEMES[DEFAULT_THEME]
+  if (!bundle) throw new Error('No built-in themes are compiled in. Run `bun run build:theme`.')
+  const key = `builtin:${name}:${bundle.hash}`
   const hit = cache.get(key)
   if (hit) return hit
-  const pkg = JSON.parse(KOLEA_THEME.files['package.json'] ?? '{}') as Record<string, unknown>
+  const pkg = builtinPkg(name)
   return remember(
     key,
     makeTheme({
       id: null,
-      name: KOLEA_THEME.name,
+      name,
       version: String(pkg.version ?? '1.0.0'),
-      stamp: KOLEA_THEME.hash,
-      files: KOLEA_THEME.files,
+      stamp: bundle.hash,
+      files: bundle.files,
+      bundled: bundle.files,
       pkg,
       settings: {},
     }),
   )
 }
 
+/**
+ * Make sure every built-in theme has a row, so it shows up on the Themes
+ * screen with settings like any other. Idempotent; never activates anything.
+ */
+export async function ensureBuiltinRows(db: Db): Promise<void> {
+  const existing = new Set((await db.select({ name: themes.name }).from(themes).all()).map((r) => r.name))
+  const now = new Date()
+  for (const name of Object.keys(BUILTIN_THEMES)) {
+    if (existing.has(name)) continue
+    const pkg = builtinPkg(name)
+    await db.insert(themes).values({
+      name,
+      version: String(pkg.version ?? '1.0.0'),
+      packageJson: { ...pkg, builtin: true },
+      createdAt: now,
+      updatedAt: now,
+    })
+  }
+}
+
 interface ThemeSource {
   id: number | null
   name: string
+  bundled: Record<string, string> | null
   version: string
   stamp: string
   files: Record<string, string>
@@ -163,6 +223,7 @@ function makeTheme(src: ThemeSource): LoadedTheme {
   return {
     id: src.id,
     name: src.name,
+    bundled: src.bundled,
     version: src.version,
     stamp: src.stamp,
     pkg: src.pkg,
@@ -248,11 +309,11 @@ export async function readThemeAsset(
     // new URL.
     'Cache-Control': 'public, max-age=31536000, immutable',
   }
-  if (theme.id === null) {
-    const body = KOLEA_THEME.files[clean]
+  if (theme.bundled) {
+    const body = theme.bundled[clean]
     return body === undefined ? null : new Response(body, { headers })
   }
-  if (!bucket) return null
+  if (!bucket || theme.id === null) return null
   const obj = await bucket.get(assetKey(theme.id, clean))
   if (!obj) return null
   return new Response(obj.body, { headers })
@@ -361,6 +422,9 @@ export async function installThemeZip(
   if (!/^[a-z0-9][a-z0-9._-]{0,63}$/i.test(name)) {
     throw new ThemeInstallError('package.json needs a "name" (letters, numbers, dashes).')
   }
+  if (isBuiltinName(name)) {
+    throw new ThemeInstallError(`"${name}" is the name of a built-in theme. Rename yours in package.json.`)
+  }
   for (const required of ['index.hbs', 'post.hbs']) {
     if (!text[required]) throw new ThemeInstallError(`A theme needs ${required} at its root.`)
   }
@@ -461,8 +525,11 @@ export async function activateTheme(db: Db, id: number | null): Promise<void> {
 }
 
 export async function deleteTheme(db: Db, bucket: R2Bucket | undefined, id: number): Promise<void> {
-  // Deleting the live theme drops the site back to the built-in one — the row
-  // is gone, so `loadActiveTheme` finds nothing active. Never a blank site.
+  const row = await db.select().from(themes).where(eq(themes.id, id)).get()
+  // Built-ins ship with the Worker; deleting their row would only lose settings.
+  if (!row || (row.packageJson.builtin === true && isBuiltinName(row.name))) return
+  // Deleting the live theme drops the site back to the default built-in — the
+  // row is gone, so `loadActiveTheme` finds nothing active. Never a blank site.
   await db.delete(themes).where(eq(themes.id, id))
   if (bucket) await clearAssets(bucket, id)
 }
@@ -475,7 +542,7 @@ export async function saveThemeSettings(db: Db, id: number, input: Record<string
   const row = await db.select().from(themes).where(eq(themes.id, id)).get()
   if (!row) return
   const values: Record<string, unknown> = {}
-  for (const def of customSettings(row.packageJson)) {
+  for (const def of customSettings(themePackage(row))) {
     const raw = input[def.key]
     switch (def.type) {
       case 'boolean':

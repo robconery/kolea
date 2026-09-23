@@ -2,12 +2,23 @@
 
 The public site renders through a theme: Handlebars templates, run by Kōlea's own
 parser and interpreter (`src/core/theme/`), because Workers forbid the `eval` that
-Handlebars' compiler needs. **Ghost themes install as they are.** Casper and Source
-both run unmodified.
+Handlebars' compiler needs.
 
-`kolea/` is the built-in theme. It ships inside the Worker (`bun run build:theme`
-compiles it to `src/themes/kolea.gen.ts`) and renders whenever no uploaded theme is
-live, so the site can never be without one.
+Two themes ship with Kōlea, compiled into the Worker by `bun run build:theme`
+(`src/themes/builtin.gen.ts`). Each gets a row on the Themes screen, so it can be
+previewed, switched on and configured like an upload, but never deleted.
+
+| Theme | The idea | Type |
+|---|---|---|
+| 📖 `folio/` (default) | A printed book. Warm paper, one vermilion ink, a table of contents instead of a feed, chapters set like a trade paperback. | Source Serif 4 · Schibsted Grotesk |
+| 📰 `signal/` | A magazine. Every topic owns a colour; stories flood in it; an asymmetric spread; big motion. | Bricolage Grotesque · Literata · Geist Mono |
+
+Both: cross-document view transitions, reveal-on-arrival (visible without JS, with a
+failsafe if the script never loads), a scroll-driven reading bar, and everything off
+under `prefers-reduced-motion`.
+
+The template language is Ghost-compatible, so a Ghost theme usually installs as is.
+The prompt for adapting one that doesn't is on the Themes screen.
 
 ## 🧭 URLs: fixed, no routes file
 
@@ -33,8 +44,15 @@ Ghost's names, so Ghost themes resolve: posts carry `title`, `url`, `html`,
 `@site`, `@custom` (from `package.json` → `config.custom`, editable on the Themes
 screen), `@config.posts_per_page`.
 
-Kōlea's additions on `@site`: `signup_action` (where a subscribe form posts),
-`search_url`, `author`, `now`.
+Kōlea's additions:
+
+- `@site.signup_action` (where a subscribe form posts), `@site.search_url`,
+  `@site.author`, `@site.now`; each `@site.navigation` item carries a `hue`.
+- Every tag has a `hue` (an OKLCH hue, stable for life), and every post a `hue`
+  from its primary topic. Signal sets `style="--hue: {{hue}}"` and derives its colours.
+- Listing pages number their posts: `{{number}}`, newest = total. Folio prints it.
+- `{{kolea_head}}` prints the page's meta tags. Use it rather than `{{ghost_head}}`,
+  which adds shims only Ghost themes need.
 
 The full helper list and what's deliberately missing (paid members, tiers,
 Portal, comments, static pages) is in the adaptation prompt:

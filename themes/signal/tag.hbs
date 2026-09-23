@@ -1,0 +1,17 @@
+{{!< default}}
+{{#tag}}
+<section class="topic-head" style="--hue: {{hue}}">
+    <p class="mono reveal" style="--d:0">Topic · {{plural ../pagination.total empty="nothing yet" singular="1 story" plural="% stories"}}</p>
+    <h1 class="topic-word">
+        {{#foreach (split name separator=" ")}}<span class="mast-w"><span style="--d:{{@index}}">{{this}}</span></span>{{/foreach}}
+    </h1>
+    {{#if description}}<p class="topic-dek reveal" style="--d:2">{{description}}</p>{{/if}}
+</section>
+{{/tag}}
+
+<section class="spread spread--topic" aria-label="Stories">
+    {{#foreach posts}}{{> story}}{{/foreach}}
+</section>
+
+{{pagination}}
+{{> subscribe-block}}

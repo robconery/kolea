@@ -20,6 +20,8 @@ export interface GhostTag {
   meta_title: string | null
   meta_description: string | null
   count: { posts: number }
+  /** Kōlea: a stable OKLCH hue for this topic, so a theme can give every topic its own colour. */
+  hue: number
 }
 
 export interface GhostAuthor {
@@ -72,6 +74,10 @@ export interface GhostPost {
   twitter_image: string | null
   /** Kōlea: the numeric id, for `{{#get}}` filters that say `id:-{{id}}`. */
   broadcast_id: number
+  /** Kōlea: the primary topic's hue, or one derived from the slug when untagged. */
+  hue: number
+  /** Kōlea: the post's position in the whole archive, oldest = 1. Set on listings only. */
+  number?: number
 }
 
 export interface Pagination {

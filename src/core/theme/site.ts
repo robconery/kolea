@@ -83,6 +83,25 @@ export interface Rendered {
 
 // ─────────────────────────────────────────────────────────── shapes
 
+/**
+ * Hues chosen by eye rather than spun round the wheel: an evenly spaced wheel
+ * lands on muddy olive and bruise-brown. Eight that each hold up as a flood of
+ * colour behind dark text.
+ */
+const HUES = [28, 52, 88, 148, 186, 236, 284, 334]
+
+/** A topic's hue, by its id: the first eight topics never share a colour, and a topic keeps its colour for life. */
+export function hueForTag(id: number): number {
+  return HUES[(id - 1) % HUES.length] as number
+}
+
+/** For things with no topic: FNV-1a over the slug, so it spreads across all eight. */
+export function hueFor(slug: string): number {
+  let h = 0x811c9dc5
+  for (let i = 0; i < slug.length; i++) h = Math.imul(h ^ slug.charCodeAt(i), 0x01000193)
+  return HUES[(h >>> 0) % HUES.length] as number
+}
+
 export function ghostTag(tag: PostTag, posts = 0): GhostTag {
   return {
     id: String(tag.id),
@@ -96,6 +115,7 @@ export function ghostTag(tag: PostTag, posts = 0): GhostTag {
     meta_title: null,
     meta_description: null,
     count: { posts },
+    hue: hueForTag(tag.id),
   }
 }
 
@@ -159,6 +179,7 @@ export function ghostPost(post: Post, tags: PostTag[], cfg: SiteConfig): GhostPo
     og_image: null,
     twitter_image: null,
     broadcast_id: post.id,
+    hue: gTags[0]?.hue ?? hueFor(post.slug),
     share_x_url: shareOnXUrl(`${cfg.origin}${url}`, post.subject),
   } as unknown as GhostPost
 
@@ -222,7 +243,16 @@ function syntheticPage(title: string, html: string, url: string, cfg: SiteConfig
     og_image: null,
     twitter_image: null,
     broadcast_id: 0,
+    hue: hueFor(slugify(title)),
   }
+}
+
+/** Number a listing page from the top of the archive down: newest = total. */
+function numbered(posts: GhostPost[], total: number, offset: number): GhostPost[] {
+  posts.forEach((p, i) => {
+    p.number = total - offset - i
+  })
+  return posts
 }
 
 function pagination(page: number, limit: number, total: number): Pagination {
@@ -342,7 +372,10 @@ async function render(req: SiteRequest, view: View): Promise<Rendered> {
         timezone: 'Etc/UTC',
         // Tags are the navigation. No menu editor to keep in sync: the topics
         // you actually write about, busiest first.
-        navigation: [{ label: 'Home', url: '/' }, ...topTags.map((t) => ({ label: t.name, url: `/${t.slug}` }))],
+        navigation: [
+          { label: 'Home', url: '/', hue: 236 },
+          ...topTags.map((t) => ({ label: t.name, url: `/${t.slug}`, hue: hueForTag(t.id) })),
+        ],
         secondary_navigation: [],
         members_enabled: Boolean(cfg.signupAction),
         allow_self_signup: Boolean(cfg.signupAction),
@@ -421,7 +454,10 @@ export async function renderIndex(req: SiteRequest, page: number): Promise<Rende
   return render(req, {
     templates: home ? ['home', 'index'] : ['index'],
     contexts: home ? ['home', 'index'] : ['index', 'paged'],
-    root: { posts: await ghostPosts(db, posts, cfg), pagination: pagination(page, limit, total) },
+    root: {
+      posts: numbered(await ghostPosts(db, posts, cfg), total, (page - 1) * limit),
+      pagination: pagination(page, limit, total),
+    },
     meta: {
       title: home ? cfg.title : `${cfg.title} (Page ${page})`,
       description: cfg.tagline || null,
@@ -446,7 +482,7 @@ export async function renderTag(req: SiteRequest, tag: PostTag, page: number): P
     contexts: page > 1 ? ['tag', 'paged'] : ['tag'],
     root: {
       tag: ghostTag(tag, total),
-      posts: await ghostPosts(db, posts, cfg),
+      posts: numbered(await ghostPosts(db, posts, cfg), total, (page - 1) * limit),
       pagination: pagination(page, limit, total),
     },
     meta: {

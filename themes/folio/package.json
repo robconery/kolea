@@ -1,0 +1,14 @@
+{
+  "name": "folio",
+  "description": "A printed book. Warm paper, one vermilion ink, a table of contents instead of a feed.",
+  "version": "1.0.0",
+  "license": "MIT",
+  "author": { "name": "Rob Conery" },
+  "config": {
+    "posts_per_page": 20,
+    "custom": {
+      "drop_caps": { "type": "boolean", "default": true, "description": "Open every essay with a set initial." },
+      "paper": { "type": "select", "options": ["Cream", "Bone", "Newsprint"], "default": "Cream", "description": "The stock the book is printed on." }
+    }
+  }
+}

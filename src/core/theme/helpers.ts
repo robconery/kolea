@@ -381,7 +381,11 @@ export const helpers: Record<string, Helper> = {
     return classes.join(' ')
   },
 
-  ghost_head: (c) => safe(ghostHead(svc(c), c.data)),
+  // Kōlea's own themes use `kolea_head`: the page's meta, nothing else. The
+  // Ghost name adds the shims Ghost themes lean on (accent colour, hidden
+  // sign-in buttons) and `ghost_foot` rewires their members forms.
+  kolea_head: (c) => safe(headTags(svc(c), c.data, false)),
+  ghost_head: (c) => safe(headTags(svc(c), c.data, true)),
   ghost_foot: (c) => safe(ghostFoot(svc(c))),
 
   meta_title: (c) => svc(c).meta.title,
@@ -487,7 +491,7 @@ async function adjacent(c: HelperCall, direction: 'prev' | 'next'): Promise<stri
 
 // ─────────────────────────────────────────────────────────── head & foot
 
-function ghostHead(s: ThemeServices, data: Record<string, unknown>): string {
+function headTags(s: ThemeServices, data: Record<string, unknown>, ghost: boolean): string {
   const m = s.meta
   const site = (data.site ?? {}) as { title?: string; accent_color?: string; icon?: string }
   const e = escapeHtml
@@ -509,12 +513,16 @@ function ghostHead(s: ThemeServices, data: Record<string, unknown>): string {
     m.image ? `<meta name="twitter:image" content="${e(m.image)}">` : '',
     '<meta name="generator" content="Kōlea">',
     `<link rel="alternate" type="application/rss+xml" title="${e(site.title ?? '')}" href="${e(s.origin)}/feed.xml">`,
-    // Ghost injects the accent colour as a custom property; themes read it.
-    `<style>:root{--ghost-accent-color:${e(site.accent_color ?? '#3b82f6')}}</style>`,
-    // There is no sign-in on a Kōlea site — a reader manages mail from the
-    // preference-centre link in any email. Themes still render the button.
-    '<style>[data-portal="signin"],[data-portal="account"],a[href="#/portal/signin"],a[href="#/portal/account"]{display:none!important}</style>',
   ]
+  if (ghost) {
+    lines.push(
+      // Ghost injects the accent colour as a custom property; its themes read it.
+      `<style>:root{--ghost-accent-color:${e(site.accent_color ?? '#3b82f6')}}</style>`,
+      // There is no sign-in on a Kōlea site — a reader manages mail from the
+      // preference-centre link in any email. Ghost themes still render the button.
+      '<style>[data-portal="signin"],[data-portal="account"],a[href="#/portal/signin"],a[href="#/portal/account"]{display:none!important}</style>',
+    )
+  }
   return lines.filter(Boolean).join('\n    ')
 }
 

@@ -1,0 +1,18 @@
+{{!< default}}
+<section class="topic-head topic-head--search" style="--hue: 186">
+    <p class="mono">Search</p>
+    <h1 class="topic-word">{{#if query}}{{query}}{{else}}Find it{{/if}}</h1>
+    <form class="field" method="get" action="/search" role="search">
+        <label class="visually-hidden" for="q">Search every story</label>
+        <input id="q" type="search" name="q" value="{{query}}" placeholder="Try “databases” or “testing”" autocomplete="off">
+        <button class="pill pill--ink" type="submit"><span>Search</span><span class="pill-orb" aria-hidden="true">→</span></button>
+    </form>
+    {{#if query}}<p class="mono topic-count">{{plural pagination.total empty="No stories match" singular="1 story" plural="% stories"}}</p>{{/if}}
+</section>
+
+{{#if posts}}
+<section class="spread spread--topic" aria-label="Results">
+    {{#foreach posts}}{{> story}}{{/foreach}}
+</section>
+{{pagination}}
+{{/if}}

@@ -1,0 +1,6 @@
+<div class="ticker" aria-label="Topics">
+    <div class="ticker-track">
+        {{#foreach @site.navigation from="2"}}<a class="ticker-item" href="{{url}}"><span class="ticker-dot" style="--hue: {{hue}}"></span>{{label}}</a>{{/foreach}}
+        {{#foreach @site.navigation from="2"}}<a class="ticker-item" href="{{url}}" tabindex="-1" aria-hidden="true"><span class="ticker-dot" style="--hue: {{hue}}"></span>{{label}}</a>{{/foreach}}
+    </div>
+</div>

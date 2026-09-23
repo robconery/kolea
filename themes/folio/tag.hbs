@@ -1,0 +1,18 @@
+{{!< default}}
+{{#tag}}
+<header class="section-head">
+    <p class="eyebrow reveal" style="--d:0">A topic in {{@site.title}}</p>
+    <h1 class="section-title reveal" style="--d:1">{{name}}</h1>
+    {{#if description}}<p class="section-sub reveal" style="--d:2">{{description}}</p>{{/if}}
+    <p class="section-count reveal" style="--d:3">{{plural ../pagination.total empty="No essays yet" singular="One essay" plural="% essays"}}</p>
+</header>
+{{/tag}}
+
+<section class="contents" aria-label="Essays">
+    <ol class="toc">
+        {{#foreach posts}}{{> entry}}{{/foreach}}
+    </ol>
+</section>
+
+{{pagination}}
+{{> subscribe-block}}

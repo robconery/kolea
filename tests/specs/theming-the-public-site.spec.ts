@@ -4,7 +4,7 @@
 // Not yet in docs/SPEC.md (that doc belongs to /design). This file is the
 // executable statement of the behaviour until it gets its clauses.
 import { beforeAll, describe, expect, it } from 'bun:test'
-import { count } from 'drizzle-orm'
+import { count, eq } from 'drizzle-orm'
 import { strToU8, zipSync } from 'fflate'
 import { setPostTags, tagSlug } from '../../src/core/post-tags.ts'
 import { publishPost } from '../../src/core/posts.ts'
@@ -82,8 +82,8 @@ describe('Feature: the public site renders through a theme', () => {
       expect(html).toContain('Hello World')
     })
 
-    it('renders with the built-in theme’s stylesheet', () => {
-      expect(html).toMatch(/href="\/assets\/screen\.css\?v=/)
+    it('renders with Folio, the default built-in theme', () => {
+      expect(html).toMatch(/href="\/assets\/folio\.css\?v=/)
     })
 
     it('carries a canonical link from ghost_head', () => {
@@ -100,7 +100,7 @@ describe('Feature: the public site renders through a theme', () => {
 
     beforeAll(async () => {
       const w = siteWorld()
-      res = await w.fetch(`${SITE}/assets/screen.css?v=x`)
+      res = await w.fetch(`${SITE}/assets/folio.css?v=x`)
     })
 
     it('answers with CSS', () => {
@@ -240,7 +240,74 @@ describe('Feature: a post’s primary topic is its URL', () => {
     })
 
     it('rendered by the theme', async () => {
-      expect(await res.text()).toContain('Not here')
+      expect(await res.text()).toContain("This page isn't in the book.")
+    })
+  })
+})
+
+describe('Feature: the built-in themes', () => {
+  describe('Scenario: the operator opens the Themes screen', () => {
+    let names: string[]
+
+    beforeAll(async () => {
+      const w = siteWorld()
+      await w.fetch('/themes')
+      names = (await w.db.select({ name: themes.name }).from(themes).all()).map((r) => r.name).sort()
+    })
+
+    it('lists Folio and Signal as themes of their own', () => {
+      expect(names).toEqual(['folio', 'signal'])
+    })
+  })
+
+  describe('Scenario: switching to Signal', () => {
+    let html: string
+
+    beforeAll(async () => {
+      const w = siteWorld()
+      await aPost(w, 'Loud Story', ['AI'])
+      await w.fetch('/themes')
+      const row = await w.db.select().from(themes).where(eq(themes.name, 'signal')).get()
+      await w.fetch(`/themes/${row?.id}/activate`, { method: 'POST' })
+      html = await (await w.fetch(`${SITE}/ai/loud-story`)).text()
+    })
+
+    it('renders the post with Signal', () => {
+      expect(html).toMatch(/href="\/assets\/signal\.css\?v=/)
+    })
+
+    it('floods it in its topic’s hue', () => {
+      expect(html).toContain('<article class="feature" style="--hue: 28">')
+    })
+  })
+
+  describe('Scenario: trying to delete a built-in theme', () => {
+    let remaining: number
+
+    beforeAll(async () => {
+      const w = siteWorld()
+      await w.fetch('/themes')
+      const row = await w.db.select().from(themes).where(eq(themes.name, 'folio')).get()
+      await w.fetch(`/themes/${row?.id}/delete`, { method: 'POST' })
+      remaining = (await w.db.select({ n: count() }).from(themes).get())?.n ?? 0
+    })
+
+    it('keeps it', () => {
+      expect(remaining).toBe(2)
+    })
+  })
+
+  describe('Scenario: uploading a theme that claims a built-in’s name', () => {
+    let error: unknown
+
+    beforeAll(async () => {
+      const w = siteWorld()
+      const zip = ghostThemeZip({ 'package.json': JSON.stringify({ name: 'folio', version: '9.9.9' }) })
+      error = await installThemeZip(w.db, w.env.MEDIA, zip).catch((e) => e)
+    })
+
+    it('is refused', () => {
+      expect(error).toBeInstanceOf(ThemeInstallError)
     })
   })
 })
@@ -257,7 +324,7 @@ describe('Feature: installing a Ghost theme', () => {
       await aPost(w, 'First Post', ['Databases'])
       const { slug } = await aPost(w, 'Second Post', ['Databases'])
       upload = await uploadTheme(w, ghostThemeZip())
-      const row = await w.db.select().from(themes).get()
+      const row = await w.db.select().from(themes).where(eq(themes.name, 'tiny')).get()
       await w.fetch(`/themes/${row?.id}/activate`, { method: 'POST' })
       html = await (await w.fetch(`${SITE}/`)).text()
       postHtml = await (await w.fetch(`${SITE}/databases/${slug}`)).text()
@@ -313,7 +380,7 @@ describe('Feature: installing a Ghost theme', () => {
       const w = siteWorld()
       await aPost(w, 'Anything')
       await uploadTheme(w, ghostThemeZip())
-      const row = await w.db.select().from(themes).get()
+      const row = await w.db.select().from(themes).where(eq(themes.name, 'tiny')).get()
       await w.fetch(`/themes/${row?.id}/activate`, { method: 'POST' })
       await w.post(`/themes/${row?.id}/settings`, { header_style: 'Left' })
       html = await (await w.fetch(`${SITE}/`)).text()
@@ -331,14 +398,14 @@ describe('Feature: installing a Ghost theme', () => {
       const w = siteWorld()
       await aPost(w, 'Still Here')
       await uploadTheme(w, ghostThemeZip())
-      const row = await w.db.select().from(themes).get()
+      const row = await w.db.select().from(themes).where(eq(themes.name, 'tiny')).get()
       await w.fetch(`/themes/${row?.id}/activate`, { method: 'POST' })
       await w.fetch(`/themes/${row?.id}/delete`, { method: 'POST' })
       html = await (await w.fetch(`${SITE}/`)).text()
     })
 
     it('⭐ falls back to the built-in theme rather than a blank site', () => {
-      expect(html).toContain('/assets/screen.css')
+      expect(html).toContain('/assets/folio.css')
     })
   })
 

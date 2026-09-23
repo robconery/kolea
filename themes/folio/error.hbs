@@ -1,0 +1,7 @@
+{{!< default}}
+<section class="errata">
+    <p class="eyebrow">Errata</p>
+    <h1 class="section-title">{{#match statusCode 404}}This page isn't in the book.{{else}}A page came loose.{{/match}}</h1>
+    <p class="section-sub">{{#match statusCode 404}}It may have moved, or it was never printed.{{else}}Something went wrong setting this page. Try again in a moment.{{/match}}</p>
+    <p><a class="textlink" href="/">Return to the contents</a></p>
+</section>

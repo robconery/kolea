@@ -1,0 +1,68 @@
+{{!< default}}
+{{#post}}
+<article class="feature" style="--hue: {{hue}}">
+    <div class="progress" aria-hidden="true"></div>
+    <header class="feature-head">
+        <div class="feature-flood" aria-hidden="true"></div>
+        <div class="feature-headline">
+            <p class="feature-kicker reveal" style="--d:0">
+                {{#primary_tag}}<a class="chip chip--ink" href="{{url}}">{{name}}</a>{{/primary_tag}}{{^primary_tag}}<span class="chip chip--ink">Essay</span>{{/primary_tag}}
+                <span class="mono">{{reading_time minute="1 min read" minutes="% min read"}}</span>
+            </p>
+            <h1 class="feature-title">
+                {{#foreach (split title separator=" ")}}<span class="mast-w"><span style="--d:{{@index}}">{{this}}</span></span> {{/foreach}}
+            </h1>
+            <p class="feature-by reveal" style="--d:4">
+                <span>By {{primary_author.name}}</span>
+                <time class="mono" datetime="{{date format="YYYY-MM-DD"}}">{{date format="MMM D, YYYY"}}</time>
+            </p>
+        </div>
+    </header>
+
+    {{#if feature_image}}
+    <figure class="feature-art">
+        <div class="bezel">
+            <div class="bezel-core">
+                <img src="{{img_url feature_image size="xl"}}" alt="" style="view-transition-name: art-{{id}}">
+            </div>
+        </div>
+        {{#if feature_image_caption}}<figcaption class="mono">{{feature_image_caption}}</figcaption>{{/if}}
+    </figure>
+    {{/if}}
+
+    <div class="feature-body">
+        <aside class="rail" aria-label="About this story">
+            <div class="rail-in">
+                <p class="mono">Filed</p>
+                <p>{{#foreach tags}}<a href="{{url}}">{{name}}</a>{{#unless @last}}, {{/unless}}{{else}}Unfiled{{/foreach}}</p>
+                <p class="mono">Published</p>
+                <p>{{date format="D MMMM YYYY"}}</p>
+                <p class="mono">Share</p>
+                <p><a href="{{share_x_url}}" rel="noopener nofollow">Post it on X</a></p>
+            </div>
+        </aside>
+        <div class="copy">
+            {{content}}
+            <p class="sign-off" aria-hidden="true"><span class="bar-glyph"></span></p>
+        </div>
+    </div>
+</article>
+
+{{#if primary_tag}}
+{{#get "posts" filter="primary_tag:{{primary_tag.slug}}+id:-{{id}}" limit="3" as |more|}}
+<section class="more" style="--hue: {{../primary_tag.hue}}">
+    <h2 class="more-title">More in {{../primary_tag.name}}</h2>
+    <div class="more-row">
+        {{#foreach more}}{{> story compact=true}}{{/foreach}}
+    </div>
+</section>
+{{/get}}
+{{/if}}
+
+<nav class="adjacent" aria-label="Next and previous stories">
+    {{#prev_post}}<a class="adjacent-link" href="{{url}}" style="--hue: {{hue}}"><span class="mono">Previous</span><span class="adjacent-title">{{title}}</span></a>{{/prev_post}}
+    {{#next_post}}<a class="adjacent-link adjacent-link--next" href="{{url}}" style="--hue: {{hue}}"><span class="mono">Next</span><span class="adjacent-title">{{title}}</span></a>{{/next_post}}
+</nav>
+{{/post}}
+
+{{> subscribe-block}}

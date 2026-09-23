@@ -1,0 +1,7 @@
+{{!< default}}
+<section class="topic-head topic-head--error" style="--hue: 28">
+    <p class="mono">Error {{statusCode}}</p>
+    <h1 class="topic-word">{{#match statusCode 404}}Nothing printed here.{{else}}Stop the presses.{{/match}}</h1>
+    <p class="topic-dek">{{#match statusCode 404}}The link is wrong, or the story was taken down.{{else}}Something broke setting this page. Give it a minute.{{/match}}</p>
+    <p><a class="pill pill--ink" href="/"><span>Front page</span><span class="pill-orb" aria-hidden="true">←</span></a></p>
+</section>

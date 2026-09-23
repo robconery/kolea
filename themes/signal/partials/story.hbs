@@ -1,0 +1,16 @@
+<article class="story{{#if feature_image}} story--art{{else}} story--flood{{/if}}{{#if compact}} story--compact{{/if}} reveal" style="--hue: {{hue}}; --d: {{@index}}">
+    <a class="story-link" href="{{url}}">
+        {{#if feature_image}}
+        <span class="story-art"><img src="{{img_url feature_image size="l"}}" alt="" loading="lazy" style="view-transition-name: art-{{id}}"></span>
+        {{/if}}
+        <span class="story-text">
+            <span class="story-meta">
+                {{#primary_tag}}<span class="chip">{{name}}</span>{{/primary_tag}}
+                <time class="mono" datetime="{{date format="YYYY-MM-DD"}}">{{date format="MMM D"}}</time>
+            </span>
+            <span class="story-title">{{title}}</span>
+            {{#if excerpt}}<span class="story-dek">{{excerpt words="28"}}</span>{{/if}}
+            <span class="story-go" aria-hidden="true">→</span>
+        </span>
+    </a>
+</article>

@@ -1,0 +1,18 @@
+{{#if @site.signup_action}}
+<section class="signup{{#if standalone}} signup--standalone{{/if}} reveal" aria-labelledby="signup-title">
+    <div class="bezel bezel--big">
+        <div class="bezel-core signup-core">
+            <p class="mono">The newsletter</p>
+            <h2 class="signup-title" id="signup-title">Get the next one first.</h2>
+            <p class="signup-note">Every story lands in your inbox the day it runs. One click stops it, and it only ever stops what you asked it to.</p>
+            <form class="field" method="post" action="{{@site.signup_action}}">
+                <label class="visually-hidden" for="signup-email">Email address</label>
+                <input id="signup-email" type="email" name="email" required placeholder="you@example.com" autocomplete="email">
+                <button class="pill pill--ink magnetic" type="submit"><span>Subscribe</span><span class="pill-orb" aria-hidden="true">↗</span></button>
+            </form>
+        </div>
+    </div>
+</section>
+{{else}}{{#if standalone}}
+<section class="topic-head"><h1 class="topic-word">Signups are closed.</h1></section>
+{{/if}}{{/if}}
