@@ -1265,6 +1265,9 @@ img { display: block; max-width: 100%; height: auto; }
   .lp-head--row { flex-direction: column; align-items: flex-start; }
 }
 
+/* No short bio, no About card: the intro takes the whole hero. */
+.lp-hero-grid:not(:has(.lp-me)) { grid-template-columns: minmax(0, 1fr); }
+
 /* ── Reading progress: a neon line across the top */
 
 .progress {

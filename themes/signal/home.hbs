@@ -13,7 +13,7 @@
             <span class="chip chip--live"><span class="chip-dot"></span>{{@site.title}}</span>
             {{#if post_count}}<span class="mono">{{plural post_count empty="" singular="1 story" plural="% stories"}}</span>{{/if}}
         </p>
-        <h1 class="lp-title">{{#foreach (split @site.description separator=" ")}}<span class="mast-w"><span style="--d:{{@index}}">{{this}}</span></span>{{/foreach}}</h1>
+        <h1 class="lp-title">{{#if @site.description}}{{#foreach (split @site.description separator=" ")}}<span class="mast-w"><span style="--d:{{@index}}">{{this}}</span></span>{{/foreach}}{{else}}{{#foreach (split @site.title separator=" ")}}<span class="mast-w"><span style="--d:{{@index}}">{{this}}</span></span>{{/foreach}}{{/if}}</h1>
         <p class="lp-lede reveal" style="--d:3">Lorem ipsum dolor sit amet, consectetur adipiscing elit. Integer posuere erat a ante venenatis dapibus, posuere velit aliquet. One email when there's a new story.</p>
         {{#if @site.signup_action}}
         <form class="field field--hero reveal" style="--d:4" method="post" action="{{@site.signup_action}}">
@@ -23,6 +23,8 @@
         </form>
         {{/if}}
     </div>
+
+    {{#if @author.short_bio}}
 
     <aside class="lp-me reveal" style="--d:2; --hue: 284" aria-labelledby="about-title">
         <p class="mono">Who's writing</p>
@@ -36,6 +38,7 @@
         </p>
         {{#if @author.url}}<a class="pill pill--ink lp-me-more" href="{{@author.url}}"><span>More about me</span><span class="pill-orb" aria-hidden="true">→</span></a>{{/if}}
     </aside>
+    {{/if}}
 </section>
 
 {{#if @custom.ticker}}{{> ticker}}{{/if}}

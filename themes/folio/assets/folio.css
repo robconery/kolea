@@ -917,6 +917,9 @@ img { display: block; max-width: 100%; height: auto; }
   .lp-link-host { grid-column: 1; grid-row: auto; }
 }
 
+/* No short bio, no About card: the intro takes the whole hero. */
+.lp-hero:not(:has(.lp-me)) { grid-template-columns: minmax(0, 1fr); }
+
 /* ── Reading progress: a vermilion thread across the top of an essay. */
 
 .progress {

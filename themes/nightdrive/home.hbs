@@ -10,8 +10,8 @@
 <section class="lp-hero">
     <div class="lp-hero-grid">
         <div class="lp-intro">
-            <p class="tag reveal" style="--d:0"><span class="tag-dot"></span>{{@site.title}} · {{#if post_count}}{{post_count}} essays{{else}}New{{/if}}</p>
-            <h1 class="lp-title reveal" style="--d:1">{{@site.description}}</h1>
+            <p class="tag reveal" style="--d:0"><span class="tag-dot"></span>{{@site.title}} · {{#if post_count}}{{plural post_count empty="" singular="1 essay" plural="% essays"}}{{else}}New{{/if}}</p>
+            <h1 class="lp-title reveal" style="--d:1">{{#if @site.description}}{{@site.description}}{{else}}{{@site.title}}{{/if}}</h1>
             <p class="lp-lede reveal" style="--d:2">Lorem ipsum dolor sit amet, consectetur adipiscing elit. Integer posuere erat a ante venenatis dapibus, posuere velit aliquet. One email when there's something worth reading.</p>
             {{#if @site.signup_action}}
             <form class="dial lp-dial reveal" style="--d:3" method="post" action="{{@site.signup_action}}">
@@ -22,6 +22,8 @@
             <p class="lp-fine mono reveal" style="--d:4">No spam · one click to leave</p>
             {{/if}}
         </div>
+
+        {{#if @author.short_bio}}
 
         <aside class="lp-me reveal" style="--d:2" aria-labelledby="about-title">
             <div class="shell">
@@ -41,6 +43,7 @@
                 </div>
             </div>
         </aside>
+    {{/if}}
     </div>
 </section>
 

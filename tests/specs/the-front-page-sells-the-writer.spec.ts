@@ -92,7 +92,11 @@ describe('Feature: the front page sells the writer', () => {
     })
 
     it('renames the site', () => {
-      expect(home).toContain('Rob Writes</h1>')
+      expect(home).toContain('<title>Rob Writes</title>')
+    })
+
+    it('leads with the tagline', () => {
+      expect(home).toContain('Candid notes.</h1>')
     })
 
     it('shows the short bio as paragraphs', () => {
