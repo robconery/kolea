@@ -506,6 +506,8 @@ function headTags(s: ThemeServices, data: Record<string, unknown>, ghost: boolea
     m.description ? `<meta property="og:description" content="${e(m.description)}">` : '',
     `<meta property="og:url" content="${e(m.canonical)}">`,
     m.image ? `<meta property="og:image" content="${e(m.image)}">` : '',
+    m.imageSize ? `<meta property="og:image:width" content="${m.imageSize.width}">` : '',
+    m.imageSize ? `<meta property="og:image:height" content="${m.imageSize.height}">` : '',
     m.publishedAt ? `<meta property="article:published_time" content="${e(m.publishedAt)}">` : '',
     `<meta name="twitter:card" content="${m.image ? 'summary_large_image' : 'summary'}">`,
     `<meta name="twitter:title" content="${e(m.title)}">`,

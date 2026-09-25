@@ -361,6 +361,24 @@ async function nqlToQuery(db: Db, filter: string): Promise<PostQuery | null> {
 
 const MAX_GETS_PER_RENDER = 10
 
+/**
+ * The share card for any page with no image of its own. Lives in `public/`, so
+ * static assets serve it on every hostname. Its size is known, so it is the one
+ * image that carries `og:image:width`/`height`.
+ */
+const DEFAULT_SOCIAL_IMAGE = { path: '/img/social.jpeg', width: 1200, height: 630 }
+
+/** Scrapers ignore a relative og:image, so anything root-relative gets the origin. */
+function absoluteUrl(url: string, origin: string): string {
+  return url.startsWith('/') && !url.startsWith('//') ? `${origin}${url}` : url
+}
+
+function withSocialImage(meta: PageMeta, origin: string): PageMeta {
+  if (meta.image) return { ...meta, image: absoluteUrl(meta.image, origin) }
+  const { path, width, height } = DEFAULT_SOCIAL_IMAGE
+  return { ...meta, image: `${origin}${path}`, imageSize: { width, height } }
+}
+
 // ─────────────────────────────────────────────────────────── rendering
 
 interface View {
@@ -393,7 +411,7 @@ async function render(req: SiteRequest, view: View): Promise<Rendered> {
     path: req.path,
     pageUrl: view.pageUrl ?? ((n) => (n <= 1 ? '/' : `/page/${n}`)),
     contexts: view.contexts,
-    meta: { canonical: `${cfg.origin}${req.path}`, ...view.meta },
+    meta: withSocialImage({ canonical: `${cfg.origin}${req.path}`, ...view.meta }, cfg.origin),
     assetUrl: (path) => `${req.assetBase ?? '/assets'}/${path.replace(/^\/+/, '')}?v=${theme.stamp}`,
     signupAction: cfg.signupAction,
     hasPartial: (n) => theme.hasPartial(n),

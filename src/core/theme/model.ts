@@ -99,6 +99,8 @@ export interface PageMeta {
   description: string | null
   canonical: string
   image: string | null
+  /** Pixel size of `image`, when known — only the site's default card. */
+  imageSize?: { width: number; height: number }
   type: 'website' | 'article'
   publishedAt: string | null
   noindex: boolean
