@@ -1,6 +1,6 @@
 import type { McpServer } from '@modelcontextprotocol/server'
 import * as z from 'zod/v4'
-import { fileStats } from '../../core/downloads.ts'
+import { downloadUrl, fileStats } from '../../core/downloads.ts'
 import {
   createForm,
   deleteForm,
@@ -65,6 +65,12 @@ export function registerForms(server: McpServer, ctx: Ctx): void {
                 bytes: form.downloadBytes,
                 linksIssued: stats.links,
                 downloads: stats.taken,
+                // The one URL that hands the file to anybody, for the operator
+                // to send out. Null until the form's page has minted it.
+                directLink: form.downloadShareToken
+                  ? downloadUrl(ctx.env.PUBLIC_URL, form.downloadShareToken)
+                  : null,
+                directDownloads: stats.shared,
               }
             : null,
         },

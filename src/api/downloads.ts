@@ -4,9 +4,12 @@ import {
   MAX_DOWNLOAD_BYTES,
   attachFile,
   countDownload,
+  countShareDownload,
   detachFile,
   downloadKey,
+  downloadUrl,
   resolveGrant,
+  resolveShare,
 } from '../core/downloads.ts'
 import { getForm } from '../core/forms.ts'
 import { getDb } from '../db/index.ts'
@@ -20,30 +23,37 @@ export const downloadRoutes = new Hono<{ Bindings: Env }>()
  *
  * Public, because the link arrives in email and the reader has no session. The
  * token *is* the authorization: it resolves to one grant row, issued to one
- * person, for one form. Nothing else about the request is trusted, and no route
+ * person, for one form — or to the form itself, when it is the direct link the
+ * operator hands out. Nothing else about the request is trusted, and no route
  * serves the DOWNLOADS bucket by key, so a guessed R2 key gets you nothing.
  */
 downloadRoutes.get('/d/:token', async (c) => {
   const db = getDb(c.env)
-  const row = await resolveGrant(db, c.req.param('token'))
-  if (!row?.form.downloadKey) return c.notFound()
+  const token = c.req.param('token')
+  const granted = await resolveGrant(db, token)
+  // Grants first: they are nearly every request, and the two token spaces are
+  // random strings of different lengths, so one can't shadow the other.
+  const form = granted?.form ?? (await resolveShare(db, token))
+  if (!form?.downloadKey) return c.notFound()
 
-  const object = await c.env.DOWNLOADS.get(row.form.downloadKey)
+  const object = await c.env.DOWNLOADS.get(form.downloadKey)
   // The row outlived the file — worth being explicit, because the person is
   // holding a link we sent them and "not found" reads like their fault.
   if (!object) return c.text('That file is no longer available.', 410)
 
   // Counted before the body streams: a row in D1 is the only durable record that
   // this download happened (invariant 7).
-  await countDownload(db, row.grant.id)
+  if (granted) await countDownload(db, granted.grant.id)
+  else await countShareDownload(db, form.id)
 
-  const filename = (row.form.downloadFilename ?? 'download').replace(/"/g, '')
+  const filename = (form.downloadFilename ?? 'download').replace(/"/g, '')
   return new Response(object.body, {
     headers: {
-      'Content-Type': row.form.downloadContentType ?? 'application/octet-stream',
-      ...(row.form.downloadBytes ? { 'Content-Length': String(row.form.downloadBytes) } : {}),
+      'Content-Type': form.downloadContentType ?? 'application/octet-stream',
+      ...(form.downloadBytes ? { 'Content-Length': String(form.downloadBytes) } : {}),
       'Content-Disposition': `attachment; filename="${filename}"`,
-      // Personal URL. Never let a shared cache anywhere hold a copy.
+      // Never let a shared cache anywhere hold a copy: most of these URLs are
+      // personal, and a cached one would go uncounted and outlive a reset.
       'Cache-Control': 'private, no-store',
     },
   })
@@ -98,7 +108,12 @@ downloadRoutes.put('/api/forms/:id/file', async (c) => {
   await attachFile(db, id, { key, filename, contentType, bytes: object.size })
   if (previous && previous !== key) await c.env.DOWNLOADS.delete(previous)
 
-  return c.json({ filename, bytes: object.size })
+  const saved = await getForm(db, id)
+  return c.json({
+    filename,
+    bytes: object.size,
+    url: saved?.downloadShareToken ? downloadUrl(c.env.PUBLIC_URL, saved.downloadShareToken) : null,
+  })
 })
 
 downloadRoutes.delete('/api/forms/:id/file', async (c) => {

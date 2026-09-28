@@ -32,7 +32,8 @@
 	// DOWNLOADS is a separate bucket, not a prefix in MEDIA, on purpose: `/media/:key`
 	// hands out anything in MEDIA to anyone holding the key, and lead magnets must
 	// never be one routing change away from that handler. They leave only through
-	// `/d/:token`, which resolves a grant row first.
+	// `/d/:token`, which resolves a row in D1 first: a person's grant, or the form's
+	// own share token.
 	"r2_buckets": [
 		{
 			"binding": "MEDIA",

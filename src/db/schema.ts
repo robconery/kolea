@@ -655,6 +655,17 @@ export const forms = sqliteTable(
     downloadContentType: text('download_content_type'),
     downloadBytes: integer('download_bytes'),
     downloadUploadedAt: ts('download_uploaded_at'),
+    /**
+     * The direct link: `/d/<this>` serves the file to whoever holds the URL, no
+     * signup and no grant. It exists so the operator can hand the file to
+     * somebody themselves. Minted with the first upload and kept across a
+     * replace, so a link already sent starts serving the new file. Null = no file.
+     */
+    downloadShareToken: text('download_share_token'),
+    // A shared link can't say *who*, so a count on the form is all there is to
+    // keep — and it is kept, because a download that isn't a row never happened.
+    downloadShareCount: integer('download_share_count').notNull().default(0),
+    downloadShareLastAt: ts('download_share_last_at'),
     /** No subject means no reply is sent. That check is the whole on/off switch. */
     deliverySubject: text('delivery_subject'),
     deliveryBodyJson: text('delivery_body_json', { mode: 'json' }).$type<DocNode | null>(),
@@ -666,7 +677,12 @@ export const forms = sqliteTable(
     lastSubmittedAt: ts('last_submitted_at'),
     createdAt: ts('created_at').notNull(),
   },
-  (t) => [uniqueIndex('forms_slug_key').on(t.slug)],
+  (t) => [
+    uniqueIndex('forms_slug_key').on(t.slug),
+    // `/d/:token` looks a form up by this. Null for every form without a file,
+    // which SQLite's unique index allows any number of.
+    uniqueIndex('forms_download_share_token_key').on(t.downloadShareToken),
+  ],
 )
 
 /**
@@ -703,7 +719,9 @@ export const formViews = sqliteTable(
  *
  * Per-person rather than one shared URL, because "who actually opened the
  * toolkit" is the most useful thing a lead magnet tells you, and a single link
- * cannot answer it. The pair is unique, so re-submitting the form hands back the
+ * cannot answer it. (The form's own `download_share_token` is the one shared
+ * URL, for the operator to hand out; it is never what a reply carries.) The
+ * pair is unique, so re-submitting the form hands back the
  * same link instead of minting a second one — the email can be re-sent and every
  * copy of it still works.
  */
