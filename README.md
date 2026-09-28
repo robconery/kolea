@@ -268,7 +268,7 @@ else works fine.
 | Screen | What it's for |
 |---|---|
 | **Campaigns** | A named push ("spring launch") that broadcasts, sequences and forms can belong to. A click on campaign mail counts as a *touch*, and a sale after a touch is credited to it. |
-| **Forms** | Signup endpoints. A form is a URL you post a plain HTML `<form>` to, from any site. It can tag people, start a sequence, and hand over a file (a lead magnet) by email. |
+| **Forms** | Signup endpoints. A form is a URL you post a plain HTML `<form>` to, from any site. It can tag people, start a sequence, and hand over a file (a lead magnet) by email. Every file also has a direct link you can send to anybody yourself. |
 | **Sales** | Every Stripe charge, and which mail gets the credit. Anything with no click in the window is `direct`, which is usually the honest answer. |
 | **Purchase mail** | What a buyer is sent after they buy, per product. Sending it is a button you press on a sale; the webhook never mails anyone by itself. |
 | **Goals** | Targets over a named period: "30 cohort signups in Q2". |
@@ -311,7 +311,7 @@ stops working.
 | **Segment** | A saved rule that picks people. Evaluated at send time. |
 | **Tag** / **tag rule** | A label on a person / an "when X happens, tag them" automation. |
 | **Form** | A public URL that turns a POST into a subscriber, with consent recorded. |
-| **Lead magnet** | A file a form hands over. Lives in its own bucket, leaves only by a per-person link. |
+| **Lead magnet** | A file a form hands over. Lives in its own bucket, and leaves by a per-person link in the reply or by the form's one direct link, which you hand out yourself and can reset. |
 | **Campaign** / **touch** | A named push / a click on its mail, which is what earns it credit for a sale. |
 | **Conversion** / **goal** | Something that happened (a sale, a signup) / a target you set for a period. |
 | **Opt-out** | Leaving *one* sequence. Everything else carries on. |
@@ -405,7 +405,7 @@ browser bundle, the scripts and the tests separately, and is clean.
 | **Worker** | `kolea` | The whole app: the admin, the public site, the API, MCP, the cron jobs and the queue consumer. One deploy. |
 | **D1** (SQLite) | `kolea` | Every subscriber, message, event, sale and audit row. Anything worth knowing later is a row here, because Worker logs vanish within a week. |
 | **R2** | `kolea-media` | Images you upload. Served at `/media/…` so they work inside mail. |
-| **R2** | `kolea-downloads` | Lead-magnet files. Nothing serves this bucket directly; files leave only through a per-person link. |
+| **R2** | `kolea-downloads` | Lead-magnet files. Nothing serves this bucket directly; files leave only through `/d/<token>`: a per-person link, or the form's direct link. |
 | **Queue** | `kolea-send` | Fan-out for sending. One batch of 100 is one request to Resend. |
 | **Queue** | `kolea-dlq` | Where a message goes after three failed tries. It doesn't retry; it records the failure as a row. |
 | **Cron** | every minute | Sequence steps that are due, scheduled broadcasts, and big sends resuming where they left off. |

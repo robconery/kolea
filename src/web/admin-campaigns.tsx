@@ -11,7 +11,14 @@ import {
   setCampaignStatus,
   updateCampaign,
 } from '../core/campaigns.ts'
-import { MAX_DOWNLOAD_BYTES, detachFile, fileStats } from '../core/downloads.ts'
+import {
+  MAX_DOWNLOAD_BYTES,
+  detachFile,
+  downloadUrl,
+  fileStats,
+  resetShareToken,
+  shareToken,
+} from '../core/downloads.ts'
 import {
   createForm,
   deleteForm,
@@ -397,6 +404,13 @@ campaignsAdmin.get('/forms', async (c) => {
   const db = getDb(c.env)
   const [rows, viewStats] = await Promise.all([listForms(db), formViewStats(db, 30)])
   const viewsById = new Map(viewStats.map((v) => [v.id, v]))
+  // Only forms holding a file have one, and only a file older than share links
+  // costs a query here — once.
+  const shareUrls = new Map<number, string>()
+  for (const { form } of rows) {
+    const token = await shareToken(db, form)
+    if (token) shareUrls.set(form.id, downloadUrl(c.env.PUBLIC_URL, token))
+  }
 
   return c.html(
     <Layout title="Forms" nav="forms">
@@ -468,6 +482,18 @@ campaignsAdmin.get('/forms', async (c) => {
                       ) : (
                         <span class="faint">-</span>
                       )}
+                      {shareUrls.has(form.id) ? (
+                        <div style="margin-top:6px">
+                          <button
+                            type="button"
+                            class="btn sm"
+                            data-copy={shareUrls.get(form.id)}
+                            title={shareUrls.get(form.id)}
+                          >
+                            Copy direct link
+                          </button>
+                        </div>
+                      ) : null}
                     </td>
                     <td>{campaignName ?? <span class="faint">-</span>}</td>
                     <td class="num">
@@ -490,9 +516,31 @@ campaignsAdmin.get('/forms', async (c) => {
         </div>
       </div>
 
+      <script dangerouslySetInnerHTML={{ __html: copyJs }} />
     </Layout>,
   )
 })
+
+/**
+ * Copy a file's direct link. A button rather than an anchor, because following
+ * the link downloads the file and counts it — the operator checking their own
+ * URL would show up as a reader.
+ */
+const copyJs = `
+document.addEventListener('click', async (e) => {
+  const button = e.target.closest && e.target.closest('[data-copy]')
+  if (!button) return
+  const label = button.textContent
+  try {
+    await navigator.clipboard.writeText(button.dataset.copy)
+    button.textContent = 'Copied'
+  } catch {
+    // No clipboard without a secure context. The URL is on the page; say so.
+    button.textContent = 'Copy it by hand'
+  }
+  setTimeout(() => { button.textContent = label }, 1600)
+})
+`
 
 /**
  * The file upload, in about thirty lines of browser JavaScript.
@@ -802,9 +850,10 @@ campaignsAdmin.get('/forms/new', async (c) => {
             </div>
             <p class="faint" id="dl-status">
               Zip, PDF, epub, tar or gzip, up to {MAX_DOWNLOAD_BYTES / 1024 / 1024}MB. It is never
-              public: it leaves only through <span class="mono">/d/&lt;token&gt;</span>, one link
-              issued to one person, and <span class="mono">{'{{link}}'}</span> in the reply is how
-              they get it.
+              listed anywhere: it leaves only through <span class="mono">/d/&lt;token&gt;</span>.
+              Everyone who signs up gets a link of their own, and{' '}
+              <span class="mono">{'{{link}}'}</span> in the reply is how they get it. You get a
+              direct link too, on the form's page, to send to anybody yourself.
             </p>
             <noscript>
               <p class="faint">
@@ -878,6 +927,8 @@ campaignsAdmin.get('/forms/:id', async (c) => {
 
   const endpoint = `${c.env.PUBLIC_URL}/f/${form.slug}`
   const seq = seqs.find((s) => s.id === form.sequenceId)
+  const shareKey = await shareToken(db, form)
+  const shareUrl = shareKey ? downloadUrl(c.env.PUBLIC_URL, shareKey) : null
 
   const html = `<form action="${endpoint}" method="post">
   <input type="email" name="email" placeholder="you@example.com" required>
@@ -938,8 +989,8 @@ await fetch('${endpoint}', {
 
       {hasFile && !hasSubject ? (
         <div class="flash warn">
-          {form.downloadFilename} is attached, but there's no reply — the link only ever travels by
-          email, so nobody who submits this form can reach the file. Write the reply below.
+          {form.downloadFilename} is attached, but there's no reply — a subscriber's link only ever
+          travels by email, so nobody who submits this form is sent the file. Write the reply below.
         </div>
       ) : null}
 
@@ -990,8 +1041,11 @@ await fetch('${endpoint}', {
             </div>
             {hasFile ? (
               <div class="stat">
-                <div class="n">{stats.taken}</div>
+                <div class="n">{stats.taken + stats.shared}</div>
                 <div class="l">Downloads</div>
+                <div class="h">
+                  {stats.taken} by subscribers, {stats.shared} by direct link
+                </div>
               </div>
             ) : null}
           </div>
@@ -1054,17 +1108,48 @@ await fetch('${endpoint}', {
             </div>
           )}
 
+          {shareUrl ? (
+            <div class="field" id="direct-link">
+              <label>Direct link</label>
+              <div style="display:flex;gap:8px;align-items:center">
+                <input
+                  type="text"
+                  class="mono"
+                  readonly
+                  value={shareUrl}
+                  onclick="this.select()"
+                  style="flex:1"
+                />
+                <button type="button" class="btn sm" data-copy={shareUrl}>
+                  Copy
+                </button>
+              </div>
+              <p class="faint" style="margin:6px 0 0">
+                Send this to anybody: it downloads {form.downloadFilename} straight away, no signup.
+                Anyone holding it can pass it on, and it can't say who used it, so it's counted
+                separately: {stats.shared} download{stats.shared === 1 ? '' : 's'} so far
+                {form.downloadShareLastAt ? `, last ${fmtDate(form.downloadShareLastAt)}` : ''}.
+                Replacing the file keeps it working.
+              </p>
+            </div>
+          ) : null}
+
           <p class="faint" id="dl-status">
             Zip, PDF, epub, tar or gzip, up to {MAX_DOWNLOAD_BYTES / 1024 / 1024}MB. Nothing here is
-            public: the file leaves only through <span class="mono">/d/&lt;token&gt;</span>, one link
-            issued to one person, and <span class="mono">{'{{link}}'}</span> in the reply below is how
-            they get it.
+            listed anywhere: the file leaves only through{' '}
+            <span class="mono">/d/&lt;token&gt;</span>. Everyone who signs up gets a link of their
+            own, and <span class="mono">{'{{link}}'}</span> in the reply below is how they get it.
           </p>
 
           {hasFile ? (
-            <form method="post" action={`/forms/${id}/file/delete`} style="margin-top:14px">
-              <button class="btn danger sm">Remove the file</button>
-            </form>
+            <div class="actions" style="margin-top:14px">
+              <form method="post" action={`/forms/${id}/file/link/reset`}>
+                <button class="btn sm">Reset the direct link</button>
+              </form>
+              <form method="post" action={`/forms/${id}/file/delete`}>
+                <button class="btn danger sm">Remove the file</button>
+              </form>
+            </div>
           ) : null}
         </div>
       </div>
@@ -1150,6 +1235,7 @@ await fetch('${endpoint}', {
       </div>
 
       <script dangerouslySetInnerHTML={{ __html: uploadJs(id) }} />
+      <script dangerouslySetInnerHTML={{ __html: copyJs }} />
     </Layout>,
   )
 })
@@ -1226,6 +1312,24 @@ campaignsAdmin.post('/forms/:id/file/delete', async (c) => {
   await detachFile(db, id)
   if (form.downloadKey) await c.env.DOWNLOADS.delete(form.downloadKey)
   return c.redirect(`/forms/${id}?flash=File removed. Every link sent for it is now dead.&kind=warn`)
+})
+
+/**
+ * Swap the direct link for a new one — how a link that travelled too far is
+ * taken back without removing the file, which would kill every subscriber's
+ * link with it.
+ */
+campaignsAdmin.post('/forms/:id/file/link/reset', async (c) => {
+  const db = getDb(c.env)
+  const id = Number(c.req.param('id'))
+  const form = await getForm(db, id)
+  if (!form) return c.notFound()
+  if (!form.downloadKey) return c.redirect(`/forms/${id}?flash=There's no file to link to.&kind=warn`)
+
+  await resetShareToken(db, id)
+  return c.redirect(
+    `/forms/${id}?flash=${encodeURIComponent('New direct link below. The old one is dead; links already mailed to subscribers still work.')}`,
+  )
 })
 
 campaignsAdmin.post('/forms/:id/delete', async (c) => {

@@ -1,4 +1,4 @@
-import { and, count, eq, inArray, sql, sum } from 'drizzle-orm'
+import { and, count, eq, inArray, isNull, sql, sum } from 'drizzle-orm'
 import type { Db } from '../db/index.ts'
 import { downloadGrants, forms } from '../db/schema.ts'
 import { randomToken } from './ids.ts'
@@ -8,9 +8,13 @@ import { randomToken } from './ids.ts'
  *
  * It belongs to the form, not to a library: this form trades this file for an
  * address. The bytes live in their own R2 bucket (`DOWNLOADS`) that no route
- * serves by key, and they leave only through a *grant* — one row per person, per
+ * serves by key, and they leave through a *grant* — one row per person, per
  * form, carrying the token that is the URL. That is what makes "who actually
  * opened the toolkit" answerable next quarter instead of a log line that expired.
+ *
+ * The one other way out is the form's *share link*: a single token on the form
+ * row, for the operator to hand the file to somebody directly. Same `/d/:token`
+ * shape, counted on the form rather than on a person.
  */
 
 /** How large a lead magnet may be. Bounded by what a Worker will stream, not by taste. */
@@ -66,6 +70,9 @@ export async function attachFile(db: Db, formId: number, file: FormFile): Promis
       downloadContentType: file.contentType,
       downloadBytes: file.bytes,
       downloadUploadedAt: new Date(),
+      // Kept across a replace, for the same reason the grants are: a link that
+      // is already out there should start serving the new file, not die.
+      downloadShareToken: sql`coalesce(${forms.downloadShareToken}, ${randomToken(SHARE_TOKEN_LENGTH)})`,
     })
     .where(eq(forms.id, formId))
 }
@@ -83,19 +90,93 @@ export async function detachFile(db: Db, formId: number): Promise<void> {
       downloadContentType: null,
       downloadBytes: null,
       downloadUploadedAt: null,
+      downloadShareToken: null,
+      downloadShareCount: 0,
+      downloadShareLastAt: null,
     })
     .where(eq(forms.id, formId))
   await db.delete(downloadGrants).where(eq(downloadGrants.formId, formId))
 }
 
-/** Links handed out, and how many times the file actually moved. */
-export async function fileStats(db: Db, formId: number): Promise<{ links: number; taken: number }> {
+/**
+ * Links handed out, and how many times the file actually moved — `taken` by the
+ * people it was sent to, `shared` through the form's direct link.
+ */
+export async function fileStats(
+  db: Db,
+  formId: number,
+): Promise<{ links: number; taken: number; shared: number }> {
+  const [row, form] = await Promise.all([
+    db
+      .select({ links: count(), taken: sum(downloadGrants.downloadCount) })
+      .from(downloadGrants)
+      .where(eq(downloadGrants.formId, formId))
+      .get(),
+    db
+      .select({ shared: forms.downloadShareCount })
+      .from(forms)
+      .where(eq(forms.id, formId))
+      .get(),
+  ])
+  return { links: row?.links ?? 0, taken: Number(row?.taken ?? 0), shared: form?.shared ?? 0 }
+}
+
+// ───────────────────────────────────────────────── the share link
+
+const SHARE_TOKEN_LENGTH = 32
+
+/**
+ * The token behind a form's direct link, minting it if the file predates them.
+ *
+ * Every upload mints one in `attachFile`; this is for the files that were
+ * already attached when share links shipped. Null when the form has no file.
+ */
+export async function shareToken(
+  db: Db,
+  form: { id: number; downloadKey: string | null; downloadShareToken: string | null },
+): Promise<string | null> {
+  if (!form.downloadKey) return null
+  if (form.downloadShareToken) return form.downloadShareToken
+
+  // `IS NULL` in the where, so two pages rendering at once agree on one token
+  // instead of the second overwriting a link the first already showed.
+  await db
+    .update(forms)
+    .set({ downloadShareToken: randomToken(SHARE_TOKEN_LENGTH) })
+    .where(and(eq(forms.id, form.id), isNull(forms.downloadShareToken)))
   const row = await db
-    .select({ links: count(), taken: sum(downloadGrants.downloadCount) })
-    .from(downloadGrants)
-    .where(eq(downloadGrants.formId, formId))
+    .select({ token: forms.downloadShareToken })
+    .from(forms)
+    .where(eq(forms.id, form.id))
     .get()
-  return { links: row?.links ?? 0, taken: Number(row?.taken ?? 0) }
+  return row?.token ?? null
+}
+
+/**
+ * Replace the direct link. The old URL stops working at once; the links mailed
+ * to subscribers are grants and are not touched.
+ */
+export async function resetShareToken(db: Db, formId: number): Promise<string> {
+  const token = randomToken(SHARE_TOKEN_LENGTH)
+  await db.update(forms).set({ downloadShareToken: token }).where(eq(forms.id, formId))
+  return token
+}
+
+/** The form a direct link points at, or null. */
+export async function resolveShare(db: Db, token: string) {
+  const form = await db.select().from(forms).where(eq(forms.downloadShareToken, token)).get()
+  return form ?? null
+}
+
+/** Every byte that leaves is a row, not a log line (invariant 7). */
+export async function countShareDownload(db: Db, formId: number): Promise<void> {
+  await db
+    .update(forms)
+    .set({
+      downloadShareCount: sql`${forms.downloadShareCount} + 1`,
+      downloadShareLastAt: new Date(),
+    })
+    .where(eq(forms.id, formId))
 }
 
 // ───────────────────────────────────────────────── grants
