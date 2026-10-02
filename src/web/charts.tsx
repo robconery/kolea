@@ -18,10 +18,10 @@ import type { FC } from 'hono/jsx'
  * comes from the swatch beside the label.
  */
 
-/** Ordinal ramp, light→dark. Reads as one hue family travelling into depth. */
-export const RAMP = ['#a5f3fc', '#38bdf8', '#6366f1', '#8b5cf6'] as const
+/** Ordinal ramp: lagoon in sunlight, lagoon, deep water, plum. */
+export const RAMP = ['#2BB3A3', '#0B6B63', '#3B679A', '#7B4F9E'] as const
 /** Single-hue sequential, for one-series magnitude. */
-export const HUE = '#38bdf8'
+export const HUE = '#0B6B63'
 
 export interface Column {
   label: string

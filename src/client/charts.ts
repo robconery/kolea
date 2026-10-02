@@ -30,11 +30,11 @@ type Spec =
     }
 
 /** The ordinal ramp, mirrored from `src/web/charts.tsx`. Light → deep. */
-const RAMP = ['#a5f3fc', '#38bdf8', '#6366f1', '#8b5cf6']
-const INK = '#eaf3ff'
-const FAINT = '#6d84a8'
-const GRID = 'rgba(148,190,255,.10)'
-const SANS = "'Inter',ui-sans-serif,system-ui,Helvetica,sans-serif"
+const RAMP = ['#2BB3A3', '#0B6B63', '#3B679A', '#7B4F9E']
+const INK = '#1B1A13'
+const FAINT = '#6B6650'
+const GRID = 'rgba(27,26,19,.08)'
+const SANS = "'Geist',ui-sans-serif,system-ui,Helvetica,sans-serif"
 const DISPLAY = SANS
 
 const nf = new Intl.NumberFormat('en-US')
@@ -86,13 +86,13 @@ function columnOptions(s: Spec & { t: 'column' }, width: number) {
         borderRadiusApplication: 'end' as const,
       },
     },
-    colors: ['#67e8f9'],
+    colors: ['#0B6B63'],
     fill: {
       type: 'gradient',
       gradient: {
         type: 'vertical',
         shadeIntensity: 0,
-        gradientToColors: ['#7c3aed'],
+        gradientToColors: ['#2BB3A3'],
         inverseColors: false,
         opacityFrom: 1,
         opacityTo: 0.72,
@@ -124,12 +124,12 @@ function columnOptions(s: Spec & { t: 'column' }, width: number) {
       },
     },
     states: {
-      hover: { filter: { type: 'lighten', value: 0.18 } },
+      hover: { filter: { type: 'darken', value: 0.12 } },
       active: { filter: { type: 'none' } },
     },
     tooltip: {
       custom: ({ dataPointIndex }: { dataPointIndex: number }) =>
-        tip(s.captions[dataPointIndex] ?? '', fmt(s.values[dataPointIndex] ?? 0), '#67e8f9'),
+        tip(s.captions[dataPointIndex] ?? '', fmt(s.values[dataPointIndex] ?? 0), '#0B6B63'),
     },
   }
 }
@@ -141,14 +141,14 @@ function donutOptions(s: Spec & { t: 'donut' }) {
       ...chrome(s.size),
       type: 'donut' as const,
       width: s.size,
-      dropShadow: { enabled: true, top: 0, left: 0, blur: 18, color: '#38bdf8', opacity: 0.28 },
+      dropShadow: { enabled: false },
     },
     series: s.values,
     labels: s.labels,
     colors: RAMP,
-    // A 2px gap of water between neighbours instead of a stroke: a border around
+    // A 2px gap of paper between neighbours instead of a stroke: a border around
     // a mark is ink that isn't data.
-    stroke: { width: 2, colors: ['rgba(6,14,36,.9)'] },
+    stroke: { width: 2, colors: ['#FFFDF8'] },
     // Each slice keeps its own identity and gains depth by falling toward a
     // darker version of itself — not by being washed toward a shared light,
     // which is what a plain shadeIntensity does and it flattens the ordering.
@@ -157,7 +157,7 @@ function donutOptions(s: Spec & { t: 'donut' }) {
       gradient: {
         type: 'vertical',
         shadeIntensity: 0,
-        gradientToColors: ['#22d3ee', '#1d4ed8', '#4338ca', '#6d28d9'],
+        gradientToColors: ['#23A090', '#08564F', '#2F5784', '#664185'],
         inverseColors: false,
         opacityFrom: 1,
         opacityTo: 1,
@@ -205,7 +205,7 @@ function donutOptions(s: Spec & { t: 'donut' }) {
       },
     },
     states: {
-      hover: { filter: { type: 'lighten', value: 0.14 } },
+      hover: { filter: { type: 'darken', value: 0.1 } },
       active: { filter: { type: 'none' } },
     },
     tooltip: {
@@ -214,7 +214,7 @@ function donutOptions(s: Spec & { t: 'donut' }) {
         return tip(
           s.labels[seriesIndex] ?? '',
           `${nf.format(v)} · ${Math.round((v / total) * 100)}%`,
-          RAMP[seriesIndex % RAMP.length] ?? '#38bdf8',
+          RAMP[seriesIndex % RAMP.length] ?? '#0B6B63',
         )
       },
     },
@@ -228,17 +228,17 @@ function sparkOptions(s: Spec & { t: 'spark' }) {
       ...chrome(s.height),
       type: 'area' as const,
       sparkline: { enabled: true },
-      dropShadow: { enabled: true, top: 1, left: 0, blur: 6, color: '#38bdf8', opacity: 0.55 },
+      dropShadow: { enabled: false },
     },
     series: [{ name: 'Trend', data: s.values }],
-    colors: ['#38bdf8'],
+    colors: ['#0B6B63'],
     stroke: { curve: 'smooth' as const, width: 2 },
     fill: {
       type: 'gradient',
       gradient: {
         type: 'vertical',
         shadeIntensity: 0,
-        gradientToColors: ['#8b5cf6'],
+        gradientToColors: ['#2BB3A3'],
         inverseColors: false,
         opacityFrom: 0.55,
         opacityTo: 0,
@@ -248,7 +248,7 @@ function sparkOptions(s: Spec & { t: 'spark' }) {
     markers: { size: 0, hover: { size: 4 } },
     tooltip: {
       custom: ({ dataPointIndex }: { dataPointIndex: number }) =>
-        tip('', fmt(s.values[dataPointIndex] ?? 0), '#38bdf8'),
+        tip('', fmt(s.values[dataPointIndex] ?? 0), '#0B6B63'),
     },
   }
 }
@@ -257,7 +257,7 @@ const esc = (t: string) =>
   t.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c)
 
 /** Views, visitors, opens: the series colours, mirrored in `web/admin-traffic.tsx`. */
-const TRAFFIC = ['#22d3ee', '#818cf8', '#f0abfc']
+const TRAFFIC = ['#0B6B63', '#3B679A', '#B2395E']
 
 function trafficOptions(s: Spec & { t: 'traffic' }) {
   const sentOn = new Map<number, string[]>()
@@ -270,7 +270,7 @@ function trafficOptions(s: Spec & { t: 'traffic' }) {
     chart: {
       ...chrome(s.height),
       type: 'line' as const,
-      dropShadow: { enabled: true, enabledOnSeries: [0], top: 2, left: 0, blur: 10, color: '#22d3ee', opacity: 0.45 },
+      dropShadow: { enabled: false },
     },
     series: [
       { name: 'Views', type: 'area', data: s.views },
@@ -285,7 +285,7 @@ function trafficOptions(s: Spec & { t: 'traffic' }) {
         type: 'vertical',
         shadeIntensity: 0,
         inverseColors: false,
-        opacityFrom: 0.5,
+        opacityFrom: 0.28,
         opacityTo: 0.02,
         stops: [0, 96],
       },
@@ -300,18 +300,18 @@ function trafficOptions(s: Spec & { t: 'traffic' }) {
       padding: { left: 6, right: 6, top: -4, bottom: -4 },
     },
     // A send is a mark on the timeline, not a series: it has no magnitude, only a
-    // moment. Violet so it reads as belonging to the email line.
+    // moment. Hibiscus so it reads as belonging to the email line.
     annotations: {
       xaxis: [...sentOn.keys()].map((i) => ({
         x: s.labels[i],
-        borderColor: 'rgba(240,171,252,.45)',
+        borderColor: 'rgba(178,57,94,.4)',
         strokeDashArray: 3,
         label: {
           text: '✉',
           orientation: 'horizontal',
           borderWidth: 0,
           offsetY: -4,
-          style: { background: 'transparent', color: '#f0abfc', fontSize: '13px' },
+          style: { background: 'transparent', color: '#B2395E', fontSize: '13px' },
         },
       })),
     },
@@ -320,7 +320,7 @@ function trafficOptions(s: Spec & { t: 'traffic' }) {
       tickAmount: Math.min(8, s.labels.length),
       axisBorder: { show: false },
       axisTicks: { show: false },
-      crosshairs: { stroke: { color: 'rgba(148,190,255,.25)', width: 1, dashArray: 3 } },
+      crosshairs: { stroke: { color: 'rgba(27,26,19,.25)', width: 1, dashArray: 3 } },
       tooltip: { enabled: false },
       labels: {
         rotate: 0,
@@ -343,7 +343,7 @@ function trafficOptions(s: Spec & { t: 'traffic' }) {
         tickAmount: 4,
         min: 0,
         forceNiceScale: true,
-        labels: { formatter: (v: number) => nf.format(Math.round(v)), style: { colors: '#b98bc4', fontSize: '11px' } },
+        labels: { formatter: (v: number) => nf.format(Math.round(v)), style: { colors: '#B2395E', fontSize: '11px' } },
       },
     ],
     tooltip: {
@@ -357,9 +357,9 @@ function trafficOptions(s: Spec & { t: 'traffic' }) {
           row(TRAFFIC[0]!, 'Page views', s.views[i] ?? 0) +
           row(TRAFFIC[1]!, 'Visitors', s.visitors[i] ?? 0) +
           row(TRAFFIC[2]!, 'Email opens', s.opens[i] ?? 0, true) +
-          row('rgba(148,190,255,.4)', 'Email clicks', s.clicks[i] ?? 0) +
+          row('rgba(27,26,19,.3)', 'Email clicks', s.clicks[i] ?? 0) +
           (sent
-            ? `<div style="padding:8px 14px 2px;max-width:280px;font-size:12px;color:#f0abfc;white-space:normal">✉ ${sent.map(esc).join('<br>✉ ')}</div>`
+            ? `<div style="padding:8px 14px 2px;max-width:280px;font-size:12px;color:#B2395E;white-space:normal">✉ ${sent.map(esc).join('<br>✉ ')}</div>`
             : '') +
           `</div>`
         )

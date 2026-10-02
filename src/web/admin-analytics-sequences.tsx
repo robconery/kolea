@@ -509,13 +509,13 @@ analyticsSequences.get('/analytics/sequences/:id', async (c) => {
             <>
               <div class="lg" style="margin:0 0 20px">
                 <span class="lg-i">
-                  <i style="background:rgba(99,102,241,.6)" /> Sent
+                  <i style="background:rgba(59,103,154,.35)" /> Sent
                 </span>
                 <span class="lg-i">
-                  <i style="background:rgba(56,189,248,.7)" /> Opened
+                  <i style="background:rgba(43,179,163,.6)" /> Opened
                 </span>
                 <span class="lg-i">
-                  <i style="background:#22d3ee" /> Clicked
+                  <i style="background:#0B6B63" /> Clicked
                 </span>
               </div>
               <StepWaterfall steps={steps} />

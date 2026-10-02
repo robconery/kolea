@@ -17,7 +17,7 @@ import { BarRow, TrafficChart } from './charts.tsx'
 const num = (n: number) => Math.round(n).toLocaleString('en-US')
 
 /** Series colours, mirrored from `client/charts.ts`. */
-const C = { views: '#22d3ee', visitors: '#818cf8', opens: '#f0abfc' }
+const C = { views: '#0B6B63', visitors: '#3B679A', opens: '#B2395E' }
 
 export const RANGES = [7, 30, 90] as const
 
@@ -203,7 +203,7 @@ export const TrafficHero: FC<{ report: TrafficReport; siteUrl?: string }> = ({ r
                         {x.topUrl.replace(/^https?:\/\/(www\.)?/, '')}
                       </a>
                     ) : null}
-                    <BarRow value={x.views} max={refMax} tint="linear-gradient(90deg,#818cf8,#a855f7)" />
+                    <BarRow value={x.views} max={refMax} tint="#3B679A" />
                   </li>
                 ))}
               </ul>
@@ -220,7 +220,7 @@ export const TrafficHero: FC<{ report: TrafficReport; siteUrl?: string }> = ({ r
                         </span>
                         <span class="tr-n">{num(x.views)}</span>
                       </div>
-                      <BarRow value={x.views} max={geoMax} tint="linear-gradient(90deg,#5eead4,#22d3ee)" />
+                      <BarRow value={x.views} max={geoMax} tint="#0B6B63" />
                     </li>
                   ))}
                 </ul>
