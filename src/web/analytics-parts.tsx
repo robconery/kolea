@@ -116,12 +116,12 @@ export const SplitBar: FC<{ a: Attribution }> = ({ a }) => {
             <i
               style={`background:${
                 ch.kind === 'sequence'
-                  ? '#22d3ee'
+                  ? '#0B6B63'
                   : ch.kind === 'broadcast'
-                    ? '#6366f1'
+                    ? '#3B679A'
                     : ch.kind === 'form'
-                      ? '#a855f7'
-                      : 'rgba(148,190,255,.22)'
+                      ? '#7B4F9E'
+                      : 'rgba(27,26,19,.2)'
               }`}
             />
             {ch.label} <b>{num(ch.n)}</b>
