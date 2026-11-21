@@ -203,6 +203,34 @@ undeliveredAdmin.get('/undelivered', async (c) => {
         </div>
       ) : null}
 
+      {report.notOffered.length > 0 ? (
+        <div class="card">
+          <div class="card-h">
+            <h2>Not offered</h2>
+          </div>
+          <div class="card-b flush">
+            <table>
+              <thead>
+                <tr>
+                  <th>Sequence step</th>
+                  <th>Messages</th>
+                  <th>Why not</th>
+                </tr>
+              </thead>
+              <tbody>
+                {report.notOffered.map((g) => (
+                  <tr>
+                    <td>{g.label}</td>
+                    <td class="mono">{g.count.toLocaleString('en-US')}</td>
+                    <td class="faint">{g.reason}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : null}
+
       {report.renderedToOutbox > 0 ? (
         <p class="faint">
           {report.renderedToOutbox.toLocaleString('en-US')} messages were rendered to the{' '}

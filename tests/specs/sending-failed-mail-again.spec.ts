@@ -7,6 +7,8 @@ import { beforeAll, describe, expect, it } from 'bun:test'
 import { eq } from 'drizzle-orm'
 import { cancelBroadcast, startBroadcast } from '../../src/core/broadcasts.ts'
 import { createApiKey } from '../../src/core/api-keys.ts'
+import { leaveSequence } from '../../src/core/consent.ts'
+import { enroll, setSequenceActive } from '../../src/core/sequences.ts'
 import { sendAgain, undeliveredMail, type UndeliveredReport } from '../../src/core/undelivered.ts'
 import type { Subscriber } from '../../src/db/schema.ts'
 import { messages, subscribers } from '../../src/db/schema.ts'
@@ -152,6 +154,7 @@ describe('Feature: sending failed mail again', () => {
       world = createWorld()
       const ada = await aPerson(world, { email: 'ada@example.test' })
       const seq = await aSequence(world, { name: 'Onboarding', steps: [{ subject: 'Welcome aboard' }] })
+      await enroll(world.db, seq.id, ada.id)
       const failed = { status: 'failed' as const, error: 'provider refused: 422', createdAt: new Date() }
       await world.db.insert(messages).values([
         { ...failed, subscriberId: ada.id, kind: 'sequence', sequenceStepId: seq.stepIds[0], toEmail: ada.email, subject: 'Welcome aboard' },
@@ -181,6 +184,7 @@ describe('Feature: sending failed mail again', () => {
       world = createWorld()
       const ada = await aPerson(world, { email: 'ada@example.test' })
       const seq = await aSequence(world, { steps: [{ subject: 'Welcome aboard' }] })
+      await enroll(world.db, seq.id, ada.id)
       await world.db.insert(messages).values({
         subscriberId: ada.id,
         kind: 'sequence',
@@ -231,6 +235,80 @@ describe('Feature: sending failed mail again', () => {
 
     it('records the message as suppressed', () => {
       expect(status).toBe('suppressed')
+    })
+  })
+
+  describe('Scenario: a failed step for a reader who has since left that sequence', () => {
+    // ⭐ Leaving a series is a standing choice. A failure from before it must
+    // not reach them now, and the screen says why it is not offered.
+    let world: World
+    let result: { requeued: number }
+    let page: string
+
+    beforeAll(async () => {
+      world = createWorld()
+      const ada = await aPerson(world, { email: 'ada@example.test' })
+      const seq = await aSequence(world, { name: 'Onboarding', steps: [{ subject: 'Welcome aboard' }] })
+      await enroll(world.db, seq.id, ada.id)
+      await world.db.insert(messages).values({
+        subscriberId: ada.id,
+        kind: 'sequence',
+        sequenceStepId: seq.stepIds[0],
+        toEmail: ada.email,
+        subject: 'Welcome aboard',
+        status: 'failed',
+        error: 'provider refused: 422',
+        createdAt: new Date(),
+      })
+      await leaveSequence(world.db, ada.id, seq.id)
+      page = await (await world.fetch('/undelivered')).text()
+      result = await sendAgain(world.env, world.db, { kind: 'step', id: seq.stepIds[0]! })
+    })
+
+    it('queues nothing', () => {
+      expect(result.requeued).toBe(0)
+    })
+
+    it('⭐ does not mail them', async () => {
+      expect(await mailsTo(world, 'ada@example.test')).toBe(0)
+    })
+
+    it('says why it is not offered', () => {
+      expect(page).toContain('no longer in this sequence')
+    })
+  })
+
+  describe('Scenario: a failed step of a sequence that has been paused', () => {
+    let world: World
+    let report: UndeliveredReport
+    let result: { requeued: number }
+
+    beforeAll(async () => {
+      world = createWorld()
+      const ada = await aPerson(world, { email: 'ada@example.test' })
+      const seq = await aSequence(world, { name: 'Onboarding', steps: [{ subject: 'Welcome aboard' }] })
+      await enroll(world.db, seq.id, ada.id)
+      await world.db.insert(messages).values({
+        subscriberId: ada.id,
+        kind: 'sequence',
+        sequenceStepId: seq.stepIds[0],
+        toEmail: ada.email,
+        subject: 'Welcome aboard',
+        status: 'failed',
+        error: 'provider refused: 422',
+        createdAt: new Date(),
+      })
+      await setSequenceActive(world.db, seq.id, false)
+      report = await undeliveredMail(world.db)
+      result = await sendAgain(world.env, world.db, { kind: 'message', id: (await messageFor(world, ada)).id })
+    })
+
+    it('is not offered, even one message at a time', () => {
+      expect(result.requeued).toBe(0)
+    })
+
+    it('says the sequence is paused', () => {
+      expect(report.notOffered[0]?.reason).toContain('paused')
     })
   })
 

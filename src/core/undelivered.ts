@@ -84,6 +84,11 @@ export interface UndeliveredReport {
    */
   checkFirst: UndeliveredMessage[]
   checkFirstTotal: number
+  /**
+   * Failed sequence mail that is not offered, and why: the series is paused,
+   * or the reader is no longer in it. Counted per step so it is never invisible.
+   */
+  notOffered: { label: string; count: number; reason: string }[]
   /** Mail the console provider rendered to the Outbox instead of the wire. */
   renderedToOutbox: number
 }
@@ -105,14 +110,35 @@ const notCancelledBroadcast = () =>
     sql`${messages.broadcastId} not in (select ${broadcasts.id} from ${broadcasts} where ${broadcasts.status} = 'cancelled')`,
   )
 
-/** The one definition of "failed, and fair to send again". Every query below uses it. */
-function resendable() {
+/** Failed, never accepted, not a stop, not an unknown outcome. */
+function failedOutright() {
   return and(
     eq(messages.status, 'failed'),
     isNull(messages.providerMessageId),
     or(isNull(messages.error), and(ne(messages.error, CANCELLED), notLike(messages.error, UNKNOWN_LIKE))),
     notCancelledBroadcast(),
   )
+}
+
+/**
+ * ⭐ A sequence step is only worth sending again to someone still in that
+ * series, and only while the series is running. Somebody who opted out, was
+ * taken out by an exit, unsubscribed from everything or bounced has a
+ * `cancelled` enrollment, and a paused sequence sends nothing to anyone; a
+ * failed step from before either must not go out now. `completed` still
+ * counts: the final step's failure is exactly what completes an enrollment,
+ * and that reader is owed the last mail. Everything that is not a real
+ * sequence send (a preview, a broadcast, a receipt) passes.
+ */
+const stillInSequence = sql`(${messages.kind} <> 'sequence' or ${isPreview} or exists (
+  select 1 from sequence_steps ss
+  join sequences s on s.id = ss.sequence_id
+  join sequence_enrollments e on e.sequence_id = ss.sequence_id and e.subscriber_id = ${messages.subscriberId}
+  where ss.id = ${messages.sequenceStepId} and s.is_active = 1 and e.status in ('active', 'completed')))`
+
+/** The one definition of "failed, and fair to send again". Every query below uses it. */
+function resendable() {
+  return and(failedOutright(), stillInSequence)
 }
 
 /**
@@ -213,6 +239,27 @@ export async function undeliveredMail(db: Db, recentLimit = 100): Promise<Undeli
     .limit(recentLimit)
     .all()
   const checkFirstTotal = (await db.select({ n: count() }).from(messages).where(checkFirst()).get())?.n ?? 0
+  const heldSteps = await db
+    .select({
+      subject: sequenceSteps.subject,
+      sequence: sequences.name,
+      position: sequenceSteps.position,
+      sequenceActive: sequences.isActive,
+      n: count(),
+    })
+    .from(messages)
+    .innerJoin(sequenceSteps, eq(messages.sequenceStepId, sequenceSteps.id))
+    .innerJoin(sequences, eq(sequenceSteps.sequenceId, sequences.id))
+    .where(and(failedOutright(), eq(messages.kind, 'sequence'), notPreview, sql`not ${stillInSequence}`))
+    .groupBy(messages.sequenceStepId)
+    .all()
+  const notOffered = heldSteps.map((r) => ({
+    label: `${r.sequence} · step ${r.position}: ${r.subject}`,
+    count: r.n,
+    reason: r.sequenceActive
+      ? 'they are no longer in this sequence (left it, were taken out, or stopped all mail)'
+      : 'the sequence is paused; turn it back on to send these',
+  }))
   const renderedToOutbox =
     (
       await db
@@ -252,7 +299,7 @@ export async function undeliveredMail(db: Db, recentLimit = 100): Promise<Undeli
     })),
   ].sort((a, b) => (b.lastAt?.getTime() ?? 0) - (a.lastAt?.getTime() ?? 0))
 
-  return { groups, recent, total, checkFirst: checkFirstRows, checkFirstTotal, renderedToOutbox }
+  return { groups, recent, total, checkFirst: checkFirstRows, checkFirstTotal, notOffered, renderedToOutbox }
 }
 
 /**
