@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm'
+import { and, eq, ne } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { getDb } from '../db/index.ts'
 import { subscribers, suppressions } from '../db/schema.ts'
@@ -53,10 +53,11 @@ prefs.get('/p/:token', async (c) => {
   const fromMessage = c.req.query('m') ?? ''
   const done = c.req.query('done')
   const rows = await preferencesFor(db, sub.id)
+  // `pruned` is the clean-up's broadcast-only marker, not "off everything".
   const globallyOff = await db
     .select({ id: suppressions.id })
     .from(suppressions)
-    .where(eq(suppressions.email, normalizeEmail(sub.email)))
+    .where(and(eq(suppressions.email, normalizeEmail(sub.email)), ne(suppressions.reason, 'pruned')))
     .get()
 
   const focusId = scope?.kind === 'sequence' ? scope.sequenceId : null

@@ -3,12 +3,15 @@
 // to many; suppressions kept per SPEC 1.6 / 8.3.4). Big Mailer SPEC 1.2, 2.1.
 import { beforeAll, describe, expect, it } from 'bun:test'
 import { eq } from 'drizzle-orm'
-import { planPrune, runPrune } from '../../src/core/cleanup.ts'
-import { isSuppressed } from '../../src/core/consent.ts'
-import { importCsv } from '../../src/core/subscribers.ts'
+import { startBroadcast } from '../../src/core/broadcasts.ts'
+import { planPrune, pruneBackupCsv, runPrune } from '../../src/core/cleanup.ts'
+import { canReceiveTransactional, isSuppressed } from '../../src/core/consent.ts'
+import { createForm } from '../../src/core/forms.ts'
+import { enroll } from '../../src/core/sequences.ts'
+import { importCsv, upsertSubscriber } from '../../src/core/subscribers.ts'
 import type { Subscriber } from '../../src/db/schema.ts'
 import { events, listPrunes, messages, sales, subscribers, suppressions } from '../../src/db/schema.ts'
-import { aPerson } from '../support/factories.ts'
+import { aBroadcast, aPerson, aSequence, makeDue, reload } from '../support/factories.ts'
 import { createWorld, type World } from '../support/world.ts'
 
 const DAY = 86_400_000
@@ -40,6 +43,20 @@ async function mailed(w: World, p: Subscriber, opened = false) {
     }
   }
 }
+
+/** A leaver, unsubscribed and then pruned: only the `pruned` marker is left of them. */
+async function aPrunedLeaver(w: World, email: string) {
+  const leaver = await aPerson(w, { email })
+  await setStatus(w, leaver, 'unsubscribed')
+  const plan = await planPrune(w.db, ['unsubscribed'])
+  if (!plan.ok) throw new Error(plan.message)
+  await runPrune(w.db, plan.prune.id, { confirmCount: plan.prune.total })
+}
+
+const statusOf = async (w: World, email: string) =>
+  (await w.db.select({ s: subscribers.status }).from(subscribers).where(eq(subscribers.email, email)).get())?.s
+
+const mailsTo = async (w: World, email: string) => (await w.outbox()).filter((m) => m.toEmail === email)
 
 async function exists(w: World, email: string): Promise<boolean> {
   return Boolean(await w.db.select().from(subscribers).where(eq(subscribers.email, email)).get())
@@ -172,6 +189,175 @@ describe('Feature: cleaning up the list', () => {
 
     it('⭐ is still suppressed, so no broadcast reaches them', async () => {
       expect(await isSuppressed(world.db, 'gone@example.test')).toBe(true)
+    })
+  })
+
+  describe('Scenario: a pruned leaver turns up in a later import', () => {
+    // ⭐ The import must not bring them back to the newsletter they left.
+    let world: World
+
+    beforeAll(async () => {
+      world = createWorld()
+      await aPrunedLeaver(world, 'gone@example.test')
+      await importCsv(world.db, 'email,name\ngone@example.test,Gone')
+    })
+
+    it('⭐ comes back unsubscribed', async () => {
+      expect(await statusOf(world, 'gone@example.test')).toBe('unsubscribed')
+    })
+  })
+
+  describe('Scenario: a pruned leaver is added back and joins a series', () => {
+    // ⭐ The marker is only the newsletter choice they made. A sequence they
+    // join is a different scope (invariant 2).
+    let world: World
+
+    beforeAll(async () => {
+      world = createWorld()
+      await aPrunedLeaver(world, 'gone@example.test')
+      const { id } = await upsertSubscriber(world.db, { email: 'gone@example.test', triggerSubscribeSequences: false })
+      const seq = await aSequence(world, { steps: [{ subject: 'Lesson one' }] })
+      await enroll(world.db, seq.id, id!)
+      const person = (await world.db.select().from(subscribers).where(eq(subscribers.id, id!)).get())!
+      await makeDue(world, person, seq.id)
+      await world.tick()
+    })
+
+    it('⭐ gets the sequence mail', async () => {
+      expect((await mailsTo(world, 'gone@example.test')).map((m) => m.subject)).toEqual(['Lesson one'])
+    })
+  })
+
+  describe('Scenario: a pruned leaver is added back by the operator and a broadcast goes out', () => {
+    let world: World
+
+    beforeAll(async () => {
+      world = createWorld()
+      await aPrunedLeaver(world, 'gone@example.test')
+      await upsertSubscriber(world.db, { email: 'gone@example.test', triggerSubscribeSequences: false })
+      const b = await aBroadcast(world)
+      await startBroadcast(world.env, world.db, b)
+    })
+
+    it('⭐ still keeps the newsletter from them', async () => {
+      expect(await mailsTo(world, 'gone@example.test')).toHaveLength(0)
+    })
+  })
+
+  describe('Scenario: a pruned leaver buys something', () => {
+    let blocked: boolean
+
+    beforeAll(async () => {
+      const world = createWorld()
+      await aPrunedLeaver(world, 'gone@example.test')
+      blocked = (await canReceiveTransactional(world.db, 'gone@example.test')).blocked
+    })
+
+    it('still gets their receipt', () => {
+      expect(blocked).toBe(false)
+    })
+  })
+
+  describe('Scenario: a pruned leaver signs up again through a confirming form', () => {
+    let world: World
+    let confirmations: number
+    let markerAfterClick: boolean
+    let broadcastMails: number
+
+    beforeAll(async () => {
+      world = createWorld()
+      await aPrunedLeaver(world, 'back@example.test')
+      await createForm(world.db, { name: 'Join', slug: 'join', doubleOptIn: true })
+      await world.post('/f/join', { email: 'back@example.test' })
+      const mail = (await mailsTo(world, 'back@example.test')).find((m) => m.subject.startsWith('Confirm'))
+      confirmations = mail ? 1 : 0
+      const link = /\/f\/join\/confirm\/[a-z0-9]+/.exec(mail?.html ?? '')?.[0] ?? '/nowhere'
+      await world.post(link, {})
+      markerAfterClick = await isSuppressed(world.db, 'back@example.test')
+      const b = await aBroadcast(world, { subject: 'Welcome back issue' })
+      await startBroadcast(world.env, world.db, b)
+      broadcastMails = (await mailsTo(world, 'back@example.test')).filter((m) => m.subject === 'Welcome back issue').length
+    })
+
+    it('sends them the confirmation', () => {
+      expect(confirmations).toBe(1)
+    })
+
+    it('clears the marker once they click', () => {
+      expect(markerAfterClick).toBe(false)
+    })
+
+    it('puts them back on the newsletter', () => {
+      expect(broadcastMails).toBe(1)
+    })
+  })
+
+  describe('Scenario: a pruned leaver signs up again through a plain form', () => {
+    let world: World
+    let marker: boolean
+
+    beforeAll(async () => {
+      world = createWorld()
+      await aPrunedLeaver(world, 'back@example.test')
+      await createForm(world.db, { name: 'Join', slug: 'join', doubleOptIn: false })
+      await world.post('/f/join', { email: 'back@example.test' })
+      marker = await isSuppressed(world.db, 'back@example.test')
+    })
+
+    it('clears the marker', () => {
+      expect(marker).toBe(false)
+    })
+  })
+
+  describe('Scenario: the operator restores a clean-up from its backup', () => {
+    // ⭐ The backup says it can be imported back. It must come back as it was,
+    // never more subscribed: an unconfirmed person is still unconfirmed.
+    let world: World
+
+    beforeAll(async () => {
+      world = createWorld()
+      const unconfirmed = await aPerson(world, { email: 'maybe@example.test' })
+      await world.db
+        .update(subscribers)
+        .set({ status: 'pending', createdAt: new Date(Date.now() - 40 * DAY) })
+        .where(eq(subscribers.id, unconfirmed.id))
+      const leaver = await aPerson(world, { email: 'left@example.test' })
+      await setStatus(world, leaver, 'unsubscribed')
+      const plan = await planPrune(world.db, ['unconfirmed', 'unsubscribed'])
+      if (!plan.ok) throw new Error(plan.message)
+      const backup = await pruneBackupCsv(world.db, plan.prune)
+      await runPrune(world.db, plan.prune.id, { confirmCount: plan.prune.total })
+      await importCsv(world.db, backup)
+    })
+
+    it('⭐ brings the unconfirmed person back pending', async () => {
+      expect(await statusOf(world, 'maybe@example.test')).toBe('pending')
+    })
+
+    it('⭐ brings the leaver back unsubscribed', async () => {
+      expect(await statusOf(world, 'left@example.test')).toBe('unsubscribed')
+    })
+  })
+
+  describe('Scenario: an import whose status column says somebody already here left', () => {
+    let world: World
+    let ada: Subscriber
+    let grace: Subscriber
+
+    beforeAll(async () => {
+      world = createWorld()
+      ada = await aPerson(world, { email: 'ada@example.test' })
+      grace = await aPerson(world, { email: 'grace@example.test' })
+      await setStatus(world, grace, 'unsubscribed')
+      await importCsv(world.db, 'email,status\nada@example.test,unsubscribed\ngrace@example.test,active')
+    })
+
+    it('narrows the active person', async () => {
+      expect((await reload(world, ada)).status).toBe('unsubscribed')
+    })
+
+    it('⭐ never makes anybody active', async () => {
+      expect((await reload(world, grace)).status).toBe('unsubscribed')
     })
   })
 

@@ -43,7 +43,7 @@ function describe(group: PruneGroup, days: number): string {
     case 'never_engaged':
       return `Active, sent at least ${MIN_SENDS} mails in the last ${days} days (each over ${SEND_AGE_DAYS} days old), and no open or click in that time.`
     case 'unsubscribed':
-      return 'Left the newsletter. Their address stays suppressed, so a re-import cannot bring them back.'
+      return 'Left the newsletter. Their address keeps that choice, so a re-import brings them back unsubscribed. A series they join, or signing up again themselves, still works.'
     case 'bounced':
       return 'The address bounced hard or marked mail as spam. The suppression stays.'
     case 'unconfirmed':
@@ -231,8 +231,9 @@ cleanupAdmin.get('/subscribers/clean-up/:id{[0-9]+}', async (c) => {
             <>
               <div class="note">
                 This deletes these people and their history (mail, opens, clicks, enrollments) for good. Anyone who
-                unsubscribed, bounced or complained stays suppressed, so they are never mailed again even if
-                they are imported later. Download the backup first.
+                bounced or complained stays suppressed. Anyone who left the newsletter stays off it, even if
+                they are imported later, until they sign up again themselves. Download the backup first: importing
+                it brings people back as they were, never more subscribed.
               </div>
               <form method="post" action={`/subscribers/clean-up/${prune.id}/run`} class="row" style="gap:6px">
                 <label for="confirm" style="margin:0">

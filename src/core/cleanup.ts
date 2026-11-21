@@ -19,11 +19,14 @@ import { type ListPrune, listPrunes, subscribers, suppressions } from '../db/sch
  * Nobody is pruned who has bought something (a sale, a purchase, a conversion:
  * the money keeps its person) or who has mail queued (the send finishes first).
  *
- * ⭐ Deleting a person must never be a path to re-mailing them. Whoever left,
- * bounced or complained keeps a suppression on the address, so a re-import can
- * create the row again but no send will reach it (SPEC 2.1). A pruned
- * non-opener or unconfirmed person keeps nothing: they never said no, and may
- * sign up again.
+ * ⭐ Deleting a person must never be a path to re-mailing them. Whoever bounced
+ * or complained keeps that suppression on the address (SPEC 2.1). Whoever left
+ * the newsletter keeps a `pruned` marker, which is exactly as wide as the choice
+ * they made and no wider (invariant 2, `core/consent.ts`): it blocks broadcasts
+ * and makes a re-import bring them back `unsubscribed`, but a sequence they
+ * later join, a receipt, or a double opt-in confirmation still reaches them,
+ * and signing up again themselves clears it. A pruned non-opener or
+ * unconfirmed person keeps nothing: they never said no, and may sign up again.
  *
  * The SQL below names `subscribers` unaliased on purpose: the same predicate
  * runs inside a SELECT and inside a DELETE.
@@ -181,7 +184,9 @@ const cell = (v: unknown) => {
 
 /**
  * The backup: exactly the planned people, one row each, with their tags, in a
- * shape `importCsv` reads back (`email,name,tags`, then the rest). Stamps
+ * shape `importCsv` reads back (`email,name,tags,status`, then the rest). It
+ * honours `status` in the narrowing direction only, so an unconfirmed person
+ * comes back `pending` and a leaver `unsubscribed`, never `active`. Stamps
  * `backed_up_at` so the confirm step can say a backup was taken.
  */
 export async function pruneBackupCsv(db: Db, prune: ListPrune): Promise<string> {

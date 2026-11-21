@@ -14,6 +14,7 @@ import {
 import { OUTCOME_UNKNOWN } from '../providers/types.ts'
 import type { Env } from '../types.ts'
 import { logActivity } from './activity.ts'
+import { clearPrunedMarker } from './consent.ts'
 import { recordTouch } from './campaigns.ts'
 import { grantDownload } from './downloads.ts'
 import { isValidEmail, normalizeEmail, randomToken, slugify } from './ids.ts'
@@ -468,6 +469,8 @@ export async function submitForm(
   if (outcome === 'invalid' || !id) {
     return { status: 'invalid_email', message: 'That email address looks wrong.' }
   }
+  // Signing up again themselves spends a clean-up's `pruned` marker.
+  await clearPrunedMarker(db, input.email)
 
   if (input.fields && Object.keys(input.fields).length) {
     await updateFieldValues(db, id, input.fields, { unknown: 'ignore', blank: 'ignore' })
@@ -892,6 +895,7 @@ export async function confirmSignup(
     // The one caller allowed past an open confirmation: this is the click.
     viaConfirmation: true,
   })
+  await clearPrunedMarker(db, person.email)
   await db
     .update(subscribers)
     .set({ confirmedAt: new Date(now) })
