@@ -947,6 +947,8 @@ const ICONS: Record<string, string> = {
   anhl: 'M3.8 12.4h3.1l2-4.6 2.7 9 2.5-6.3 1.6 1.9h4.5',
   /* A line leaving the box: facts sent on to somewhere else. */
   hooks: 'M5 6.5h8.5v11H5zM13.5 12h6m-2.4-2.6L19.7 12l-2.6 2.6',
+  // A page of lines with a lens: the log you search.
+  logs: 'M5 6.5h9M5 10.5h5M5 14.5h4M18.6 15.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM17.8 17.7l2.4 2.4',
   set: 'M4.4 8h9.2M17.6 8h2M4.4 16h2.2M10.6 16h9M15.4 5.6v4.8M8.2 13.6v4.8',
   /* A key: what an agent or another app holds instead of a login. */
   agents: 'M8.4 15.6a3.6 3.6 0 1 0 0-7.2 3.6 3.6 0 0 0 0 7.2ZM12 12h8.2M17.4 12v2.6M20.2 12v2',
@@ -1041,6 +1043,9 @@ const NAV: ({ grp: string } | { href: string; key: string; label: string })[] = 
   // Where facts about the list are POSTed to other systems, and the log of
   // every delivery. Next to Consent: both are about where people's data goes.
   { href: '/webhooks', key: 'hooks', label: 'Webhooks' },
+  // Everything that happened, in words. With the setup screens because it is
+  // where you go when something looks wrong, not a number you read daily.
+  { href: '/logs', key: 'logs', label: 'Logs' },
   { href: '/settings', key: 'set', label: 'Settings' },
   // Which key pays for the writing helpers and which model each uses.
   { href: '/settings/ai', key: 'aiset', label: 'AI' },

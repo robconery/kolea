@@ -51,6 +51,7 @@ import {
   tags,
 } from '../db/schema.ts'
 import type { Env } from '../types.ts'
+import { refuse } from './audit.ts'
 import {
   CampaignPicker,
   type ComposeAi,
@@ -1410,7 +1411,11 @@ mail.post('/broadcasts/:id/send', async (c) => {
 
   // Only the confirmation screen's own button carries these. Anything else —
   // an old tab, a stray form, a double submit — goes back to that screen.
-  if (String(form.get('confirm') ?? '') !== 'send') return c.redirect(`/broadcasts/${id}/send`)
+  if (String(form.get('confirm') ?? '') !== 'send') {
+    // Looks like a plain redirect, so the audit trail is told it was a refusal.
+    refuse(c, 'send was not confirmed on the confirmation screen')
+    return c.redirect(`/broadcasts/${id}/send`)
+  }
 
   // The audience can change between the screen and the click (people join,
   // leave, bounce). If it did, show the new number rather than send to it.

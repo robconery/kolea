@@ -20,6 +20,7 @@ import { handleMcp, handleOAuthMcp } from './mcp/server.ts'
 import type { Env, SendJob } from './types.ts'
 import { admin } from './web/admin.tsx'
 import { activityAdmin } from './web/admin-activity.tsx'
+import { logsAdmin } from './web/admin-logs.tsx'
 import { analytics } from './web/admin-analytics.tsx'
 import { connectAdmin } from './web/admin-connect.tsx'
 import { analyticsSequences } from './web/admin-analytics-sequences.tsx'
@@ -47,6 +48,7 @@ import { siteAdmin } from './web/admin-site.tsx'
 import { themesAdmin } from './web/admin-themes.tsx'
 import { undeliveredAdmin } from './web/admin-undelivered.tsx'
 import { webhooksAdmin } from './web/admin-webhooks.tsx'
+import { auditWrites } from './web/audit.ts'
 import { requireOperator } from './web/auth.ts'
 import { isSiteHost, site } from './web/site.tsx'
 import { prefs } from './web/prefs.tsx'
@@ -96,6 +98,11 @@ app.get('/robots.txt', (c) => c.text('User-agent: *\nDisallow: /\n'))
 
 // Public: preference center, tracking, webhooks, transactional API, signup.
 // Everything else is operator-only (SPEC 8.2).
+// The audit trail for key-authenticated writes: which key, what, and whether
+// it was refused. Ahead of the routers so it wraps them (`web/audit.ts`).
+app.use('/api/send', auditWrites('key'))
+app.use('/api/sales', auditWrites('key'))
+
 app.route('/', prefs)
 app.route('/', testimonialForm)
 app.route('/', api)
@@ -136,6 +143,11 @@ app.use('*', requireOperator)
 // The OAuth consent page and Connected apps. Behind the gate on purpose: the
 // operator approving here is the authentication for everything above.
 app.route('/', connectAdmin)
+// Every console write, refusals included, attributed to the Access identity
+// `requireOperator` just verified. After the gate on purpose: a request Access
+// turned away never reached the app, and recording those would let anyone on
+// the internet fill this table.
+app.use('*', auditWrites('operator'))
 app.route('/', admin)
 // Before `audience`, whose `/subscribers/:id` would claim `/subscribers/clean-up`.
 app.route('/', cleanupAdmin)
@@ -144,6 +156,8 @@ app.route('/', audience)
 // The sequence screens come first so `/analytics/sequences/:id` is matched by
 // its own router rather than swallowed by anything broader.
 app.route('/', activityAdmin)
+// Read-only like Activity: the event log, over the tables the facts live in.
+app.route('/', logsAdmin)
 app.route('/', analyticsSequences)
 app.route('/', analytics)
 app.route('/', tagging)

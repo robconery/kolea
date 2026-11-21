@@ -288,6 +288,13 @@
       "when": 1795249355540,
       "tag": "0040_huge_bastion",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "6",
+      "when": 1795249456093,
+      "tag": "0041_windy_mephistopheles",
+      "breakpoints": true
     }
   ]
 }
