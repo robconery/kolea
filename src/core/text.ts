@@ -35,3 +35,15 @@ export function mergeFields(
   }
   return out
 }
+
+/**
+ * Where a subscriber's `{{testimonial_link}}` points, relative to PUBLIC_URL.
+ * Under `/p/` with the preference centre: the same token, the same proof, and
+ * `renderEmail` already leaves `/p/` links untracked.
+ */
+export function testimonialPath(unsubToken: string): string {
+  return `/p/${unsubToken}/testimonial`
+}
+
+/** Where `{{testimonial_link}}` points on the public web: the wall, never a person. */
+export const TESTIMONIAL_WALL_PATH = '/testimonials'

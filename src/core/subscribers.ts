@@ -268,7 +268,7 @@ export async function importCsv(db: Db, csv: string): Promise<ImportReport> {
   return report
 }
 
-function splitCsvLine(line: string): string[] {
+export function splitCsvLine(line: string): string[] {
   const out: string[] = []
   let cur = ''
   let quoted = false

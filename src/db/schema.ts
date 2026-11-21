@@ -2476,3 +2476,52 @@ export const sendingDomains = sqliteTable(
 )
 
 export type SendingDomain = typeof sendingDomains.$inferSelect
+// ─────────────────────────────────────────────────────────── testimonials
+
+/**
+ * What a reader said about the writing, in their own words (gap.md
+ * "Testimonials", Kōlea `Kolea.Testimonials`).
+ *
+ * Written only by a **known subscriber**, through the personal link a
+ * `{{testimonial_link}}` merge tag puts in a marketing mail. The link carries the
+ * subscriber's own token, so opening it *is* the proof of address — there is no
+ * email field on the form and no confirmation mail (Kōlea's reading: the token
+ * confirms). `subscriber_id` is NOT NULL and cascades: forgetting a person
+ * forgets what they wrote.
+ *
+ * Two owners, two decisions, two columns:
+ *   * `may_publish` is the **person's** permission, ticked on the form. Never
+ *     editable by the operator — the operator cannot approve what the person
+ *     did not allow (enforced in `core/testimonials.ts`).
+ *   * `status` is the **operator's** moderation: `pending` until decided,
+ *     `approved` to show it, `hidden` to take it down without deleting it.
+ *
+ * The wall shows `status = 'approved' AND may_publish = 1`, and nothing else.
+ * `display_name` is what the wall prints; the subscriber's email never leaves
+ * the admin.
+ */
+export const testimonials = sqliteTable(
+  'testimonials',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    subscriberId: integer('subscriber_id')
+      .notNull()
+      .references(() => subscribers.id, { onDelete: 'cascade' }),
+    displayName: text('display_name').notNull(),
+    /** Plain text as typed. Escaped on every render, never stored as HTML. */
+    body: text('body').notNull(),
+    mayPublish: integer('may_publish', { mode: 'boolean' }).notNull().default(false),
+    status: text('status', { enum: ['pending', 'approved', 'hidden'] })
+      .notNull()
+      .default('pending'),
+    createdAt: ts('created_at').notNull(),
+    decidedAt: ts('decided_at'),
+  },
+  (t) => [
+    index('testimonials_status_idx').on(t.status, t.createdAt),
+    // The per-subscriber rate limit counts recent rows on this.
+    index('testimonials_subscriber_idx').on(t.subscriberId, t.createdAt),
+  ],
+)
+
+export type Testimonial = typeof testimonials.$inferSelect

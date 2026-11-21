@@ -976,6 +976,8 @@ const NAV: ({ grp: string } | { href: string; key: string; label: string })[] = 
   // an enrollment — effectively undiscoverable.
   { href: '/tags', key: 'tags', label: 'Tags & automation' },
   { href: '/segments', key: 'segs', label: 'Segments' },
+  // What the people on the list say back, waiting on a yes before the wall.
+  { href: '/testimonials', key: 'testi', label: 'Testimonials' },
   // ⭐ Mail sits directly under the audience: who is on the list, then what
   // goes out to them — the two screens used every day, at the top.
   { grp: 'Mail' },
@@ -1010,6 +1012,8 @@ const NAV: ({ grp: string } | { href: string; key: string; label: string })[] = 
   // magnet is built and where the file lives, and it was unfindable one level in.
   { href: '/forms', key: 'forms', label: 'Forms' },
   { href: '/sales', key: 'sales', label: 'Sales' },
+  // Bookkeeping for the years before Stripe: next to the ledger it fills in.
+  { href: '/sales/import', key: 'simport', label: 'Import sales' },
   // Directly under Sales, because that is where it is used from: a sale is the
   // thing you press the button on, and this is what the button says.
   { href: '/purchase-mail', key: 'pmail', label: 'Purchase mail' },

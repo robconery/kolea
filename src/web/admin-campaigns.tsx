@@ -1379,6 +1379,11 @@ campaignsAdmin.get('/sales', async (c) => {
           <h1>Sales</h1>
           <div class="sub">Money, posted in from wherever your checkout lives.</div>
         </div>
+        <div class="actions">
+          <a class="btn" href="/sales/import">
+            Import past sales
+          </a>
+        </div>
       </div>
 
       <CampaignTabs on="sales" />

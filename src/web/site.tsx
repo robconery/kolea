@@ -18,6 +18,7 @@ import {
   renderSitePage,
   renderSubscribe,
   renderTag,
+  renderTestimonials,
   siteConfig,
 } from '../core/theme/site.ts'
 import {
@@ -56,6 +57,7 @@ import type { Env } from '../types.ts'
  *   /<slug>                a post with no tags — or a redirect to /<tag>/<slug>
  *   /author/<slug>         the author's archive (there is one author)
  *   /offers  /offers/<slug>  (POST …/buy)  /offers/return  /offers/cancel
+ *   /testimonials          what readers said, once approved
  *   /search?q=  /subscribe  /feed.xml  /sitemap.xml  /robots.txt  /assets/*
  *
  * The signup form posts to the ordinary public form endpoint on the admin host,
@@ -231,6 +233,12 @@ site.get('/search', async (c) => {
 site.get('/subscribe', async (c) => {
   const req = await siteRequest(c)
   return send(c, await renderSubscribe(req), req)
+})
+
+/** The testimonials wall. Above `/:slug` so a post can never shadow it. */
+site.get('/testimonials', async (c) => {
+  const req = await siteRequest(c)
+  return send(c, await renderTestimonials(req), req)
 })
 
 site.get('/author/:slug', async (c) => {
