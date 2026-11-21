@@ -1,4 +1,4 @@
-import { and, count, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm'
+import { and, count, desc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm'
 import type { Db } from '../db/index.ts'
 import type { DocNode, SegmentRule } from '../db/schema.ts'
 import { broadcasts, events, messages } from '../db/schema.ts'
@@ -6,7 +6,7 @@ import type { Env } from '../types.ts'
 import { canReceiveBroadcastIn, loadConsentSnapshot } from './consent.ts'
 import { publishPost } from './posts.ts'
 import { audienceUpperBound, countSegment, resolveSegment } from './segments.ts'
-import { dispatch } from './sending.ts'
+import { CLAIM_LEASE_MS, dispatch } from './sending.ts'
 
 // ─────────────────────────────────────────────────── authoring
 
@@ -202,7 +202,7 @@ export async function cancelBroadcast(
   // Anything already queued would otherwise still go out when its batch runs.
   await db
     .update(messages)
-    .set({ status: 'failed', error: 'broadcast cancelled' })
+    .set({ status: 'failed', error: 'broadcast cancelled', claimedAt: null })
     .where(and(eq(messages.broadcastId, id), eq(messages.status, 'queued')))
   return { ok: true, alreadySent: sent?.n ?? 0 }
 }
@@ -248,7 +248,7 @@ export async function resumeBroadcast(
   for (let i = 0; i < ids.length; i += 90) {
     await db
       .update(messages)
-      .set({ status: 'queued', error: null })
+      .set({ status: 'queued', error: null, claimedAt: null })
       .where(inArray(messages.id, ids.slice(i, i + 90)))
   }
 
@@ -295,10 +295,29 @@ const PAGE = 2000
 /** D1 allows 100 bound parameters per query; `messages` binds 9 per row. */
 const INSERT_CHUNK = 10
 /**
- * Pages driven per invocation. Four pages ≈ 900 queries, which fits the cap with
- * headroom; anything still outstanding is picked up by the next cron tick.
+ * Pages driven per invocation when nothing else shares it. Four pages ≈ 900
+ * queries; anything still outstanding is picked up by the next cron tick.
  */
 const MAX_PAGES = 4
+/**
+ * What one page costs, as an upper bound for the cron's `QueryBudget`: 200
+ * inserts, the segment, the consent snapshot, the cursor and the bookkeeping.
+ */
+export const QUERIES_PER_PAGE = 230
+/**
+ * Pages the cron drives in a minute it also runs the sequence tick: three
+ * (≈690 queries) leaves the drip ~200 of the 900 budget. ~6,000 recipients a
+ * minute instead of ~8,000, in exchange for a tick that cannot hit the cap.
+ */
+export const CRON_PAGES = 3
+/**
+ * How old a still-queued row must be before a later pass hands it over again.
+ * Longer than the send claim, so a row a consumer holds right now is never
+ * the one being re-sent; the claim makes a second hand-over harmless anyway.
+ */
+const STRANDED_AFTER_MS = CLAIM_LEASE_MS
+/** Stranded rows handed over per pass. */
+const STRANDED_PAGE = 500
 
 /**
  * Materialize one page of `messages` rows for a broadcast and dispatch them.
@@ -367,7 +386,7 @@ export async function dispatchBroadcastPage(
       : await resolveSegment(db, b.segment ?? {}, b.cursorSubscriberId, PAGE, upper)
 
   if (candidates.length === 0) {
-    await closeIfFinished(db, broadcastId)
+    await closeIfFinished(env, db, broadcastId)
     return { materialized: 0, done: true }
   }
 
@@ -416,18 +435,63 @@ export async function dispatchBroadcastPage(
   // queued (an inline send, or a page that was all suppressed); otherwise the
   // queue still holds mail and the next tick closes it.
   const done = candidates.length < PAGE || lastId >= upper
-  if (done) await closeIfFinished(db, broadcastId)
+  if (done) await closeIfFinished(env, db, broadcastId)
   return { materialized: created.length, done }
 }
 
-/** `sent` once the walk is over and no message for it is still `queued` (SPEC 3.7). */
-async function closeIfFinished(db: Db, broadcastId: number): Promise<void> {
-  const remaining = await db
-    .select({ n: count() })
-    .from(messages)
-    .where(and(eq(messages.broadcastId, broadcastId), eq(messages.status, 'queued')))
-    .get()
-  if ((remaining?.n ?? 0) > 0) return
+/**
+ * `sent` once the walk is over and no message for it is still `queued` (SPEC 3.7).
+ *
+ * ⭐ A queued row can be stranded: a page that died after inserting its rows
+ * but before `dispatch` leaves them `queued` with nothing in the queue for
+ * them, and the rerun's `onConflictDoNothing` insert hands back none of them.
+ * Left alone they would hold this broadcast in `sending` forever, and every
+ * later broadcast queues up behind it. So once the walk is over, queued rows
+ * that were never attempted and are old enough that nobody can still be
+ * working on them (no provider id, no error, no live claim) are handed over
+ * again. Safe to repeat: `sendMessages` claims a
+ * row atomically and skips anything no longer queued, so a row that did reach
+ * the queue after all is still sent once.
+ */
+async function closeIfFinished(env: Env, db: Db, broadcastId: number): Promise<void> {
+  const queuedLeft = async () =>
+    (
+      await db
+        .select({ n: count() })
+        .from(messages)
+        .where(and(eq(messages.broadcastId, broadcastId), eq(messages.status, 'queued')))
+        .get()
+    )?.n ?? 0
+  if ((await queuedLeft()) > 0) {
+    const cutoff = new Date(Date.now() - STRANDED_AFTER_MS)
+    const stranded = await db
+      .select({ id: messages.id })
+      .from(messages)
+      .where(
+        and(
+          eq(messages.broadcastId, broadcastId),
+          eq(messages.status, 'queued'),
+          isNull(messages.providerMessageId),
+          // Never attempted. A row with an error has been to a consumer and is
+          // in the queue's own retry cycle, which ends in sent or a visible
+          // dead-letter failure; handing it over again would only multiply it.
+          isNull(messages.error),
+          lt(messages.createdAt, cutoff),
+          or(isNull(messages.claimedAt), lt(messages.claimedAt, cutoff)),
+        ),
+      )
+      .limit(STRANDED_PAGE)
+      .all()
+    if (stranded.length === 0) return
+    await dispatch(
+      env,
+      db,
+      stranded.map((m) => m.id),
+    )
+    // Sent inline (no queue bound) they may all be done now; with a queue
+    // they are in flight and a later tick closes the broadcast.
+    if ((await queuedLeft()) > 0) return
+  }
   await db
     .update(broadcasts)
     .set({ status: 'sent', sentAt: new Date() })

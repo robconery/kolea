@@ -344,6 +344,13 @@
       "when": 1795250425414,
       "tag": "0048_charming_lethal_legion",
       "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "6",
+      "when": 1795251003983,
+      "tag": "0049_sad_blindfold",
+      "breakpoints": true
     }
   ]
 }

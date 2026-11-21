@@ -63,14 +63,20 @@ export interface PageResult {
   notes: ImportNote[]
 }
 
-/** D1 binds at most 100 parameters per statement. */
-const MAX_PARAMS = 100
+/**
+ * D1 binds at most 100 parameters per statement. Every chunk in this file is
+ * sized from 90, not 100, so the handful of fixed parameters a statement adds
+ * beside its list (a status, a timestamp, an `in ('active','pending')`) can
+ * never tip it over. Sizing each chunk as "100 minus what I count today"
+ * broke the first time a statement grew a parameter.
+ */
+const PARAMS = 90
 const chunk = <T>(items: T[], size: number): T[][] => {
   const out: T[][] = []
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size))
   return out
 }
-const rowsPer = (columns: number) => Math.floor(MAX_PARAMS / columns)
+const rowsPer = (columns: number) => Math.floor(PARAMS / columns)
 
 const empty = (): PageResult => ({ created: 0, updated: 0, skipped: 0, invalid: 0, detail: {}, notes: [] })
 
@@ -141,7 +147,7 @@ async function ensureTags(
   const ids = new Map<string, number>()
   if (slugs.length === 0) return { ids, created: 0 }
 
-  for (const part of chunk(slugs, MAX_PARAMS)) {
+  for (const part of chunk(slugs, PARAMS)) {
     for (const t of await db.select({ id: tags.id, slug: tags.slug }).from(tags).where(inArray(tags.slug, part))) {
       ids.set(t.slug, t.id)
     }
@@ -176,7 +182,7 @@ async function linkTags(db: Db, pairs: [number, number][], now: number): Promise
 
 async function existingPeople(db: Db, emails: string[]) {
   const out = new Map<string, { id: number; status: string; name: string | null }>()
-  for (const part of chunk(emails, MAX_PARAMS)) {
+  for (const part of chunk(emails, PARAMS)) {
     const rows = await db
       .select({ id: subscribers.id, email: subscribers.email, status: subscribers.status, name: subscribers.name })
       .from(subscribers)
@@ -220,7 +226,7 @@ async function writeSubscribers(db: Db, ctx: WriteContext, records: ImportedSubs
   const emails = known.map((r) => r.email)
   const existing = await existingPeople(db, emails)
   const suppressed = new Set<string>()
-  for (const part of chunk(emails, MAX_PARAMS)) {
+  for (const part of chunk(emails, PARAMS)) {
     for (const s of await db.select({ email: suppressions.email }).from(suppressions).where(inArray(suppressions.email, part))) {
       suppressed.add(s.email)
     }
@@ -271,7 +277,7 @@ async function writeSubscribers(db: Db, ctx: WriteContext, records: ImportedSubs
   })
   for (const status of ['unsubscribed', 'bounced', 'complained'] as const) {
     const group = narrowed.filter((r) => r.status === status).map((r) => existing.get(r.email)!.id)
-    for (const part of chunk(group, MAX_PARAMS - 3)) {
+    for (const part of chunk(group, PARAMS)) {
       await db
         .update(subscribers)
         .set({
@@ -415,7 +421,7 @@ async function writeBroadcasts(db: Db, ctx: WriteContext, records: ImportedBroad
   const done = new Set<string>()
   for (const part of chunk(
     sent.map((b) => b.sourceId),
-    MAX_PARAMS - 1,
+    PARAMS,
   )) {
     const rows = await db
       .select({ id: broadcasts.importedSourceId })
@@ -426,7 +432,7 @@ async function writeBroadcasts(db: Db, ctx: WriteContext, records: ImportedBroad
   // The one-off Kit archive has no source ids: same subject at the same moment
   // is the same mail, exactly as `scripts/import-kit-content.ts` decided.
   const sameSend = new Set<string>()
-  for (const part of chunk([...new Set(sent.map((b) => b.sentAt!))], MAX_PARAMS)) {
+  for (const part of chunk([...new Set(sent.map((b) => b.sentAt!))], PARAMS)) {
     const rows = await db
       .select({ subject: broadcasts.subject, sentAt: broadcasts.sentAt })
       .from(broadcasts)
@@ -435,7 +441,7 @@ async function writeBroadcasts(db: Db, ctx: WriteContext, records: ImportedBroad
   }
   const taken = new Set<string>()
   const wanted = sent.map((b) => b.slug).filter((s): s is string => !!s)
-  for (const part of chunk(wanted, MAX_PARAMS)) {
+  for (const part of chunk(wanted, PARAMS)) {
     for (const r of await db.select({ slug: broadcasts.slug }).from(broadcasts).where(inArray(broadcasts.slug, part))) {
       if (r.slug) taken.add(r.slug)
     }
@@ -504,7 +510,7 @@ async function writeSequences(db: Db, ctx: WriteContext, records: ImportedSequen
   const done = new Set<string>()
   for (const part of chunk(
     records.map((s) => s.sourceId),
-    MAX_PARAMS - 1,
+    PARAMS,
   )) {
     const rows = await db
       .select({ id: sequences.importedSourceId })
@@ -515,7 +521,7 @@ async function writeSequences(db: Db, ctx: WriteContext, records: ImportedSequen
   const taken = new Set<string>()
   for (const part of chunk(
     records.map((s) => slugify(s.name)),
-    MAX_PARAMS,
+    PARAMS,
   )) {
     for (const r of await db.select({ slug: sequences.slug }).from(sequences).where(inArray(sequences.slug, part))) {
       taken.add(r.slug)

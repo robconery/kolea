@@ -10,6 +10,7 @@ import {
   sequences,
   subscriberTags,
   subscribers,
+  syncRuns,
   tags,
 } from '../db/schema.ts'
 import type { Env } from '../types.ts'
@@ -19,10 +20,23 @@ import { canReceiveSequence } from './consent.ts'
 import { slugify } from './ids.ts'
 import { type SendWindow, checkWindow, nextWindowOpen, windowOpen } from './send-window.ts'
 import { dispatch } from './sending.ts'
+import type { QueryBudget } from './query-budget.ts'
 import { getTimeZone } from './site-settings.ts'
 import { findPlaceholders } from './sequence-templates/placeholders.ts'
 
-const TICK_LIMIT = 200
+/**
+ * Most enrollments one tick takes. The send path costs about
+ * `QUERIES_PER_ENROLLMENT` D1 queries each, so 120 is ~840 — the whole
+ * 1,000-query cap on a quiet minute. A cron tick passes a `QueryBudget` and
+ * takes fewer when a broadcast shares the minute; the rest wait a minute.
+ */
+const TICK_LIMIT = 120
+/** Step, person, consent (2), insert, steps, update: the send path's queries. */
+export const QUERIES_PER_ENROLLMENT = 7
+/** The due read, the zone, the held updates, chaining and the activity flush. */
+const TICK_OVERHEAD = 20
+/** D1 binds at most 100 parameters; leaves room for the fixed ones. */
+const ID_CHUNK = 90
 const DAY_MS = 24 * 60 * 60 * 1000
 
 /** Whole days, clamped to a year. Shared by the admin form and the MCP tools. */
@@ -224,7 +238,17 @@ export async function exitOnTag(db: Db, subscriberId: number, tagId: number): Pr
  * operator's time zone, and the tick that runs then sends it. Nothing is sent
  * outside the window, and nothing due is ever lost.
  */
-export async function tickSequences(env: Env, db: Db, now: Date = new Date()): Promise<number> {
+export async function tickSequences(
+  env: Env,
+  db: Db,
+  now: Date = new Date(),
+  opts: { budget?: QueryBudget } = {},
+): Promise<number> {
+  const limit = opts.budget
+    ? opts.budget.fits(QUERIES_PER_ENROLLMENT, TICK_LIMIT, TICK_OVERHEAD)
+    : TICK_LIMIT
+  if (limit === 0) return 0
+
   const due = await db
     .select({
       enrollmentId: sequenceEnrollments.id,
@@ -243,8 +267,9 @@ export async function tickSequences(env: Env, db: Db, now: Date = new Date()): P
         lte(sequenceEnrollments.nextRunAt, now),
       ),
     )
-    .limit(TICK_LIMIT)
+    .limit(limit)
     .all()
+  opts.budget?.spend(TICK_OVERHEAD + QUERIES_PER_ENROLLMENT * due.length)
 
   const toSend: number[] = []
 
@@ -375,16 +400,46 @@ export async function tickSequences(env: Env, db: Db, now: Date = new Date()): P
   }
 
   for (const { window, ids } of held.values()) {
-    await db
-      .update(sequenceEnrollments)
-      .set({ nextRunAt: nextWindowOpen(window, now, zone!) })
-      .where(and(inArray(sequenceEnrollments.id, ids), eq(sequenceEnrollments.status, 'active')))
+    const opens = nextWindowOpen(window, now, zone!)
+    for (let i = 0; i < ids.length; i += ID_CHUNK) {
+      await db
+        .update(sequenceEnrollments)
+        .set({ nextRunAt: opens })
+        .where(
+          and(inArray(sequenceEnrollments.id, ids.slice(i, i + ID_CHUNK)), eq(sequenceEnrollments.status, 'active')),
+        )
+    }
   }
 
   activity.push(...(await chainFinished(db, finished, now)))
   await logActivities(db, activity)
   await dispatch(env, db, toSend)
   return toSend.length
+}
+
+/**
+ * Write down a minutely tick that threw, as a `sync_runs` row the Logs show
+ * under Sequences. The cron catches the throw so the broadcast and the rest of
+ * the minute still run; this is what keeps that catch from being a silence.
+ * The tick itself is idempotent, so the next minute simply tries again.
+ */
+export async function recordTickFailure(db: Db, error: unknown, now: Date = new Date()): Promise<void> {
+  // Drizzle wraps the driver's error in "Failed query: <sql>"; the cause is the
+  // part a person can act on.
+  const reason =
+    error instanceof Error
+      ? error.cause instanceof Error
+        ? error.cause.message
+        : error.message
+      : String(error)
+  await db.insert(syncRuns).values({
+    kind: 'sequence_tick',
+    trigger: 'cron',
+    status: 'failed',
+    notes: [reason.slice(0, 500)],
+    startedAt: now,
+    finishedAt: now,
+  })
 }
 
 /**

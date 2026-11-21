@@ -1,4 +1,4 @@
-import { type SQL, and, count, desc, eq, gte, lt, max, sql } from 'drizzle-orm'
+import { type SQL, and, count, desc, eq, gte, inArray, lt, max, sql } from 'drizzle-orm'
 import type { Db } from '../db/index.ts'
 import { messages, syncRuns } from '../db/schema.ts'
 import type { Env } from '../types.ts'
@@ -69,7 +69,8 @@ export async function healthReport(env: Env, db: Db): Promise<HealthReport> {
   const run = await db
     .select({ kind: syncRuns.kind, status: syncRuns.status, startedAt: syncRuns.startedAt })
     .from(syncRuns)
-    .where(eq(syncRuns.trigger, 'cron'))
+    // The nightly Stripe runs only: a failed sequence tick is a row here too.
+    .where(and(eq(syncRuns.trigger, 'cron'), inArray(syncRuns.kind, ['stripe', 'stripe_catalog'])))
     .orderBy(desc(syncRuns.startedAt))
     .limit(1)
     .get()

@@ -1,4 +1,4 @@
-import { desc, eq } from 'drizzle-orm'
+import { desc, eq, inArray } from 'drizzle-orm'
 import type { Db } from '../db/index.ts'
 import { syncRuns } from '../db/schema.ts'
 import type { Env } from '../types.ts'
@@ -295,6 +295,8 @@ export async function listSyncRuns(db: Db, limit = 20) {
   return await db
     .select()
     .from(syncRuns)
+    // Stripe's runs only; failed sequence ticks share the table (schema.ts).
+    .where(inArray(syncRuns.kind, ['stripe', 'stripe_catalog']))
     .orderBy(desc(syncRuns.startedAt))
     .limit(limit)
     .all()

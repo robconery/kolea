@@ -1324,6 +1324,16 @@ export const messages = sqliteTable(
     providerMessageId: text('provider_message_id'),
     idempotencyKey: text('idempotency_key'),
     error: text('error'),
+    /**
+     * ⭐ The send claim: set by `sendMessages` in ONE conditional update
+     * (`status = 'queued'` and no live claim) before the provider is called,
+     * cleared again when a retryable failure puts the row back in line. Two
+     * consumers holding the same queued row (a queue redelivery, or a stranded
+     * broadcast row handed over again) can therefore never both send it: only
+     * the one whose update matched goes on. A claim older than
+     * `CLAIM_LEASE_MS` belongs to a consumer that died, and is free again.
+     */
+    claimedAt: ts('claimed_at'),
     createdAt: ts('created_at').notNull(),
     sentAt: ts('sent_at'),
   },
@@ -1866,12 +1876,19 @@ export const oauthTokens = sqliteTable(
  * One row per external-data pull (currently Stripe). The cursor makes the next
  * run incremental; the counts make a silent no-op distinguishable from a silent
  * failure, which a nightly job otherwise never is.
+ *
+ * `sequence_tick` rows are the exception: a FAILED minutely sequence tick, and
+ * only a failed one (a row a minute on success would be 1,440 a day of noise).
+ * The tick is caught so it cannot stop the broadcast behind it, and a caught
+ * failure needs a row, or the drip could stall for days with nothing to show.
+ * The counts stay 0 and `notes` holds the error. Health and the Stripe screens
+ * read the Stripe kinds only.
  */
 export const syncRuns = sqliteTable(
   'sync_runs',
   {
     id: integer('id').primaryKey({ autoIncrement: true }),
-    kind: text('kind', { enum: ['stripe', 'stripe_catalog'] }).notNull(),
+    kind: text('kind', { enum: ['stripe', 'stripe_catalog', 'sequence_tick'] }).notNull(),
     trigger: text('trigger', { enum: ['cron', 'mcp', 'preview', 'webhook'] }).notNull(),
     status: text('status', { enum: ['running', 'ok', 'partial', 'failed'] })
       .notNull()

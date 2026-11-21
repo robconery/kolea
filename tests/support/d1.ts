@@ -27,13 +27,16 @@
  *   SQLite happily takes here, which would make a test more permissive than
  *   production.
  *
+ * - **The 100-bound-parameter cap.** A statement binding more than 100 values
+ *   throws here as it does on D1, so an unchunked `inArray` fails a spec
+ *   instead of production.
+ * - **Statements are counted** (`queryCount`), so a spec can hold one
+ *   invocation to D1's 1,000-query cap. Counting, not refusing: the cap is per
+ *   Worker invocation and a spec decides where one begins (`resetQueryCount`).
+ *
  * ## What is not modelled
  *
- * Network failure, the 1,000-query-per-invocation cap, and the 100-bound-parameter
- * cap. Those are platform limits the code is written *against* (see
- * `docs/ARCHITECTURE.md` → Platform limits); the chunking that respects them is
- * visible in the source and is asserted where it is cheap to, but a local SQLite
- * cannot make exceeding them fail.
+ * Network failure.
  */
 import { Database } from 'bun:sqlite'
 
@@ -82,19 +85,30 @@ function meta(overrides: Partial<Meta> = {}): Meta {
   }
 }
 
+/** D1's cap on bound parameters per statement. */
+export const D1_MAX_PARAMS = 100
+
 /** One prepared statement, with its bound parameters. Immutable, like D1's. */
 class FakeD1PreparedStatement {
   constructor(
     private readonly db: Database,
     private readonly sql: string,
+    private readonly counter: { queries: number },
     private readonly params: Bindable[] = [],
   ) {}
 
   bind(...values: unknown[]): FakeD1PreparedStatement {
-    return new FakeD1PreparedStatement(this.db, this.sql, values.map(coerce))
+    // D1 refuses a statement with more than 100 bound parameters. Modelled,
+    // because exceeding it is a production-only 500 that a local SQLite would
+    // otherwise run happily (it allows 32,766).
+    if (values.length > D1_MAX_PARAMS) {
+      throw new Error(`D1_ERROR: too many SQL variables (${values.length} > ${D1_MAX_PARAMS})`)
+    }
+    return new FakeD1PreparedStatement(this.db, this.sql, this.counter, values.map(coerce))
   }
 
   async first<T = unknown>(column?: string): Promise<T | null> {
+    this.counter.queries++
     const row = this.db.query(this.sql).get(...this.params) as Record<string, unknown> | null
     if (row === null) return null
     return (column === undefined ? row : (row[column] ?? null)) as T
@@ -105,6 +119,7 @@ class FakeD1PreparedStatement {
    * which is how Drizzle's `.returning()` gets its rows back.
    */
   async all<T = unknown>(): Promise<{ success: true; results: T[]; meta: Meta }> {
+    this.counter.queries++
     const results = this.db.query(this.sql).all(...this.params) as T[]
     return {
       success: true,
@@ -118,6 +133,7 @@ class FakeD1PreparedStatement {
 
   /** Positional rows, used by Drizzle when it maps columns itself. */
   async raw<T = unknown[]>(options?: { columnNames?: boolean }): Promise<T[]> {
+    this.counter.queries++
     const stmt = this.db.query(this.sql)
     const rows = stmt.values(...this.params) as T[]
     if (!options?.columnNames) return rows
@@ -128,6 +144,7 @@ class FakeD1PreparedStatement {
     // `run` has to cope with RETURNING too: SQLite reports zero changes for a
     // statement whose rows were never stepped through, so read it as a query and
     // fall back to the write path only when there was nothing to read.
+    this.counter.queries++
     const stmt = this.db.query(this.sql)
     const results = stmt.all(...this.params) as T[]
     const changes = this.db.query('select changes() as n').get() as { n: number }
@@ -151,10 +168,13 @@ class FakeD1PreparedStatement {
  * `core/` relies on a batch rolling back.
  */
 export class FakeD1Database {
+  /** Statements run so far; D1 counts each one, batched or not, toward its 1,000. */
+  readonly counter = { queries: 0 }
+
   constructor(readonly sqlite: Database) {}
 
   prepare(sql: string): FakeD1PreparedStatement {
-    return new FakeD1PreparedStatement(this.sqlite, sql)
+    return new FakeD1PreparedStatement(this.sqlite, sql, this.counter)
   }
 
   async batch<T = unknown>(statements: FakeD1PreparedStatement[]) {
@@ -192,4 +212,13 @@ export function freshD1(): D1Database {
   const sqlite = new Database(':memory:')
   sqlite.run('PRAGMA foreign_keys = ON')
   return new FakeD1Database(sqlite) as unknown as D1Database
+}
+
+/** Statements run against a `freshD1()` since it was made or last reset. */
+export function queryCount(d1: D1Database): number {
+  return (d1 as unknown as FakeD1Database).counter.queries
+}
+
+export function resetQueryCount(d1: D1Database): void {
+  ;(d1 as unknown as FakeD1Database).counter.queries = 0
 }

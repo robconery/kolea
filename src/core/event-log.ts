@@ -12,7 +12,8 @@ import type { ActivityType } from './activity.ts'
  *   `broadcasts`    — when a send started and finished
  *   `messages`      — single mail sent, and every send that failed or was held
  *   `stripe_events` — every webhook and what we did with it
- *   `sync_runs`     — every nightly reconcile and what it found
+ *   `sync_runs`     — every nightly reconcile and what it found, and every
+ *                     minutely sequence tick that failed
  *   `audit_entries` — every console and API-key write, refusals included
  *   `mcp_calls`     — every agent tool call, refusals included
  *
@@ -135,6 +136,7 @@ export const LOG_TYPES: LogType[] = [
   t('sequence.cancelled', 'sequences', 'Someone was taken out of a sequence (bought, bounced, exit tag).'),
   t('sequence.left', 'sequences', 'Someone chose to leave one sequence.', 'warning'),
   t('sequence.rejoined', 'sequences', 'Someone rejoined a sequence.'),
+  t('sequence.tick_failed', 'sequences', 'The minutely sequence run failed; it tries again next minute.', 'error'),
   t('broadcast.started', 'broadcasts', 'A broadcast started sending.'),
   t('broadcast.finished', 'broadcasts', 'A broadcast finished, with how many were sent.'),
   t('mail.sent', 'mail', 'A single (transactional or form) mail was sent.'),
@@ -295,7 +297,8 @@ const BRANCHES: Branch[] = [
     src: 'sr',
     select: (floor) => sql`
       select 'sr' as src, r.id as sid, coalesce(r.finished_at, r.started_at) as at,
-        'sync.' || r.status as type, null as name, null as email, r.kind as ref,
+        case when r.kind = 'sequence_tick' then 'sequence.tick_failed' else 'sync.' || r.status end as type,
+        null as name, null as email, r.kind as ref,
         r.charges_seen as n1, r.sales_recorded as n2,
         case when r.notes = '[]' then null else r.notes end as detail, r.trigger as x, null as target,
         lower(r.kind || ' ' || r.notes) as hay
@@ -410,9 +413,14 @@ export async function searchLog(
   }
 
   const floor = now - LOG_RETENTION_DAYS * DAY_MS
+  const typesJson = types ? JSON.stringify(types) : null
   const parts = BRANCHES.map((b) => {
     const where: SQL[] = []
-    if (types) where.push(sql`type in (${sql.join(types.map((x) => sql`${x}`), sql`, `)})`)
+    // ⚠️ One JSON parameter per branch, not one per type: a category holds up to
+    // 13 types and there are 8 branches, which is past D1's 100-parameter cap.
+    // It stays inside each branch (not on the outer query) because each branch
+    // is cut at the page size, and cutting before filtering would lose rows.
+    if (typesJson) where.push(sql`type in (select value from json_each(${typesJson}))`)
     if (q) where.push(sql`(hay || ' ' || type) like ${`%${escapeLike(q)}%`} escape '\\'`)
     if (cursor) where.push(afterCursor(b.src, cursor))
     const whereSql = where.length ? sql`where ${sql.join(where, sql` and `)}` : sql``
@@ -549,6 +557,8 @@ function describe(r: Row): string {
         : `${syncName(r.ref)} finished`
     case 'sync.failed':
       return `${syncName(r.ref)} failed`
+    case 'sequence.tick_failed':
+      return 'The sequence run failed; it tries again next minute'
     case 'audit.ok':
     case 'audit.denied':
     case 'audit.error':

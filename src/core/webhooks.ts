@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, lte } from 'drizzle-orm'
+import { and, asc, count, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm'
 import type { Db } from '../db/index.ts'
 import {
   WEBHOOK_EVENTS,
@@ -53,8 +53,12 @@ export { WEBHOOK_EVENTS, type WebhookEvent }
 export const MAX_ATTEMPTS = 8
 /** Failed deliveries in a row before an endpoint is switched off. Kōlea's number. */
 export const DISABLE_AFTER = 15
-/** How many due deliveries one cron pass takes. ~2 queries each, POSTed in parallel. */
+/** How many due deliveries one cron pass takes, POSTed in parallel. */
 export const DELIVERY_PAGE = 20
+/** Count the attempt, record the answer, settle the endpoint: per delivery. */
+export const QUERIES_PER_DELIVERY = 3
+/** The due read, the claim and the join, once per pass. */
+export const DELIVERY_PASS_OVERHEAD = 3
 /** A claimed row is invisible to other passes for this long, in case this one dies mid-POST. */
 const LEASE_MS = 5 * 60 * 1000
 
@@ -576,6 +580,23 @@ async function attempt(
 ): Promise<Judged['state']> {
   const n = d.attempts + 1
   const last = n >= MAX_ATTEMPTS
+
+  // ⭐ Count the attempt BEFORE the POST, with its backoff. If writing down the
+  // answer afterwards fails, the row is already one attempt further on and
+  // waits its backoff; it is not re-sent at every lease expiry, uncounted,
+  // forever. The last attempt is pre-marked `failed` for the same reason: a
+  // result that never lands must still end in a visible give-up (with its
+  // Redeliver button), never a row that stays pending for good.
+  await db
+    .update(webhookDeliveries)
+    .set({
+      attempts: n,
+      lastAttemptAt: now,
+      nextAttemptAt: last ? null : new Date(now.getTime() + backoffSeconds(n) * 1000),
+      ...(last ? { status: 'failed' as const, lastError: 'the result of the last attempt was never recorded' } : {}),
+    })
+    .where(eq(webhookDeliveries.id, d.id))
+
   let judged: Judged
 
   if (!e.isActive) {
@@ -642,7 +663,11 @@ async function attempt(
   return judged.state
 }
 
-/** A success resets the failure count; a give-up adds one, and too many switch it off. */
+/**
+ * A success resets the failure count; a give-up adds one, and too many switch
+ * it off. Both are atomic on the row: deliveries to one endpoint settle in
+ * parallel, so a count read earlier and written back would lose the others'.
+ */
 async function settleEndpoint(db: Db, e: WebhookEndpoint, state: Judged['state'], now: Date) {
   if (state === 'pending') return
   if (state === 'delivered') {
@@ -652,21 +677,26 @@ async function settleEndpoint(db: Db, e: WebhookEndpoint, state: Judged['state']
       .where(eq(webhookEndpoints.id, e.id))
     return
   }
-  if (!e.isActive) return
-  const failures = e.consecutiveFailures + 1
+  const [row] = await db
+    .update(webhookEndpoints)
+    .set({ consecutiveFailures: sql`${webhookEndpoints.consecutiveFailures} + 1` })
+    .where(and(eq(webhookEndpoints.id, e.id), eq(webhookEndpoints.isActive, true)))
+    .returning({ failures: webhookEndpoints.consecutiveFailures })
+  if (!row || row.failures < DISABLE_AFTER) return
   await db
     .update(webhookEndpoints)
-    .set(
-      failures >= DISABLE_AFTER
-        ? {
-            consecutiveFailures: failures,
-            isActive: false,
-            disabledReason: `switched off after ${failures} failed deliveries in a row`,
-            disabledAt: now,
-          }
-        : { consecutiveFailures: failures },
+    .set({
+      isActive: false,
+      disabledReason: `switched off after ${row.failures} failed deliveries in a row`,
+      disabledAt: now,
+    })
+    .where(
+      and(
+        eq(webhookEndpoints.id, e.id),
+        eq(webhookEndpoints.isActive, true),
+        gte(webhookEndpoints.consecutiveFailures, DISABLE_AFTER),
+      ),
     )
-    .where(eq(webhookEndpoints.id, e.id))
 }
 
 export interface DeliveryPass {
@@ -678,9 +708,10 @@ export interface DeliveryPass {
 
 /**
  * One page of due deliveries: claim, POST in parallel, record. Called by the
- * minutely cron. About 2 + 2×page queries, so it never competes seriously with
- * the broadcast pages for D1's 1,000-query budget; a backlog drains a page a
- * minute, oldest first.
+ * minutely cron with `limit` sized from what the tick's `QueryBudget` has left
+ * (`DELIVERY_PASS_OVERHEAD` + `QUERIES_PER_DELIVERY` each). Mail goes first, so
+ * in a minute a broadcast spends the budget, `limit` is 0 and nothing starts;
+ * a backlog drains a page a minute, oldest first.
  */
 export async function deliverDueWebhooks(
   env: Env,
@@ -689,13 +720,15 @@ export async function deliverDueWebhooks(
 ): Promise<DeliveryPass> {
   const now = opts.now ?? new Date()
   const pass: DeliveryPass = { claimed: 0, delivered: 0, retrying: 0, failed: 0 }
+  const limit = opts.limit ?? DELIVERY_PAGE
+  if (limit <= 0) return pass
 
   const due = await db
     .select({ id: webhookDeliveries.id })
     .from(webhookDeliveries)
     .where(and(eq(webhookDeliveries.status, 'pending'), lte(webhookDeliveries.nextAttemptAt, now)))
     .orderBy(asc(webhookDeliveries.nextAttemptAt), asc(webhookDeliveries.id))
-    .limit(opts.limit ?? DELIVERY_PAGE)
+    .limit(limit)
     .all()
   if (due.length === 0) return pass
 
