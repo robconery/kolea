@@ -1,5 +1,5 @@
 import type { McpServer } from '@modelcontextprotocol/server'
-import { asc, eq } from 'drizzle-orm'
+import { asc } from 'drizzle-orm'
 import * as z from 'zod/v4'
 import { agentSendAllowed, agentSendRefusal } from '../../core/agents.ts'
 import {
@@ -13,53 +13,18 @@ import {
   resumeOutlook,
   reviseSentBroadcast,
   scheduleBroadcast,
-  startBroadcast,
   updateBroadcast,
 } from '../../core/broadcasts.ts'
-import { canReceiveBroadcastIn, loadConsentSnapshot } from '../../core/consent.ts'
-import { fieldKeys } from '../../core/fields.ts'
 import { mdToDoc } from '../../core/md-to-doc.ts'
-import { authoredLead, postUrl } from '../../core/posts.ts'
-import { previewHtml, renderEmail } from '../../core/render.ts'
-import { trackingBaseUrl } from '../../core/tracking-host.ts'
-import { countSegment, describeRule, getSegment, resolveSegment } from '../../core/segments.ts'
+import { previewHtml } from '../../core/render.ts'
+import { countSegment, describeRule, getSegment } from '../../core/segments.ts'
 import { sendPreview } from '../../core/sending.ts'
-import { MERGE_TAG } from '../../core/text.ts'
 import type { SegmentRule } from '../../db/schema.ts'
-import { subscribers, tags } from '../../db/schema.ts'
+import { tags } from '../../db/schema.ts'
 import { type Ctx, clampLimit, defineTool, fail, failed, ok } from '../kit.ts'
-import { consumePreflight, digestOf, mintPreflight } from '../preflight.ts'
-
-/**
- * Merge tags the renderer knows. Anything else is passed through to the reader
- * verbatim, braces and all — no error, no blank. Exactly the silent failure a
- * preflight exists to surface.
- */
-const BUILTIN_MERGE_FIELDS = ['name', 'first_name', 'email']
-
-/**
- * Segment pages the preflight walks. `resolveSegment` pages at 400 and each page
- * costs a handful of D1 queries, so five pages counts 2,000 people well inside
- * the 1,000-query cap. Beyond that the preflight reports what it counted.
- */
-const PREFLIGHT_PAGES = 5
-
-/** Tags nothing resolves. Declared custom fields count as known. */
-function unknownMergeFields(text: string, fieldKeys: readonly string[]): string[] {
-  const known = new Set([...BUILTIN_MERGE_FIELDS, ...fieldKeys])
-  const found = new Set<string>()
-  for (const m of text.matchAll(MERGE_TAG)) {
-    const field = m[1]!
-    if (!known.has(field)) found.add(field)
-  }
-  return [...found]
-}
+import { preflightBroadcast, sendBroadcastWithToken } from '../../core/send-preflight.ts'
 
 export function registerBroadcasts(server: McpServer, ctx: Ctx): void {
-  /** What the preflight token is bound to. Any edit to these invalidates it. */
-  const broadcastDigest = (b: { subject: string; bodyMd: string; bodyJson: unknown; segment: unknown }) =>
-    digestOf([b.subject, b.bodyMd, b.bodyJson, b.segment])
-
   defineTool(
     server,
     ctx,
@@ -291,129 +256,11 @@ export function registerBroadcasts(server: McpServer, ctx: Ctx): void {
       annotations: { readOnlyHint: true },
     },
     async ({ id }) => {
-      const b = await getBroadcast(ctx.db, id)
-      if (!b) return fail('No such broadcast.')
-      if (b.status !== 'draft') {
-        return fail(`Broadcast #${id} is ${b.status}, not a draft — there is nothing to preflight.`)
-      }
-
-      const totalCandidates = await countSegment(ctx.db, b.segment ?? {})
-
-      // Walk the same pages the real send walks, so the numbers here are the
-      // numbers that will happen. Capped: past the cap the counts become an
-      // extrapolation and the response says so rather than quietly rounding.
-      const blockedBy = new Map<string, number>()
-      let examined = 0
-      let willReceive = 0
-      let first: { id: number; email: string; status: string } | undefined
-      let cursor = 0
-
-      for (let page = 0; page < PREFLIGHT_PAGES; page++) {
-        const candidates = await resolveSegment(ctx.db, b.segment ?? {}, cursor)
-        if (!candidates.length) break
-
-        const snapshot = await loadConsentSnapshot(
-          ctx.db,
-          candidates.map((c) => c.email),
-        )
-        for (const c of candidates) {
-          const block = canReceiveBroadcastIn(snapshot, c)
-          if (block.blocked) blockedBy.set(block.reason, (blockedBy.get(block.reason) ?? 0) + 1)
-          else {
-            willReceive++
-            first ??= c
-          }
-        }
-
-        examined += candidates.length
-        cursor = candidates[candidates.length - 1]!.id
-      }
-
-      const partial = examined < totalCandidates
-      const sampleRow = first
-        ? await ctx.db
-            .select({ name: subscribers.name, attributes: subscribers.attributes })
-            .from(subscribers)
-            .where(eq(subscribers.id, first.id))
-            .get()
-        : undefined
-      const declared = await fieldKeys(ctx.db)
-
-      // Rendered against a real recipient where one exists, so the sample is the
-      // mail that will actually land rather than an idealized version of it.
-      const sample = renderEmail(
-        { json: b.bodyJson, md: b.bodyMd },
-        {
-          publicUrl: ctx.env.PUBLIC_URL,
-          trackingUrl: trackingBaseUrl(ctx.env),
-          messageId: 0,
-          unsubToken: 'sample-token',
-          scope: { kind: 'broadcast' },
-          scopeLabel: ctx.env.FROM_NAME,
-          subscriber: first
-            ? {
-                email: first.email,
-                name: sampleRow?.name ?? null,
-                attributes: sampleRow?.attributes,
-                fieldKeys: declared,
-              }
-            : { email: 'ada@example.com', name: 'Ada Lovelace', fieldKeys: declared },
-          subject: b.subject,
-          title: b.subject,
-          lead: authoredLead(b.excerpt, { json: b.bodyJson, md: b.bodyMd }),
-          postUrl: b.publishedAt ? postUrl(ctx.env.SITE_URL, b.slug) : null,
-          trackOpens: true,
-          trackClicks: true,
-          showFooter: true,
-        },
-      )
-
-      // The document too: a literal `{{plan}}` typed into the editor survives as
-      // text, and only declared fields are resolved from it.
-      const unresolved = unknownMergeFields(
-        `${b.subject} ${b.bodyMd} ${b.bodyJson ? JSON.stringify(b.bodyJson) : ''}`,
-        declared,
-      )
-      const allTags = await ctx.db.select().from(tags).orderBy(asc(tags.name)).all()
-      const { token, expiresAt } = await mintPreflight(
-        ctx.db,
-        'broadcast_send',
-        b.id,
-        await broadcastDigest(b),
-        willReceive,
-      )
-
-      const warnings: string[] = []
-      if (!willReceive) warnings.push('Nobody would receive this — the audience resolves to zero.')
-      if (unresolved.length) {
-        warnings.push(
-          `Unknown merge tags — these reach the reader literally, braces and all: ${unresolved
-            .map((f) => `{{${f}}}`)
-            .join(', ')}`,
-        )
-      }
-      if (!b.campaignId) warnings.push('No campaign — clicks will not be attributed to anything.')
-      if (!(await agentSendAllowed(ctx.env, ctx.db))) warnings.push(agentSendRefusal(ctx.env))
-      if (partial) {
-        warnings.push(
-          `Audience is larger than the preflight walks: counted the first ${examined} of ${totalCandidates}. The rest are filtered by the same rules at send time.`,
-        )
-      }
-
-      return ok({
-        broadcast: { id: b.id, subject: b.subject, status: b.status, campaignId: b.campaignId },
-        audience: describeRule(b.segment ?? {}, allTags),
-        candidates: totalCandidates,
-        examined,
-        willReceive,
-        countsAreComplete: !partial,
-        filteredOut: Object.fromEntries(blockedBy),
-        warnings,
-        sampleRenderedFor: first?.email ?? '(no real recipient — sample values used)',
-        sampleText: sample.text.slice(0, 2000),
-        preflight_token: token,
-        expiresAt,
-      })
+      const r = await preflightBroadcast(ctx.env, ctx.db, id)
+      if (!r.ok) return fail(r.reason)
+      // The agent switch is MCP's gate, so its warning is added here, not in core.
+      if (!(await agentSendAllowed(ctx.env, ctx.db))) r.report.warnings.push(agentSendRefusal(ctx.env))
+      return ok(r.report)
     },
   )
 
@@ -433,29 +280,16 @@ export function registerBroadcasts(server: McpServer, ctx: Ctx): void {
     async ({ id, preflight_token }) => {
       if (!(await agentSendAllowed(ctx.env, ctx.db))) return fail(agentSendRefusal(ctx.env))
 
-      const b = await getBroadcast(ctx.db, id)
-      if (!b) return fail('No such broadcast.')
-      if (b.status !== 'draft') return fail(`Broadcast #${id} is already ${b.status}.`)
-
-      const check = await consumePreflight(
-        ctx.db,
-        'broadcast_send',
-        id,
-        await broadcastDigest(b),
-        preflight_token,
-      )
-      if (!check.ok) {
-        return fail(
-          `Refusing to send: ${check.reason}.`,
-          `Call broadcast_preflight({ id: ${id} }) and pass the token it returns.`,
-        )
+      const r = await sendBroadcastWithToken(ctx.env, ctx.db, id, preflight_token)
+      if (!r.ok) {
+        return r.code === 'preflight'
+          ? fail(r.reason, `Call broadcast_preflight({ id: ${id} }) and pass the token it returns.`)
+          : fail(r.reason)
       }
-
-      const materialized = await startBroadcast(ctx.env, ctx.db, id)
       return ok({
         sending: true,
-        expectedRecipients: check.recipientCount,
-        materializedThisCall: materialized,
+        expectedRecipients: r.expectedRecipients,
+        materializedThisCall: r.materialized,
         note: 'Large sends continue across cron ticks. Poll broadcast_stats.',
       })
     },

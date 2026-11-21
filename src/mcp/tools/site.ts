@@ -1,7 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/server'
 import * as z from 'zod/v4'
-import { PROFILE_ICONS, ProfileLink, SOCIAL, WhatIDoItem, readProfile, validateProfile } from '../../core/site-profile.ts'
-import { getSiteSettings, saveSiteSettings, type SiteSettingsPatch } from '../../core/site-settings.ts'
+import { PROFILE_ICONS, ProfileLink, SOCIAL, WhatIDoItem, readProfile } from '../../core/site-profile.ts'
+import { applySiteUpdate, getSiteSettings } from '../../core/site-settings.ts'
 import { switchTheme, themeSummaries } from '../../core/theme/store.ts'
 import { type Ctx, defineTool, fail, failed, ok } from '../kit.ts'
 
@@ -62,35 +62,9 @@ export function registerSite(server: McpServer, ctx: Ctx): void {
       }),
     },
     async (input) => {
-      const current = await getSiteSettings(ctx.db)
-      const profile = readProfile(current?.profile)
-      const unknown = Object.keys(input.social ?? {}).filter((k) => !SOCIAL.some((n) => n.key === k))
-      if (unknown.length) return fail(`Unknown social key(s): ${unknown.join(', ')}. Use: ${SOCIAL.map((n) => n.key).join(', ')}.`)
-      const checked = validateProfile({
-        lede: input.lede ?? profile.lede,
-        what_i_do: input.what_i_do ?? profile.what_i_do,
-        links: input.links ?? profile.links,
-        // Merged key by key: setting GitHub never clears LinkedIn.
-        social: { ...profile.social, ...(input.social ?? {}) },
-      })
-      if (!checked.ok) return fail(checked.error)
-
-      const blank = (v: string | undefined) => (v === undefined ? undefined : v.trim() || null)
-      const patch: SiteSettingsPatch = { profile: checked.profile }
-      if (input.title !== undefined) patch.title = blank(input.title)
-      if (input.tagline !== undefined) patch.tagline = blank(input.tagline)
-      if (input.logoUrl !== undefined) patch.logoUrl = blank(input.logoUrl)
-      if (input.authorName !== undefined) patch.authorName = blank(input.authorName)
-      if (input.authorPhotoUrl !== undefined) patch.authorPhotoUrl = blank(input.authorPhotoUrl)
-      if (input.shortBio !== undefined) patch.shortBio = blank(input.shortBio)
-      if (input.longBioMarkdown !== undefined) {
-        // Markdown replaces the rich-text version outright; two bodies that
-        // disagree would leave /about showing whichever one wins.
-        patch.longBioMd = blank(input.longBioMarkdown)
-        patch.longBioJson = null
-      }
-      const saved = await saveSiteSettings(ctx.db, patch)
-      return ok({ saved: true, profile: readProfile(saved.profile) })
+      const r = await applySiteUpdate(ctx.db, input)
+      if (!r.ok) return fail(r.reason)
+      return ok({ saved: true, profile: r.profile })
     },
   )
 

@@ -5,7 +5,6 @@ import { agentSendAllowed, agentSendRefusal } from '../../core/agents.ts'
 import { leaveSequence, rejoinSequence } from '../../core/consent.ts'
 import { normalizeEmail } from '../../core/ids.ts'
 import { mdToDoc } from '../../core/md-to-doc.ts'
-import { previewHtml } from '../../core/render.ts'
 import {
   addStep,
   createSequence,
@@ -31,22 +30,11 @@ import { clock, parseClock } from '../../core/send-window.ts'
 import { getTimeZone, setTimeZone } from '../../core/site-settings.ts'
 import { subscribers, tags } from '../../db/schema.ts'
 import { type Ctx, clampLimit, defineTool, fail, failed, ok } from '../kit.ts'
-import { consumePreflight, digestOf, mintPreflight } from '../preflight.ts'
+import { activateSequenceWithToken, preflightSequence } from '../../core/send-preflight.ts'
 
 const TRIGGERS = ['subscribe', 'tag_added', 'manual'] as const
 
 export function registerSequences(server: McpServer, ctx: Ctx): void {
-  /** Activation is bound to the whole step list, so adding a step invalidates it. */
-  const sequenceDigest = async (id: number) => {
-    const seq = await getSequence(ctx.db, id)
-    const steps = await stepsFor(ctx.db, id)
-    return await digestOf([
-      seq?.trigger,
-      seq?.triggerTagId,
-      steps.map((s) => [s.id, s.position, s.delayDays, s.subject, s.bodyMd, s.bodyJson]),
-    ])
-  }
-
   defineTool(
     server,
     ctx,
@@ -270,50 +258,10 @@ export function registerSequences(server: McpServer, ctx: Ctx): void {
       annotations: { readOnlyHint: true },
     },
     async ({ id }) => {
-      const seq = await getSequence(ctx.db, id)
-      if (!seq) return fail('No such sequence.')
-      if (seq.isActive) return fail(`Sequence #${id} is already live.`)
-
-      const steps = await stepsFor(ctx.db, id)
-      const warnings: string[] = []
-      if (!steps.length) warnings.push('No steps — activation will be refused.')
-      if (seq.trigger === 'tag_added' && !seq.triggerTagId) {
-        warnings.push('tag_added sequence with no trigger tag — activation will be refused.')
-      }
-      if (seq.trigger === 'subscribe') {
-        warnings.push('Every new subscriber will be enrolled from the moment this goes live.')
-      }
-      if (!(await agentSendAllowed(ctx.env, ctx.db))) warnings.push(agentSendRefusal(ctx.env))
-
-      let elapsed = 0
-      const schedule = steps.map((s) => {
-        elapsed += s.delayDays
-        return {
-          position: s.position,
-          subject: s.subject,
-          delayDays: s.delayDays,
-          arrivesOnDay: elapsed,
-          preview: previewHtml(s.bodyJson, s.bodyMd).slice(0, 600),
-        }
-      })
-
-      const { token, expiresAt } = await mintPreflight(
-        ctx.db,
-        'sequence_activate',
-        id,
-        await sequenceDigest(id),
-        (await sequenceStats(ctx.db, id)).active,
-      )
-
-      return ok({
-        sequence: { id: seq.id, name: seq.name, trigger: seq.trigger, isActive: seq.isActive },
-        totalDurationDays: elapsed,
-        schedule,
-        alreadyEnrolled: await sequenceStats(ctx.db, id),
-        warnings,
-        preflight_token: token,
-        expiresAt,
-      })
+      const r = await preflightSequence(ctx.db, id)
+      if (!r.ok) return fail(r.reason)
+      if (!(await agentSendAllowed(ctx.env, ctx.db))) r.report.warnings.push(agentSendRefusal(ctx.env))
+      return ok(r.report)
     },
   )
 
@@ -333,21 +281,10 @@ export function registerSequences(server: McpServer, ctx: Ctx): void {
     async ({ id, preflight_token }) => {
       if (!(await agentSendAllowed(ctx.env, ctx.db))) return fail(agentSendRefusal(ctx.env))
 
-      const check = await consumePreflight(
-        ctx.db,
-        'sequence_activate',
-        id,
-        await sequenceDigest(id),
-        preflight_token,
-      )
-      if (!check.ok) {
-        return fail(
-          `Refusing to activate: ${check.reason}.`,
-          `Call sequence_preflight({ id: ${id} }) and pass the token it returns.`,
-        )
+      const result = await activateSequenceWithToken(ctx.db, id, preflight_token)
+      if (!result.ok && result.code === 'preflight') {
+        return fail(result.reason, `Call sequence_preflight({ id: ${id} }) and pass the token it returns.`)
       }
-
-      const result = await setSequenceActive(ctx.db, id, true)
       return result.ok ? ok({ active: true }) : failed(result)
     },
   )

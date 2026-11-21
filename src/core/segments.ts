@@ -12,7 +12,7 @@ import {
   subscriberTags,
   subscribers,
 } from '../db/schema.ts'
-import { describeCondition, jsonPath, opsFor, takesValue } from './fields.ts'
+import { type RawCondition, checkConditions, describeCondition, jsonPath, opsFor, takesValue } from './fields.ts'
 import { slugify } from './ids.ts'
 
 export type { SegmentRule }
@@ -481,4 +481,51 @@ export function describeRule(
   }
 
   return parts.length === 0 ? 'Everyone active' : `Active, ${parts.join(', ')}`
+}
+
+/**
+ * A segment rule as a caller writes it — MCP's `rule` argument, the REST API's
+ * body — snake_case, dates as text, field conditions untyped. Deliberately
+ * flat: no boolean tree, no nesting.
+ */
+export interface RuleInput {
+  match?: 'any' | 'all'
+  include_tag_ids?: number[]
+  exclude_tag_ids?: number[]
+  joined_after?: string
+  joined_before?: string
+  fields?: RawCondition[]
+}
+
+/**
+ * Turn caller input into a stored rule, or say why not. Field conditions are
+ * typed against the live definitions: the type comes from the field, never the
+ * call. One function for every door, so MCP and the API accept the same rules.
+ */
+export async function ruleFromInput(
+  db: Db,
+  input: RuleInput,
+): Promise<{ ok: true; rule: SegmentRule } | { ok: false; reason: string; field?: string }> {
+  const rule: SegmentRule = {}
+  if (input.match) rule.match = input.match
+  if (input.include_tag_ids?.length) rule.includeTagIds = input.include_tag_ids
+  if (input.exclude_tag_ids?.length) rule.excludeTagIds = input.exclude_tag_ids
+
+  for (const [key, field, value] of [
+    ['joinedAfter', 'joined_after', input.joined_after],
+    ['joinedBefore', 'joined_before', input.joined_before],
+  ] as const) {
+    if (!value) continue
+    const ms = Date.parse(value)
+    if (Number.isNaN(ms)) return { ok: false, reason: `"${value}" is not a parseable date`, field }
+    rule[key] = ms
+  }
+
+  if (input.fields?.length) {
+    const checked = await checkConditions(db, input.fields)
+    if (!checked.ok) return { ok: false, reason: checked.errors.join('; '), field: 'fields' }
+    rule.conditions = checked.conditions
+  }
+
+  return { ok: true, rule }
 }

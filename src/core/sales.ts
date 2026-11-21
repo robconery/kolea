@@ -313,7 +313,7 @@ async function endSequenceFor(db: Db, subscriberId: number, slug: string): Promi
 
 // ───────────────────────────────────────────────── reading
 
-export async function listSales(db: Db, limit = 100) {
+export async function listSales(db: Db, limit = 100, offset = 0) {
   return await db
     .select({
       sale: sales,
@@ -326,6 +326,7 @@ export async function listSales(db: Db, limit = 100) {
     .leftJoin(campaigns, eq(campaigns.id, sales.campaignId))
     .orderBy(desc(sales.occurredAt), desc(sales.id))
     .limit(limit)
+    .offset(offset)
     .all()
 }
 

@@ -1,11 +1,12 @@
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, count, eq, inArray } from 'drizzle-orm'
 import type { Db } from '../db/index.ts'
-import { subscriberTags, subscribers, tags } from '../db/schema.ts'
+import { sales, subscriberTags, subscribers, tags } from '../db/schema.ts'
 import { logActivity } from './activity.ts'
 import {
   type FieldChanges,
   type FieldType,
   castFieldValue,
+  castFieldValues,
   fieldTypes,
   keyFor,
   setFieldValues,
@@ -171,6 +172,46 @@ export async function upsertSubscriber(
  * keeps a `tag_added` sequence from re-firing every time a rule matches again.
  * Returns how many tags were actually new.
  */
+/**
+ * Upsert plus custom field values, all or nothing on the values: an unknown key
+ * or a value of the wrong type refuses the whole call before anything is
+ * written, so a bad value never leaves a half-written person. The one path for
+ * every caller that takes `fields` (MCP `subscriber_upsert`, `POST
+ * /api/v1/subscribers`). `null` or "" clears a value.
+ */
+export async function upsertWithFields(
+  db: Db,
+  input: UpsertInput,
+  fields?: Record<string, string | number | boolean | null>,
+): Promise<
+  | { ok: true; outcome: Exclude<UpsertOutcome, 'invalid'>; id: number; fieldsWritten?: number }
+  | { ok: false; reason: string; field: string; fieldErrors?: Record<string, string> }
+> {
+  const cast = fields ? castFieldValues(await fieldTypes(db), fields) : null
+  if (cast && Object.keys(cast.errors).length) {
+    const [first] = Object.keys(cast.errors)
+    return {
+      ok: false,
+      reason: `Field values rejected: ${Object.entries(cast.errors)
+        .map(([k, e]) => `${k} ${e}`)
+        .join('; ')}.`,
+      field: `fields.${first}`,
+      fieldErrors: cast.errors,
+    }
+  }
+  const result = await upsertSubscriber(db, input)
+  if (result.outcome === 'invalid' || !result.id) {
+    return { ok: false, reason: `"${input.email}" is not a valid address.`, field: 'email' }
+  }
+  const written = cast ? await setFieldValues(db, result.id, cast.changes) : undefined
+  return {
+    ok: true,
+    outcome: result.outcome,
+    id: result.id,
+    ...(written === undefined ? {} : { fieldsWritten: written }),
+  }
+}
+
 export async function addTags(db: Db, subscriberId: number, tagIds: number[]): Promise<number> {
   const now = new Date()
   // One lookup for the whole call, not one per tag. Tagging runs inside CSV
@@ -382,4 +423,16 @@ export function splitCsvLine(line: string): string[] {
   }
   out.push(cur)
   return out
+}
+
+/**
+ * Erase one person and everything that cascades from them: messages, events,
+ * enrollments, attribution touches and sales. For erasure requests only — to
+ * stop mailing someone, suppress them; that keeps the history. Says how many
+ * sales went with them, because revenue reports change.
+ */
+export async function eraseSubscriber(db: Db, id: number): Promise<{ salesDeleted: number }> {
+  const owned = await db.select({ n: count() }).from(sales).where(eq(sales.subscriberId, id)).get()
+  await db.delete(subscribers).where(eq(subscribers.id, id))
+  return { salesDeleted: owned?.n ?? 0 }
 }
