@@ -17,11 +17,27 @@ import { siteRoutes } from './site.ts'
  *
  * `GET /api/v1/openapi.json` is public, as in Kōlea: it holds no data.
  */
+import { agentSendAllowed, agentSendRefusal } from '../../core/agents.ts'
+import { getDb } from '../../db/index.ts'
+
 export const apiV1 = new Hono<V1>()
 
 apiV1.get('/api/v1/openapi.json', (c) => c.json(openApiDocument(`${c.env.PUBLIC_URL}/api/v1`)))
 
 apiV1.use('/api/v1/*', requireKey())
+
+// ⭐ The agent send switch covers every key, not just MCP. MCP authenticates
+// with the same admin keys, so a switch that only MCP read would be bypassed by
+// an agent calling these endpoints instead. Preflight still applies on top.
+const SENDS = /^\/api\/v1\/(broadcasts\/\d+\/(send|schedule|resume)|sequences\/\d+\/activate)$/
+apiV1.use('/api/v1/*', async (c, next) => {
+  if (c.req.method === 'POST' && SENDS.test(c.req.path)) {
+    if (!(await agentSendAllowed(c.env, getDb(c.env)))) {
+      return problem(c, 403, 'sending_off', agentSendRefusal(c.env))
+    }
+  }
+  return next()
+})
 
 audienceRoutes(apiV1)
 mailRoutes(apiV1)

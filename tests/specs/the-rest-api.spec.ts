@@ -29,6 +29,7 @@ import {
   suppressions,
 } from '../../src/db/schema.ts'
 import { aBroadcast, aPerson, aSequence, enrollmentOf, reload } from '../support/factories.ts'
+import { setAgentSwitches } from '../../src/core/agents.ts'
 import { createWorld, type World } from '../support/world.ts'
 
 type Json = Record<string, any>
@@ -257,6 +258,7 @@ describe('Feature: programs work the mailer through /api/v1', () => {
 
     beforeAll(async () => {
       world = apiWorld()
+      await setAgentSwitches(world.db, { allowSend: true })
       const { admin } = await keys(world)
       await aPerson(world, { email: 'reader@example.test' })
       created = await call(world, admin, 'POST', '/broadcasts', { subject: 'Hello', body_markdown: 'First draft.' })
@@ -312,6 +314,7 @@ describe('Feature: programs work the mailer through /api/v1', () => {
 
     beforeAll(async () => {
       world = apiWorld()
+      await setAgentSwitches(world.db, { allowSend: true })
       const { admin, read } = await keys(world)
       const built = await aSequence(world, { name: 'Course', active: false })
       created = await call(world, admin, 'POST', '/sequences', { name: 'Onboarding', trigger: 'manual' })
@@ -572,6 +575,25 @@ describe('Feature: programs work the mailer through /api/v1', () => {
 
     it('lets a read key read', () => {
       expect(readGet.status).toBe(200)
+    })
+  })
+
+  describe('Scenario: ⭐ a key tries to send while agent sending is switched off', () => {
+    // MCP authenticates with the same admin keys, so the switch must hold here too.
+    let world: World
+    let res: Answer
+
+    beforeAll(async () => {
+      world = apiWorld()
+      const { admin } = await keys(world)
+      await aPerson(world, { email: 'reader@example.test' })
+      const created = await call(world, admin, 'POST', '/broadcasts', { subject: 'Hi', body_markdown: 'Body.' })
+      const id = (created.body as { data: { id: number } }).data.id
+      res = await call(world, admin, 'POST', `/broadcasts/${id}/send`, { preflight_token: 'x' })
+    })
+
+    it('is refused', () => {
+      expect(res.status).toBe(403)
     })
   })
 
