@@ -192,7 +192,7 @@ export async function requestSignIn(env: Env, db: Db, req: SignInRequest): Promi
   const error = outcome?.status === 'failed' ? outcome.error : 'not sent'
   await db
     .update(messages)
-    .set({ status: 'failed', error: `sign-in link not delivered: ${error}`.slice(0, 500) })
+    .set({ status: 'failed', error: `sign-in link not delivered: ${error}`.slice(0, 500), claimedAt: null })
     .where(and(eq(messages.id, messageId), eq(messages.status, 'queued')))
   await db
     .update(memberSignInLinks)
@@ -442,6 +442,9 @@ export interface MemberRow {
   } | null
 }
 
+/** Ids per `inArray`, under D1's 100-parameter cap. */
+const ID_CHUNK = 90
+
 /**
  * Everyone who has signed in or paid, newest activity first, with their Premium
  * state and the post that converted them. Bounded: this is a screen, not an export.
@@ -457,38 +460,53 @@ export async function listMembers(db: Db, limit = 200): Promise<MemberRow[]> {
     .limit(limit)
     .all()
   if (!people.length) return []
-  const ids = people.map((p) => p.id)
+  // D1 binds at most 100 parameters and `limit` defaults to 200 people, so the
+  // two lookups below go in chunks. A person's rows all land in one chunk.
+  const chunks: number[][] = []
+  for (let i = 0; i < people.length; i += ID_CHUNK) chunks.push(people.slice(i, i + ID_CHUNK).map((p) => p.id))
 
-  const sessions = await db
-    .select({ subscriberId: memberSessions.subscriberId, lastSeenAt: memberSessions.lastSeenAt })
-    .from(memberSessions)
-    .where(inArray(memberSessions.subscriberId, ids))
-    .all()
+  const sessions = (
+    await Promise.all(
+      chunks.map((ids) =>
+        db
+          .select({ subscriberId: memberSessions.subscriberId, lastSeenAt: memberSessions.lastSeenAt })
+          .from(memberSessions)
+          .where(inArray(memberSessions.subscriberId, ids))
+          .all(),
+      ),
+    )
+  ).flat()
   const seen = new Map<number, Date>()
   for (const s of sessions) {
     const prev = seen.get(s.subscriberId)
     if (!prev || s.lastSeenAt > prev) seen.set(s.subscriberId, s.lastSeenAt)
   }
 
-  const subs = await db
-    .select({
-      id: memberSubscriptions.id,
-      subscriberId: memberSubscriptions.subscriberId,
-      status: memberSubscriptions.status,
-      interval: memberSubscriptions.interval,
-      amountCents: memberSubscriptions.amountCents,
-      currency: memberSubscriptions.currency,
-      createdAt: memberSubscriptions.createdAt,
-      cancelAtPeriodEnd: memberSubscriptions.cancelAtPeriodEnd,
-      postId: memberSubscriptions.convertedFromPostId,
-      postSubject: broadcasts.subject,
-      postSlug: broadcasts.slug,
-    })
-    .from(memberSubscriptions)
-    .leftJoin(broadcasts, eq(broadcasts.id, memberSubscriptions.convertedFromPostId))
-    .where(inArray(memberSubscriptions.subscriberId, ids))
-    .orderBy(desc(memberSubscriptions.id))
-    .all()
+  const subs = (
+    await Promise.all(
+      chunks.map((ids) =>
+        db
+          .select({
+            id: memberSubscriptions.id,
+            subscriberId: memberSubscriptions.subscriberId,
+            status: memberSubscriptions.status,
+            interval: memberSubscriptions.interval,
+            amountCents: memberSubscriptions.amountCents,
+            currency: memberSubscriptions.currency,
+            createdAt: memberSubscriptions.createdAt,
+            cancelAtPeriodEnd: memberSubscriptions.cancelAtPeriodEnd,
+            postId: memberSubscriptions.convertedFromPostId,
+            postSubject: broadcasts.subject,
+            postSlug: broadcasts.slug,
+          })
+          .from(memberSubscriptions)
+          .leftJoin(broadcasts, eq(broadcasts.id, memberSubscriptions.convertedFromPostId))
+          .where(inArray(memberSubscriptions.subscriberId, ids))
+          .orderBy(desc(memberSubscriptions.id))
+          .all(),
+      ),
+    )
+  ).flat()
   // The newest row per person: a live one if they have one, else their last.
   const latest = new Map<number, (typeof subs)[number]>()
   for (const s of subs) {

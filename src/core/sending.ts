@@ -1,4 +1,4 @@
-import { eq, inArray } from 'drizzle-orm'
+import { and, eq, inArray, isNull, lt, or } from 'drizzle-orm'
 import type { Db } from '../db/index.ts'
 import { type MergeExtras, broadcasts, messages, sequenceSteps, sequences, subscribers } from '../db/schema.ts'
 import { ConsoleProvider } from '../providers/console.ts'
@@ -322,7 +322,23 @@ export async function sendMessages(
   const msgs = await loadByIds(ids, (chunk) =>
     db.select().from(messages).where(inArray(messages.id, chunk)).all(),
   )
-  const queued = msgs.filter((m) => m.status === 'queued')
+  const candidates = msgs.filter((m) => m.status === 'queued')
+  if (candidates.length === 0) return outcomes
+
+  // ⭐ Claim before sending. Re-reading `queued` is not enough on its own: two
+  // consumers that read the same row before either wrote `sent` would both
+  // send it. Only the rows this one conditional update matched are ours.
+  const claimed = await claimForSending(
+    db,
+    candidates.map((m) => m.id),
+  )
+  const queued = candidates.filter((m) => claimed.has(m.id))
+  for (const m of candidates) {
+    // Someone else is sending it right now. Retryable, not skipped: if that
+    // consumer dies, this queue message is what comes back for the row once
+    // the claim expires.
+    if (!claimed.has(m.id)) outcomes.set(m.id, { status: 'failed', error: 'being sent by another consumer', retryable: true })
+  }
   if (queued.length === 0) return outcomes
 
   // ── everything this batch touches, fetched once
@@ -351,7 +367,7 @@ export async function sendMessages(
     for (let i = 0; i < cancelledIds.length; i += 90) {
       await db
         .update(messages)
-        .set({ status: 'failed', error: 'broadcast cancelled' })
+        .set({ status: 'failed', error: 'broadcast cancelled', claimedAt: null })
         .where(inArray(messages.id, cancelledIds.slice(i, i + 90)))
     }
     const dropped = new Set(cancelledIds)
@@ -491,13 +507,25 @@ export async function sendMessages(
   // ── one provider request for the lot
 
   const provider = providerFor(env, db)
-  const results = await provider.sendBatch(pending.map((p) => p.email))
+  let results: Awaited<ReturnType<EmailProvider['sendBatch']>>
+  try {
+    results = await provider.sendBatch(pending.map((p) => p.email))
+  } catch (err) {
+    // Nothing went out; hand the rows straight back so the queue's retry of
+    // this batch can claim them, rather than waiting out the lease.
+    await releaseClaims(
+      db,
+      pending.map((p) => p.message.id),
+    )
+    throw err
+  }
 
   for (const [i, { message }] of pending.entries()) {
     const result = results[i]
     if (!result) {
       // Shouldn't happen — the port promises one result per input — but a silent
       // `sent` here would be a lost email, so treat it as retryable.
+      await releaseClaims(db, [message.id])
       outcomes.set(message.id, { status: 'failed', error: 'no provider result', retryable: true })
       continue
     }
@@ -511,6 +539,7 @@ export async function sendMessages(
           providerMessageId: result.providerMessageId,
           sentAt: new Date(),
           error: null,
+          claimedAt: null,
         })
         .where(eq(messages.id, message.id))
       outcomes.set(message.id, { status: 'sent' })
@@ -519,7 +548,7 @@ export async function sendMessages(
 
     await db
       .update(messages)
-      .set({ status: result.retryable ? 'queued' : 'failed', error: result.error })
+      .set({ status: result.retryable ? 'queued' : 'failed', error: result.error, claimedAt: null })
       .where(eq(messages.id, message.id))
     outcomes.set(message.id, {
       status: 'failed',
@@ -529,6 +558,44 @@ export async function sendMessages(
   }
 
   return outcomes
+}
+
+/**
+ * How long a send claim holds. Far longer than one provider call; a claim this
+ * old belongs to a consumer that died mid-send, and the row is free again.
+ */
+export const CLAIM_LEASE_MS = 10 * 60 * 1000
+/** Ids per claim statement: 90 plus the three fixed parameters, under D1's 100. */
+const CLAIM_CHUNK = 90
+
+/** Atomically take the still-queued, unclaimed rows among `ids`. Returns the ones taken. */
+async function claimForSending(db: Db, ids: number[]): Promise<Set<number>> {
+  const now = Date.now()
+  const taken = new Set<number>()
+  for (let i = 0; i < ids.length; i += CLAIM_CHUNK) {
+    const rows = await db
+      .update(messages)
+      .set({ claimedAt: new Date(now) })
+      .where(
+        and(
+          inArray(messages.id, ids.slice(i, i + CLAIM_CHUNK)),
+          eq(messages.status, 'queued'),
+          or(isNull(messages.claimedAt), lt(messages.claimedAt, new Date(now - CLAIM_LEASE_MS))),
+        ),
+      )
+      .returning({ id: messages.id })
+    for (const r of rows) taken.add(r.id)
+  }
+  return taken
+}
+
+async function releaseClaims(db: Db, ids: number[]): Promise<void> {
+  for (let i = 0; i < ids.length; i += CLAIM_CHUNK) {
+    await db
+      .update(messages)
+      .set({ claimedAt: null })
+      .where(and(inArray(messages.id, ids.slice(i, i + CLAIM_CHUNK)), eq(messages.status, 'queued')))
+  }
 }
 
 /**
@@ -633,7 +700,7 @@ function eligibility(
 async function markSuppressed(db: Db, messageId: number, reason: string): Promise<SendOutcome> {
   await db
     .update(messages)
-    .set({ status: 'suppressed', suppressedReason: reason })
+    .set({ status: 'suppressed', suppressedReason: reason, claimedAt: null })
     .where(eq(messages.id, messageId))
   return { status: 'suppressed', reason }
 }

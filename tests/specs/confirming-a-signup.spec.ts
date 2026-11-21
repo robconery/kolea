@@ -370,6 +370,11 @@ describe('Feature: confirming a signup', () => {
           .set({ createdAt: new Date(r.createdAt.getTime() - ms) })
           .where(eq(messages.id, r.id))
       }
+      // The next submit must land in a later millisecond than the last send:
+      // the confirmation's idempotency key carries the submit's `Date.now()`,
+      // and a whole scenario can otherwise run inside one tick of the clock,
+      // which reads as "two submits at once" and is (correctly) throttled.
+      await Bun.sleep(2)
     }
 
     beforeAll(async () => {

@@ -9,16 +9,17 @@ import { apiV1 } from './api/v1/index.ts'
 import { tracking } from './api/tracking.ts'
 import { salesApi } from './api/sales.ts'
 import { withActivitySource } from './core/activity.ts'
-import { sendBroadcastNow } from './core/broadcasts.ts'
+import { CRON_PAGES, QUERIES_PER_PAGE, sendBroadcastNow } from './core/broadcasts.ts'
 import { checkDueDomains } from './core/domains.ts'
 import { advanceImports } from './core/importers/runs.ts'
 import { advanceTakes } from './core/ai/takes.ts'
 import { sendMessages } from './core/sending.ts'
-import { tickSequences } from './core/sequences.ts'
+import { recordTickFailure, tickSequences } from './core/sequences.ts'
 import { isTrackingHost } from './core/tracking-host.ts'
 import { syncStripeCatalog } from './core/stripe-catalog.ts'
 import { syncStripe } from './core/stripe.ts'
-import { deliverDueWebhooks } from './core/webhooks.ts'
+import { DELIVERY_PAGE, DELIVERY_PASS_OVERHEAD, QUERIES_PER_DELIVERY, deliverDueWebhooks } from './core/webhooks.ts'
+import { QueryBudget } from './core/query-budget.ts'
 import { getDb } from './db/index.ts'
 import { broadcasts, messages } from './db/schema.ts'
 import { handleMcp, handleOAuthMcp } from './mcp/server.ts'
@@ -108,6 +109,8 @@ app.use('*', (c, next) => {
 
 /** Must match the second entry in `triggers.crons` in wrangler.jsonc exactly. */
 const DAILY_CRON = '17 9 * * *'
+/** A rough upper bound on one import page's D1 queries, for the cron's budget. */
+const IMPORT_PAGE_QUERIES = 300
 
 /**
  * The admin console's robots.txt.
@@ -326,11 +329,21 @@ export default {
         // The minute the cron was meant for, so a late start still reads each
         // sequence's send window for that minute.
         const now = Number.isFinite(controller.scheduledTime) ? new Date(controller.scheduledTime) : new Date()
-        await tickSequences(env, db, now)
+
+        // ⭐ One budget for the whole invocation (`core/query-budget.ts`). D1
+        // counts every statement below against the same 1,000, so the jobs
+        // share it in priority order instead of each sizing itself as if it
+        // ran alone:
+        //   1. a due broadcast reserves CRON_PAGES pages (≈690 queries) first;
+        //   2. the sequence tick takes what fits of the rest (all of it on a
+        //      quiet minute, ~27 enrollments beside a broadcast);
+        //   3. webhook deliveries take what is left, often nothing in a send
+        //      minute. Every job resumes next minute, so less is always safe.
+        const budget = new QueryBudget()
 
         // One broadcast per tick, several pages deep. Taking five at a time and
         // one page each meant the D1 query budget bought 400 recipients a minute;
-        // spending it all on the oldest live send clears ~8,000 instead. There is
+        // spending it on the oldest live send clears ~6,000 instead. There is
         // one operator, so broadcasts queue up behind each other anyway.
         const due = await db
           .select({ id: broadcasts.id })
@@ -344,18 +357,36 @@ export default {
           .orderBy(asc(broadcasts.scheduledAt))
           .limit(1)
           .all()
+        const pages = due.length > 0 ? CRON_PAGES : 0
+        budget.spend(pages * QUERIES_PER_PAGE)
 
-        for (const b of due) await sendBroadcastNow(env, db, b.id)
+        // Caught on its own: a tick that throws (a bad row, a D1 hiccup) must
+        // not take the broadcast, the domain check, the webhooks and the
+        // imports down with it. The failure is a `sync_runs` row the Logs show
+        // under Sequences; the tick is idempotent and retries next minute.
+        try {
+          await tickSequences(env, db, now, { budget })
+        } catch (err) {
+          try {
+            await recordTickFailure(db, err, now)
+          } catch {
+            /* D1 itself is down; nothing more can be written this minute */
+          }
+        }
+
+        for (const b of due) await sendBroadcastNow(env, db, b.id, pages)
 
         // One overdue sending-domain check, after the mail: it is a few DNS
         // lookups and never throws, so it can neither delay nor break a send.
         await checkDueDomains(env, db)
-        // Outbound webhooks: one page of due deliveries, last, so mail always
-        // gets the D1 budget first. Caught on its own — a receiver that is down
-        // must never be able to stop the tick that sends mail. The rows stay
+        // Outbound webhooks: what the budget has left, last, so mail always
+        // gets D1 first. Caught on its own — a receiver that is down must
+        // never be able to stop the tick that sends mail. The rows stay
         // pending and the next minute tries again.
         try {
-          await deliverDueWebhooks(env, db)
+          await deliverDueWebhooks(env, db, {
+            limit: budget.fits(QUERIES_PER_DELIVERY, DELIVERY_PAGE, DELIVERY_PASS_OVERHEAD),
+          })
         } catch {
           /* recorded on the delivery rows */
         }
@@ -364,7 +395,9 @@ export default {
         // of the 1,000-query budget, and mail outranks migration. The import
         // just resumes from its cursor next minute. A failure is already a
         // row on `import_runs`, so it must not take the tick down with it.
-        if (due.length === 0) {
+        // A page costs a few hundred queries at most, so a minute whose drip
+        // already spent most of the budget skips it too.
+        if (due.length === 0 && budget.remaining >= IMPORT_PAGE_QUERIES) {
           try {
             await advanceImports(env, db)
           } catch {
@@ -408,7 +441,7 @@ async function consumeBatch(batch: MessageBatch<SendJob>, env: Env) {
     for (const msg of batch.messages) {
       await db
         .update(messages)
-        .set({ status: 'failed', error: 'gave up after exhausting queue retries' })
+        .set({ status: 'failed', error: 'gave up after exhausting queue retries', claimedAt: null })
         .where(and(eq(messages.id, msg.body.messageId), eq(messages.status, 'queued')))
       msg.ack()
     }
