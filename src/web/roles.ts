@@ -2,6 +2,8 @@ import type { Context, MiddlewareHandler } from 'hono'
 import { atLeast, type Role } from '../core/team.ts'
 import type { Env } from '../types.ts'
 import { refuse } from './audit.ts'
+import { getDb } from '../db/index.ts'
+import { sequenceIsLive } from '../core/sequences.ts'
 
 /**
  * ⭐ Which role each console route needs. The ONE place a route's role is
@@ -74,6 +76,11 @@ const RULES: Rule[] = [
   // The template library. `use` creates a sequence, always switched off.
   { method: 'POST', path: /^\/sequences\/templates(\/[a-z0-9-]+\/(use|edit|duplicate))?$/, min: 'writer' },
 
+  // The reader council on a draft: advisory, never changes or sends anything.
+  { method: 'GET', path: new RegExp(`^/(broadcasts/${ID}|sequences/${ID}/steps/${ID})/council$`), min: 'writer' },
+  { method: 'POST', path: new RegExp(`^/(broadcasts/${ID}|sequences/${ID}/steps/${ID})/council$`), min: 'writer' },
+  { method: 'POST', path: new RegExp(`^/council/${ID}/notes/[a-z0-9-]+$`), min: 'writer' },
+
   // ── The composer's helpers: writing help, images
   { method: 'POST', path: /^\/ai\/(subject|cleanup)$/, min: 'writer' },
   { method: 'POST', path: /^\/media$/, min: 'writer' },
@@ -104,7 +111,25 @@ export const requireRole: MiddlewareHandler<{ Bindings: Env }> = async (c, next)
   const path = new URL(c.req.url).pathname
   const min = minimumRole(c.req.method, path)
   const role = roleOf(c)
-  if (atLeast(role, min)) return await next()
+  if (atLeast(role, min)) {
+    // ⭐ A writer may edit a sequence only while it is switched off. On a live
+    // one, a changed step is mailed by the next tick with no preflight, and a
+    // changed trigger starts enrolling people — both are "putting mail in an
+    // inbox", which is exactly what the writer role may not do.
+    const seq = role === 'writer' && c.req.method === 'POST' ? /^\/sequences\/(\d+)(\/|$)/.exec(path) : null
+    if (seq && (await sequenceIsLive(getDb(c.env), Number(seq[1])))) {
+      const reason = 'writers cannot change a live sequence'
+      refuse(c, reason)
+      return c.html(
+        page(
+          'This sequence is live',
+          '<p>A writer can change a sequence only while it is switched off. An owner or admin can switch it off, or make the change.</p><p><a href="/sequences">Back to sequences</a></p>',
+        ),
+        403,
+      )
+    }
+    return await next()
+  }
 
   const reason = `needs ${min}, signed in as ${role ?? 'nobody'}`
   refuse(c, reason)

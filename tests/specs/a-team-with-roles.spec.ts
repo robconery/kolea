@@ -228,6 +228,31 @@ describe('Feature: a team with roles', () => {
     })
   })
 
+  describe('Scenario: ⭐ a writer tries to change a live sequence', () => {
+    // A changed step on a live sequence is mailed by the next tick with no
+    // preflight; a changed trigger starts enrolling people.
+    let world: World
+    let liveEdit: number
+    let pausedEdit: number
+
+    beforeAll(async () => {
+      world = await aTeam()
+      const live = await aSequence(world, { name: 'Live one' })
+      const paused = await aSequence(world, { name: 'Paused one', active: false })
+      liveEdit = (await as(world, WRITER, `/sequences/${live.id}`, { name: 'Live one', trigger: 'subscribe' })).status
+      pausedEdit = (await as(world, WRITER, `/sequences/${paused.id}`, { name: 'Paused one, renamed', trigger: 'manual' }))
+        .status
+    })
+
+    it('is refused on the live one', () => {
+      expect(liveEdit).toBe(403)
+    })
+
+    it('still works on a paused one', () => {
+      expect(pausedEdit).not.toBe(403)
+    })
+  })
+
   describe('Scenario: an admin runs the install', () => {
     let world: World
     let settings: number

@@ -970,3 +970,9 @@ export async function enrollmentsFor(db: Db, sequenceId: number, limit = 50) {
     .limit(limit)
     .all()
 }
+
+/** Whether a sequence is switched on. False for one that does not exist. */
+export async function sequenceIsLive(db: Db, id: number): Promise<boolean> {
+  const row = await db.select({ on: sequences.isActive }).from(sequences).where(eq(sequences.id, id)).get()
+  return row?.on === true
+}

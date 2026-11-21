@@ -506,6 +506,12 @@ export async function ruleFromInput(
   db: Db,
   input: RuleInput,
 ): Promise<{ ok: true; rule: SegmentRule } | { ok: false; reason: string; field?: string }> {
+  // One statement binds every tag id and condition value (D1: 100 parameters,
+  // shared with the status and paging binds), so a rule stays well under it.
+  const binds = (input.include_tag_ids?.length ?? 0) + (input.exclude_tag_ids?.length ?? 0) + 2 * (input.fields?.length ?? 0)
+  if (binds > 40) {
+    return { ok: false, reason: 'A segment can name at most 40 tags and conditions in all (a condition counts twice).', field: 'include_tag_ids' }
+  }
   const rule: SegmentRule = {}
   if (input.match) rule.match = input.match
   if (input.include_tag_ids?.length) rule.includeTagIds = input.include_tag_ids

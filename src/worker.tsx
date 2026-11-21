@@ -374,11 +374,15 @@ export default {
         // Ghostwriter takes: a few model calls for the oldest take still
         // writing, last of all. It touches no mail and few rows, and its
         // progress is the take's own rows, so a failure here just leaves the
-        // lease to expire and the next minute carries on.
-        try {
-          await advanceTakes(env, db)
-        } catch {
-          /* the take's lease expires; next tick resumes it */
+        // lease to expire and the next minute carries on. Like imports, only in
+        // a minute with no broadcast page: a send spends most of the D1 budget,
+        // and a take that hits the cap after its model calls loses paid output.
+        if (due.length === 0) {
+          try {
+            await advanceTakes(env, db)
+          } catch {
+            /* the take's lease expires; next tick resumes it */
+          }
         }
       }),
     )

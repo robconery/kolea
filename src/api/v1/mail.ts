@@ -63,9 +63,9 @@ import {
  * broadcast is sent, and a sequence taken live, only with a preflight token
  * from the matching preflight endpoint — single-use, ten minutes, bound to the
  * content (`core/send-preflight.ts`, the same functions MCP calls). A
- * `confirm: true` flag is not accepted instead. The agent send switch is MCP's
- * gate and does not apply to a key the operator gave their own program, as in
- * Kōlea. Resuming a cancelled send asks for `confirm: "resume"`, the same
+ * `confirm: true` flag is not accepted instead. The agent send switch applies
+ * too (checked in `index.ts`): MCP authenticates with the same admin keys, so a
+ * switch only MCP read would be bypassed through here. Resuming a cancelled send asks for `confirm: "resume"`, the same
  * confirmation the console and MCP ask for.
  */
 

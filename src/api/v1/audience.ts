@@ -1,4 +1,5 @@
 import type { Hono } from 'hono'
+import { AGENT_SENSITIVE_OFF, agentSensitiveAllowed } from '../../core/agents.ts'
 import * as z from 'zod/v4'
 import { leaveBroadcasts } from '../../core/consent.ts'
 import { listFields } from '../../core/fields.ts'
@@ -38,8 +39,10 @@ const name = z.string().trim().min(1).max(200)
 const fieldValues = z
   .record(z.string().max(64), z.union([z.string().max(2000), z.number(), z.boolean(), z.null()]))
   .refine((r) => Object.keys(r).length <= 100, 'at most 100 fields')
-const tagIds = z.array(z.number().int().positive()).max(100)
-const tagNames = z.array(z.string().trim().min(1).max(100)).max(100)
+// Small on purpose: each tag costs ~10 queries on the way in (D1: 1,000 per
+// request) and a rule binds every id in one statement (D1: 100 parameters).
+const tagIds = z.array(z.number().int().positive()).max(25)
+const tagNames = z.array(z.string().trim().min(1).max(100)).max(25)
 
 /** Tag ids that exist, or the first one that does not. One query. */
 async function checkTagIds(db: Db, ids: number[]): Promise<number | null> {
@@ -251,6 +254,8 @@ export function audienceRoutes(r: Hono<V1>): void {
       query: z.object({ confirm_email: z.string().max(320) }),
     },
     async ({ c, db, id, query }) => {
+      // The same switch MCP's subscriber_delete obeys: agents hold the same keys.
+      if (!(await agentSensitiveAllowed(db))) return problem(c, 403, 'sensitive_off', AGENT_SENSITIVE_OFF)
       const sub = await findSubscriber(db, { id })
       if (!sub) return notFound(c, 'subscriber')
       if (normalizeEmail(query.confirm_email) !== sub.email) {

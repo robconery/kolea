@@ -28,7 +28,7 @@ import {
   subscribers,
   suppressions,
 } from '../../src/db/schema.ts'
-import { aBroadcast, aPerson, aSequence, enrollmentOf, reload } from '../support/factories.ts'
+import { aBroadcast, aPerson, aSequence, aTag, enrollmentOf, reload } from '../support/factories.ts'
 import { setAgentSwitches } from '../../src/core/agents.ts'
 import { createWorld, type World } from '../support/world.ts'
 
@@ -594,6 +594,46 @@ describe('Feature: programs work the mailer through /api/v1', () => {
 
     it('is refused', () => {
       expect(res.status).toBe(403)
+    })
+  })
+
+  describe('Scenario: ⭐ a key tries to erase someone while sensitive changes are off', () => {
+    let world: World
+    let res: Answer
+
+    beforeAll(async () => {
+      world = apiWorld()
+      const { admin } = await keys(world)
+      const p = await aPerson(world, { email: 'gone@example.test' })
+      res = await call(world, admin, 'DELETE', `/subscribers/${p.id}?confirm_email=gone@example.test`)
+    })
+
+    it('is refused', () => {
+      expect(res.status).toBe(403)
+    })
+  })
+
+  describe('Scenario: a segment naming more tags than one query can bind', () => {
+    let world: World
+    let res: Answer
+
+    beforeAll(async () => {
+      world = apiWorld()
+      const { admin } = await keys(world)
+      const ids: number[] = []
+      for (let i = 0; i < 25; i++) ids.push(await aTag(world, `t${i}`))
+      const more: number[] = []
+      for (let i = 25; i < 50; i++) more.push(await aTag(world, `t${i}`))
+      const exclude: number[] = []
+      for (let i = 50; i < 75; i++) exclude.push(await aTag(world, `t${i}`))
+      res = await call(world, admin, 'POST', '/segments', {
+        name: 'Huge',
+        rule: { include_tag_ids: ids, exclude_tag_ids: exclude, fields: [] },
+      })
+    })
+
+    it('is refused rather than saved and left to break the segments screen', () => {
+      expect(res.status).toBe(422)
     })
   })
 

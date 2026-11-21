@@ -22,7 +22,7 @@ import {
   getTemplate,
   type SequenceTemplateRow,
 } from '../sequence-templates/index.ts'
-import { getSequence, stepsFor } from '../sequences.ts'
+import { deleteSequence, getSequence, stepsFor } from '../sequences.ts'
 import { findOrCreateTag } from '../subscribers.ts'
 import { type LaunchEvent, type LaunchStep, briefText, transition } from './steps.ts'
 
@@ -288,6 +288,19 @@ export async function buildSequence(
     campaignId: l.campaignId,
   })
   if (!made.ok) return made
+
+  // A double-clicked Build: claim the launch's one sequence slot atomically, and
+  // throw away the copy that lost, so no orphaned sequence (or second paid
+  // draft) is left behind.
+  const claimed = await db
+    .update(launches)
+    .set({ sequenceId: made.id })
+    .where(and(eq(launches.id, l.id), sql`${launches.sequenceId} is null`))
+    .returning({ id: launches.id })
+  if (claimed.length === 0) {
+    await deleteSequence(db, made.id)
+    return { ok: false, reason: 'This launch already has its sequence.' }
+  }
 
   const r = await apply(db, l, { kind: 'sequence', sequenceId: made.id }, { sequenceId: made.id, triggerTagId })
   if (!r.ok) return r

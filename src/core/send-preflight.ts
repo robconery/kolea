@@ -19,9 +19,9 @@ import { trackingBaseUrl } from './tracking-host.ts'
  *
  * One implementation for every door: MCP and the REST API both call these, so
  * "preview, then spend the token the preview minted" is one rule, not two.
- * The agent send switch is NOT checked here: it is a gate on agents (MCP), and
- * a REST key is the operator's own program (Kōlea's `authorize_send` lets every
- * non-MCP actor pass). The token is checked for everyone.
+ * The agent send switch is checked by each door before it gets here (MCP's
+ * tools, `/api/v1`'s send gate), since both take the same admin keys. The token
+ * is checked for everyone.
  */
 
 /**
