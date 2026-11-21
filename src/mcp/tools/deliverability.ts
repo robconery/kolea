@@ -33,7 +33,7 @@ export function registerDeliverability(server: McpServer, ctx: Ctx): void {
         'Individual sent messages, newest first. Filter by status to find failures, or by kind to separate marketing from transactional.',
       inputSchema: z.object({
         status: z.enum(['queued', 'sent', 'failed', 'suppressed']).optional(),
-        kind: z.enum(['broadcast', 'sequence', 'transactional']).optional(),
+        kind: z.enum(['broadcast', 'sequence', 'transactional', 'form', 'confirmation']).optional(),
         broadcast_id: z.number().int().optional(),
         limit: z.number().int().optional(),
       }),
