@@ -13,6 +13,8 @@ import type { ActivityType } from './activity.ts'
  *   `messages`      — single mail sent, and every send that failed or was held
  *   `stripe_events` — every webhook and what we did with it
  *   `sync_runs`     — every nightly reconcile and what it found
+ *   `audit_entries` — every console and API-key write, refusals included
+ *   `mcp_calls`     — every agent tool call, refusals included
  *
  * A second `event_log` table written beside each of those would be a second
  * place to count the same fact, and `activities` already says why that is
@@ -56,6 +58,7 @@ export type LogCategory =
   | 'forms'
   | 'sales'
   | 'stripe'
+  | 'audit'
 
 /** The filters a person sees, in this order. */
 export const LOG_CATEGORIES: { id: LogCategory; label: string }[] = [
@@ -66,6 +69,7 @@ export const LOG_CATEGORIES: { id: LogCategory; label: string }[] = [
   { id: 'forms', label: 'Forms' },
   { id: 'sales', label: 'Sales' },
   { id: 'stripe', label: 'Stripe' },
+  { id: 'audit', label: 'Audit' },
 ]
 
 export interface LogType {
@@ -148,6 +152,9 @@ export const LOG_TYPES: LogType[] = [
   t('sync.ok', 'stripe', 'A Stripe sync finished.'),
   t('sync.partial', 'stripe', 'A Stripe sync finished with some charges it could not book.', 'warning'),
   t('sync.failed', 'stripe', 'A Stripe sync failed.', 'error'),
+  t('audit.ok', 'audit', 'A change by the operator, an API key or an agent went through.'),
+  t('audit.denied', 'audit', 'A change by the operator, an API key or an agent was refused.', 'warning'),
+  t('audit.error', 'audit', 'A change by the operator, an API key or an agent failed with an error.', 'error'),
 ]
 
 const BY_TYPE = new Map(LOG_TYPES.map((x) => [x.type, x]))
@@ -182,6 +189,9 @@ export interface LogEvent {
   email: string | null
   ref: string | null
   detail: string | null
+  /** Audit lines: who acted (operator, key, agent) and on what. */
+  actor?: 'operator' | 'key' | 'agent'
+  target?: string | null
 }
 
 export interface LogPage {
@@ -199,7 +209,7 @@ interface Branch {
 
 /**
  * Columns every branch yields, in this order:
- * src, sid, at, type, name, email, ref, n1, n2, detail, x, hay.
+ * src, sid, at, type, name, email, ref, n1, n2, detail, x, target, hay.
  * `hay` is the lower-cased text the search runs over.
  */
 const BRANCHES: Branch[] = [
@@ -223,7 +233,7 @@ const BRANCHES: Branch[] = [
           end as ref,
           json_extract(a.meta, '$.amountCents') as n1, null as n2,
           json_extract(a.meta, '$.reason') as detail,
-          json_extract(a.meta, '$.currency') as x,
+          json_extract(a.meta, '$.currency') as x, null as target,
           lower(coalesce(s.email,'') || ' ' || coalesce(s.name,'') || ' ' || coalesce(q.name,'')
             || ' ' || coalesce(c.name,'') || ' ' || coalesce(json_extract(a.meta, '$.tag'),'')
             || ' ' || coalesce(json_extract(a.meta, '$.product'),'')
@@ -243,7 +253,7 @@ const BRANCHES: Branch[] = [
         null as name, null as email, b.subject as ref,
         (select count(*) from messages m where m.broadcast_id = b.id and m.status = 'sent') as n1,
         (select count(*) from messages m where m.broadcast_id = b.id and m.status in ('failed','suppressed')) as n2,
-        null as detail, null as x, lower(b.subject) as hay
+        null as detail, null as x, null as target, lower(b.subject) as hay
       from broadcasts b
       where b.status = 'sent' and b.sent_at >= ${floor}`,
   },
@@ -252,7 +262,7 @@ const BRANCHES: Branch[] = [
     select: (floor) => sql`
       select 'bs' as src, b.id as sid, b.started_at as at, 'broadcast.started' as type,
         null as name, null as email, b.subject as ref, null as n1, null as n2,
-        null as detail, null as x, lower(b.subject) as hay
+        null as detail, null as x, null as target, lower(b.subject) as hay
       from broadcasts b
       where b.started_at >= ${floor}`,
   },
@@ -262,7 +272,7 @@ const BRANCHES: Branch[] = [
       select 'm' as src, m.id as sid, m.created_at as at,
         case m.status when 'sent' then 'mail.sent' when 'failed' then 'mail.failed' else 'mail.suppressed' end as type,
         s.name as name, m.to_email as email, m.subject as ref, null as n1, null as n2,
-        coalesce(m.error, m.suppressed_reason) as detail, m.kind as x,
+        coalesce(m.error, m.suppressed_reason) as detail, m.kind as x, null as target,
         lower(m.to_email || ' ' || coalesce(s.name,'') || ' ' || m.subject || ' '
           || coalesce(m.error,'') || ' ' || coalesce(m.suppressed_reason,'')) as hay
       from messages m
@@ -276,7 +286,7 @@ const BRANCHES: Branch[] = [
     select: (floor) => sql`
       select 'se' as src, e.rowid as sid, e.received_at as at, 'stripe.' || e.status as type,
         null as name, null as email, e.type as ref, null as n1, null as n2,
-        e.note as detail, e.object_id as x,
+        e.note as detail, e.object_id as x, null as target,
         lower(e.type || ' ' || coalesce(e.note,'') || ' ' || coalesce(e.object_id,'')) as hay
       from stripe_events e
       where e.received_at >= ${floor}`,
@@ -287,10 +297,35 @@ const BRANCHES: Branch[] = [
       select 'sr' as src, r.id as sid, coalesce(r.finished_at, r.started_at) as at,
         'sync.' || r.status as type, null as name, null as email, r.kind as ref,
         r.charges_seen as n1, r.sales_recorded as n2,
-        case when r.notes = '[]' then null else r.notes end as detail, r.trigger as x,
+        case when r.notes = '[]' then null else r.notes end as detail, r.trigger as x, null as target,
         lower(r.kind || ' ' || r.notes) as hay
       from sync_runs r
       where r.started_at >= ${floor}`,
+  },
+  {
+    src: 'au',
+    select: (floor) => sql`
+      select 'au' as src, u.id as sid, u.at as at, 'audit.' || u.outcome as type,
+        case u.actor_kind when 'key' then coalesce(k.name, 'key ' || u.actor_id) else u.actor_id end as name,
+        null as email, u.action as ref, u.status as n1, null as n2,
+        coalesce(u.detail, case when u.summary = '{}' then null else u.summary end) as detail,
+        u.actor_kind as x, u.target as target,
+        lower(coalesce(u.actor_id,'') || ' ' || coalesce(k.name,'') || ' ' || u.action || ' '
+          || coalesce(u.target,'') || ' ' || coalesce(u.detail,'') || ' ' || u.summary || ' ' || u.actor_kind) as hay
+      from audit_entries u
+      left join api_keys k on k.id = u.api_key_id
+      where u.at >= ${floor}`,
+  },
+  {
+    src: 'mc',
+    select: (floor) => sql`
+      select 'mc' as src, c.id as sid, c.created_at as at, 'audit.' || c.outcome as type,
+        k.name as name, null as email, c.tool as ref, c.duration_ms as n1, c.api_key_id as n2,
+        c.detail as detail, 'agent' as x, null as target,
+        lower(c.tool || ' ' || coalesce(c.detail,'') || ' ' || coalesce(k.name,'') || ' agent') as hay
+      from mcp_calls c
+      left join api_keys k on k.id = c.api_key_id
+      where c.created_at >= ${floor}`,
   },
 ]
 
@@ -342,6 +377,7 @@ interface Row {
   n2: number | null
   detail: string | null
   x: string | null
+  target: string | null
 }
 
 /** Search the log, newest first. Validates its own input (it comes from a URL or an agent). */
@@ -384,7 +420,7 @@ export async function searchLog(
   })
 
   const rows = (await db.all(sql`
-    select src, sid, at, type, name, email, ref, n1, n2, detail, x
+    select src, sid, at, type, name, email, ref, n1, n2, detail, x, target
     from (${sql.join(parts, sql` union all `)})
     order by at desc, src asc, sid desc
     limit ${limit + 1}
@@ -429,6 +465,9 @@ function toEvent(r: Row): LogEvent {
     email: r.email,
     ref: r.ref,
     detail: r.detail,
+    ...(r.type.startsWith('audit.')
+      ? { actor: r.x as 'operator' | 'key' | 'agent', target: r.target }
+      : {}),
   }
 }
 
@@ -510,9 +549,28 @@ function describe(r: Row): string {
         : `${syncName(r.ref)} finished`
     case 'sync.failed':
       return `${syncName(r.ref)} failed`
+    case 'audit.ok':
+    case 'audit.denied':
+    case 'audit.error':
+      return describeAudit(r)
     default:
       return r.type
   }
+}
+
+function describeAudit(r: Row): string {
+  const actor =
+    r.x === 'operator'
+      ? r.name && r.name !== 'dev-bypass'
+        ? r.name
+        : 'The operator'
+      : r.x === 'key'
+        ? `API key "${r.name ?? 'deleted'}"`
+        : `Agent (key "${r.name ?? 'deleted'}")`
+  const what = r.x === 'agent' ? `${r.ref}` : `${r.ref}${r.target ? ` on ${r.target}` : ''}`
+  if (r.type === 'audit.denied') return `${actor} was refused: ${what}`
+  if (r.type === 'audit.error') return `${actor} hit an error: ${what}`
+  return r.x === 'agent' ? `${actor} called ${what}` : `${actor}: ${what}`
 }
 
 const syncName = (kind: string | null) => (kind === 'stripe_catalog' ? 'Stripe catalog sync' : 'Stripe sync')

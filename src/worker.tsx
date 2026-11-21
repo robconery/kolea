@@ -33,6 +33,7 @@ import { store } from './web/admin-store.tsx'
 import { tagging } from './web/admin-tags.tsx'
 import { siteAdmin } from './web/admin-site.tsx'
 import { themesAdmin } from './web/admin-themes.tsx'
+import { auditWrites } from './web/audit.ts'
 import { requireOperator } from './web/auth.ts'
 import { isSiteHost, site } from './web/site.tsx'
 import { prefs } from './web/prefs.tsx'
@@ -82,6 +83,11 @@ app.get('/robots.txt', (c) => c.text('User-agent: *\nDisallow: /\n'))
 
 // Public: preference center, tracking, webhooks, transactional API, signup.
 // Everything else is operator-only (SPEC 8.2).
+// The audit trail for key-authenticated writes: which key, what, and whether
+// it was refused. Ahead of the routers so it wraps them (`web/audit.ts`).
+app.use('/api/send', auditWrites('key'))
+app.use('/api/sales', auditWrites('key'))
+
 app.route('/', prefs)
 app.route('/', api)
 // Signup forms: posted to from other people's websites, so public by definition.
@@ -106,6 +112,11 @@ app.all('/mcp/:secret', (c) =>
 )
 
 app.use('*', requireOperator)
+// Every console write, refusals included, attributed to the Access identity
+// `requireOperator` just verified. After the gate on purpose: a request Access
+// turned away never reached the app, and recording those would let anyone on
+// the internet fill this table.
+app.use('*', auditWrites('operator'))
 app.route('/', admin)
 app.route('/', audience)
 // Read-only by construction — see the header note in `web/admin-analytics.tsx`.

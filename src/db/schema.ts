@@ -1271,6 +1271,57 @@ export const mcpCalls = sqliteTable(
 )
 
 /**
+ * ⭐ The audit trail for people and keys: every write to the admin console and
+ * every call to the key-authenticated API (`/api/send`, `/api/sales`), refusals
+ * included. Agents are already recorded, call by call, in `mcp_calls` above; the
+ * Logs page reads both, so an agent's change is not written twice.
+ *
+ * Written by ONE middleware (`web/audit.ts`) around the mutating routes, not by
+ * each handler: a trail that depends on every new handler remembering to call
+ * it is a trail with holes in it. The outcome is read off the response (2xx/3xx
+ * ok, 4xx or a `kind=warn` redirect denied, 5xx error), and a route can mark a
+ * refusal explicitly where its response does not show one.
+ *
+ * Request bodies stay out. `summary` holds a few allowlisted fields (name,
+ * subject, status…) so "what did they change" is answerable; tokens, keys and
+ * passwords never reach it (see `summarize` in `core/audit.ts`).
+ *
+ * Not pruned: this is the record of who changed what, and "who sent that?" has
+ * to be answerable next quarter. One row per operator click is small.
+ */
+export const auditEntries = sqliteTable(
+  'audit_entries',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    at: ts('at').notNull(),
+    /** `agent` is never written here — agents live in `mcp_calls`. */
+    actorKind: text('actor_kind', { enum: ['operator', 'key'] }).notNull(),
+    /**
+     * The Cloudflare Access email for an operator (null if Access passed no
+     * email; `dev-bypass` under DEV_AUTH_BYPASS), or the key id as text. Text
+     * rather than an FK because an operator is not a row in this database.
+     */
+    actorId: text('actor_id'),
+    /** nullable-fk: set for key actors; a revoked or deleted key keeps its history. */
+    apiKeyId: integer('api_key_id').references(() => apiKeys.id, { onDelete: 'set null' }),
+    /** Method and route pattern, ids replaced: `POST /broadcasts/:id/send`. */
+    action: text('action').notNull(),
+    /** What it was done to, from the path: `broadcasts/12`. Null for collections. */
+    target: text('target'),
+    outcome: text('outcome', { enum: ['ok', 'denied', 'error'] }).notNull(),
+    /** Why it was refused or failed, one line. Never a stack. */
+    detail: text('detail'),
+    /** The HTTP status the caller got. 0 when the handler threw. */
+    status: integer('status').notNull().default(0),
+    summary: text('summary', { mode: 'json' }).notNull().$type<Record<string, string>>().default({}),
+  },
+  (t) => [
+    index('audit_entries_at_idx').on(t.at),
+    index('audit_entries_outcome_idx').on(t.outcome, t.at),
+  ],
+)
+
+/**
  * ⭐ The thing standing between a hallucinated tool call and eight thousand
  * people getting mail. A send tool refuses to run without a token minted by the
  * matching preview tool, and the token carries a `digest` of what was actually
@@ -1384,6 +1435,7 @@ export type DownloadGrant = typeof downloadGrants.$inferSelect
 export type Sale = typeof sales.$inferSelect
 export type ApiKey = typeof apiKeys.$inferSelect
 export type McpCall = typeof mcpCalls.$inferSelect
+export type AuditEntry = typeof auditEntries.$inferSelect
 export type PreflightToken = typeof preflightTokens.$inferSelect
 export type SyncRun = typeof syncRuns.$inferSelect
 export type Offer = typeof offers.$inferSelect
