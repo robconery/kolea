@@ -9,6 +9,7 @@
 .bm-slop-tip,
 .bm-ai-veil,
 .bm-ai-clean,
+.bm-ai-ghost,
 .bm-ai-subj,
 .bm-ai-pop {
   --e-ink: #22262b;
@@ -849,6 +850,15 @@
 .bm-ai-result p { margin: 10px 0 0; font: 13px/1.5 var(--e-ui); color: var(--e-ui-muted); }
 .bm-ai-result .bm-ai-link { margin-top: 6px; }
 .bm-ai-result .bm-ai-meta { margin: 6px 0 0; }
+
+/* The Ghostwriter box: folded until opened, above "Clean this up". */
+.bm-ai-ghost { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--e-ui-line); font: 13px/1.5 var(--e-ui); }
+.bm-ai-ghost summary { cursor: pointer; font-weight: 600; color: var(--e-ui-ink, inherit); }
+.bm-ai-ghost input,
+.bm-ai-ghost textarea { display: block; width: 100%; box-sizing: border-box; margin-top: 8px; font: inherit; }
+.bm-ai-ghost .btn { width: 100%; justify-content: center; margin-top: 8px; }
+.bm-ai-ghost .btn:disabled { opacity: 0.8; cursor: progress; }
+.bm-ai-ghost ul { margin: 4px 0 0; padding-left: 18px; }
 
 @keyframes bm-ai-pulse {
   50% { opacity: 0.55; }

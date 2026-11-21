@@ -42,10 +42,129 @@ interface CleanupAnswer {
   spend: Spend
 }
 
+interface GhostAnswer {
+  ok: true
+  doc: JSONContent
+  subjects: string[]
+  slop: number
+  costUsd: number
+  spend: Spend
+}
+
 export function attachAi(form: HTMLFormElement, editor: Editor): void {
   if (!form.dataset.ai) return
   wireSubjects(form, editor)
+  wireGhostwriter(form, editor)
   wireCleanup(form, editor)
+}
+
+/* ─────────────────────────────────────────────────────────── ghostwriter */
+
+/**
+ * The Ghostwriter: a topic and notes in, a draft in the writer's tuned voice
+ * out. The draft replaces the editor's content as ONE change, so ⌘Z (or the
+ * button) gives the writer's own words back. Nothing is sent; the composer's
+ * usual autosave keeps it as a draft like anything typed.
+ */
+function wireGhostwriter(form: HTMLFormElement, editor: Editor): void {
+  const side = form.querySelector<HTMLElement>('[data-slop-panel]')
+  if (!side) return
+  const subjectInput = form.querySelector<HTMLInputElement>('input[name="subject"]')
+
+  const box = document.createElement('details')
+  box.className = 'bm-ai-ghost'
+  const summary = document.createElement('summary')
+  summary.textContent = 'Ghostwriter'
+  const topic = document.createElement('input')
+  topic.type = 'text'
+  topic.maxLength = 500
+  topic.placeholder = 'What is this mail about?'
+  topic.setAttribute('aria-label', 'Topic')
+  const notes = document.createElement('textarea')
+  notes.rows = 4
+  notes.maxLength = 4000
+  notes.placeholder = 'Your notes: the facts, the story, any links. It invents none of these.'
+  notes.setAttribute('aria-label', 'Notes')
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.className = 'btn'
+  button.textContent = 'Write it'
+  const small = line(
+    `${form.dataset.aiGhostModel ?? 'AI'} · ${form.dataset.aiGhostVoice ?? 'your voice'} · `,
+    'bm-ai-note',
+  )
+  const tune = document.createElement('a')
+  tune.href = '/ghostwriter'
+  tune.textContent = 'tune the voice'
+  small.append(tune)
+  const result = document.createElement('div')
+  result.className = 'bm-ai-result'
+  result.setAttribute('role', 'status')
+  box.append(summary, topic, notes, button, small, result)
+  side.prepend(box)
+
+  button.addEventListener('click', async () => {
+    if (topic.value.trim().length < 3) {
+      result.replaceChildren(line('Give it a topic first. A few words is enough.', 'bad'))
+      return
+    }
+    if (!editor.isEmpty && !window.confirm("Replace this draft with the Ghostwriter's? Undo brings yours back.")) return
+
+    button.disabled = true
+    button.textContent = 'Writing…'
+    editor.setEditable(false)
+    result.replaceChildren(line('Drafting in your voice. A minute or so.', 'bm-ai-meta'))
+    const answer = await post<GhostAnswer>('/ai/ghostwrite', {
+      topic: topic.value,
+      angle: notes.value,
+      context: form.dataset.aiContext ?? '',
+    })
+    editor.setEditable(true)
+    button.disabled = false
+    button.textContent = 'Write it again'
+
+    if (!answer.ok) {
+      result.replaceChildren(line(answer.reason, 'bad'))
+      return
+    }
+    // One transaction over the whole document: one undo restores the writer's own.
+    const next = editor.schema.nodeFromJSON(answer.doc)
+    const { tr } = editor.state
+    tr.replaceWith(0, tr.doc.content.size, next.content)
+    editor.view.dispatch(tr)
+
+    const undo = document.createElement('button')
+    undo.type = 'button'
+    undo.className = 'bm-ai-link'
+    undo.textContent = 'Undo, give me mine back'
+    undo.addEventListener('mousedown', (e) => e.preventDefault())
+    undo.addEventListener('click', () => {
+      editor.chain().focus().undo().run()
+      result.replaceChildren(line('Your version is back.'))
+    })
+
+    const picks = document.createElement('ul')
+    for (const subject of answer.subjects) {
+      if (!subjectInput) break
+      const li = document.createElement('li')
+      const pick = document.createElement('button')
+      pick.type = 'button'
+      pick.className = 'bm-ai-link'
+      pick.textContent = subject
+      pick.addEventListener('click', () => {
+        subjectInput.value = subject
+        subjectInput.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+      li.append(pick)
+      picks.append(li)
+    }
+    result.replaceChildren(
+      line(`Drafted. Slop ${answer.slop}. Fill anything in [[ brackets ]] and read it through: it's your name on it.`),
+      ...(picks.childElementCount ? [line('Subject ideas:', 'bm-ai-meta'), picks] : []),
+      undo,
+      line(`${cost(answer.costUsd)} · ${spent(answer.spend)}`, 'bm-ai-meta'),
+    )
+  })
 }
 
 /* ─────────────────────────────────────────────────────────── subjects */

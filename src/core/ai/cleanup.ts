@@ -112,7 +112,7 @@ export async function cleanUp(env: Env, db: Db, input: { doc: DocNode | null }):
 }
 
 /** The draft's own tells, worst first, so the model is told what to stop doing. */
-function problems(report: Report): string {
+export function problems(report: Report): string {
   if (report.hits.length === 0 && report.notes.length === 0) {
     return 'The slop checker found nothing specific in this draft. Tighten it against the guide anyway, and change as little as you need to.'
   }

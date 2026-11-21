@@ -19,6 +19,7 @@ import { postPlainText } from '../core/render-web.ts'
 import { type Photo, searchPhotos, triggerDownload, unsplashConfigured } from '../core/unsplash.ts'
 import { modelLabel } from '../core/ai/openrouter.ts'
 import { resolveAi } from '../core/ai/settings.ts'
+import { getVoice, voiceSummary } from '../core/ai/ghostwriter-voice.ts'
 import { countSegment, describeRule, listSegments } from '../core/segments.ts'
 import {
   type SequenceTrigger,
@@ -81,6 +82,8 @@ async function composeAi(env: Env, db: Db, context: string): Promise<ComposeAi |
   return {
     subjectModel: modelLabel(ai.models.subject),
     cleanupModel: modelLabel(ai.models.cleanup),
+    ghostModel: modelLabel(ai.models.ghostwriter),
+    ghostVoice: voiceSummary(await getVoice(db)),
     context,
   }
 }
@@ -1830,6 +1833,11 @@ mail.get('/sequences/:id', async (c) => {
         <div class="card-h">
           <h2>Steps</h2>
           <div class="actions">
+            {steps.length > 0 ? (
+              <a class="btn sm" href={`/sequences/${id}/takes`}>
+                Ghostwriter takes
+              </a>
+            ) : null}
             <a class="btn sm primary" href={`/sequences/${id}/steps/new`}>
               Add a step
             </a>

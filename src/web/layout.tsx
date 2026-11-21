@@ -1003,6 +1003,8 @@ const NAV: ({ grp: string } | { href: string; key: string; label: string })[] = 
   // Directly under Sequences: a template is where a sequence starts, and it is
   // a library you come back to, not a step inside "new sequence".
   { href: '/sequences/templates', key: 'tpl', label: 'Templates' },
+  // The voice the Ghostwriter writes in. Beside the screens it writes for.
+  { href: '/ghostwriter', key: 'ghost', label: 'Ghostwriter' },
   // Mail another app sends by naming a slug. Beside the Outbox, which is where
   // the result of every one of those calls shows up.
   { href: '/transactional', key: 'txn', label: 'Transactional' },
@@ -1527,6 +1529,9 @@ export interface ComposeAi {
   /** Display names, for the small print under each button. */
   subjectModel: string
   cleanupModel: string
+  /** The Ghostwriter's model, and the voice in a few words, for its small print. */
+  ghostModel?: string
+  ghostVoice?: string
   /** A few words on where this mail goes, handed to the subject suggester. */
   context?: string
 }
@@ -1605,6 +1610,8 @@ export const ComposeLayout: FC<
         data-ai={ai ? '1' : undefined}
         data-ai-subject-model={ai?.subjectModel}
         data-ai-cleanup-model={ai?.cleanupModel}
+        data-ai-ghost-model={ai?.ghostModel}
+        data-ai-ghost-voice={ai?.ghostVoice}
         data-ai-context={ai?.context}
         data-record-id={recordId ? String(recordId) : undefined}
       >
