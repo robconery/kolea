@@ -10,6 +10,7 @@ import {
   type ConsentSnapshot,
   type Scope,
   canReceiveBroadcastIn,
+  canReceiveConfirmationIn,
   canReceiveSequenceIn,
   canReceiveTransactionalIn,
   loadConsentSnapshot,
@@ -372,7 +373,11 @@ export async function sendMessages(
     // A form's delivery mail is not in that category: the person just joined the
     // list, so it carries the ordinary newsletter footer. Only the *eligibility*
     // rule is transactional — see `eligibility()`.
-    const isMarketing = msg.kind !== 'transactional'
+    //
+    // A double opt-in confirmation is system mail too: no footer (there is
+    // nothing yet to unsubscribe from) and no tracking (the link in it is the
+    // one thing that must never break on a redirect).
+    const isMarketing = msg.kind !== 'transactional' && msg.kind !== 'confirmation'
 
     const grantToken =
       msg.kind === 'form' && msg.formId ? grants.get(`${msg.formId}:${msg.subscriberId}`) : undefined
@@ -558,6 +563,7 @@ function eligibility(
   if (msg.kind === 'sequence' && scope.kind === 'sequence') {
     return canReceiveSequenceIn(snapshot, sub, scope.sequenceId)
   }
+  if (msg.kind === 'confirmation') return canReceiveConfirmationIn(snapshot, sub)
   // `form` lands here with `transactional`, deliberately. Handing over the file
   // somebody just asked for is fulfillment, not marketing: an unsubscribed
   // reader still gets their download, and only a dead address or a spam

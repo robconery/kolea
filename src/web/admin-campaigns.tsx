@@ -457,6 +457,7 @@ campaignsAdmin.get('/forms', async (c) => {
                         {form.name}
                       </a>
                       {form.isActive ? null : <div class="faint">closed</div>}
+                      {form.doubleOptIn ? <div class="faint">confirms by email</div> : null}
                     </td>
                     <td class="mono faint">POST /f/{form.slug}</td>
                     <td>
@@ -632,6 +633,7 @@ interface FieldsProps {
     redirectUrl: string | null
     successMessage: string
     isActive: boolean
+    doubleOptIn: boolean
   }
   tagNames: string
 }
@@ -719,6 +721,24 @@ const FormFieldsInner = ({ seqs, allCampaigns, form, tagNames }: FieldsProps) =>
       </label>
     </div>
 
+    <div class="field">
+      <label style="font-weight:400">
+        <input
+          type="checkbox"
+          name="doubleOptIn"
+          value="1"
+          checked={form ? form.doubleOptIn : true}
+          style="width:auto"
+        />{' '}
+        Ask people to confirm by email first (double opt-in)
+      </label>
+      <div class="faint">
+        On: a signup gets one email with a confirm link. Tags, the sequence and the reply wait for
+        the click, so nobody is signed up with an address that isn't theirs. Off: they're in the
+        moment they submit.
+      </div>
+    </div>
+
   </>
 )
 
@@ -754,6 +774,7 @@ function readFormInput(form: FormData) {
     redirectUrl: String(form.get('redirectUrl') ?? '').trim() || null,
     successMessage: String(form.get('successMessage') ?? '').trim(),
     isActive: form.get('isActive') === '1',
+    doubleOptIn: form.get('doubleOptIn') === '1',
   }
 }
 
@@ -971,6 +992,7 @@ await fetch('${endpoint}', {
         </div>
         <div class="actions">
           {form.isActive ? <span class="pill ok">accepting</span> : <span class="pill">closed</span>}
+          {form.doubleOptIn ? <span class="pill">confirms by email</span> : null}
           <a class="btn" href={`/f/${form.slug}`} target="_blank" rel="noreferrer">
             Try it ↗
           </a>

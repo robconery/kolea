@@ -162,6 +162,27 @@ export function canReceiveTransactionalIn(snap: ConsentSnapshot, email: string):
   return OK
 }
 
+/**
+ * Can we send a double opt-in confirmation to this address?
+ *
+ * System mail, so it ignores `unsubscribed` the way transactional mail does:
+ * somebody who left the newsletter and signs up again may be asking to come
+ * back. But stricter than transactional on suppression. A confirmation is the
+ * one mail a stranger can cause by typing an address into a public form, and
+ * the person behind a suppressed address asked for nothing at all, so ANY
+ * suppression blocks it, not only a bounce or a complaint.
+ */
+export function canReceiveConfirmationIn(
+  snap: ConsentSnapshot,
+  sub: { email: string; status: string },
+): Block {
+  if (isSuppressedIn(snap, sub.email)) return { blocked: true, reason: 'suppressed' }
+  if (sub.status === 'bounced' || sub.status === 'complained') {
+    return { blocked: true, reason: `status:${sub.status}` }
+  }
+  return OK
+}
+
 // Single-subscriber forms. One row's worth of snapshot, same rules.
 
 export async function isSuppressed(db: Db, email: string): Promise<boolean> {

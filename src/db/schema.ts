@@ -672,6 +672,19 @@ export const forms = sqliteTable(
     deliveryBodyMd: text('delivery_body_md'),
     successMessage: text('success_message').notNull().default("You're subscribed. Thanks!"),
     isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
+    /**
+     * ⭐ Double opt-in. On, a submit creates (or leaves) the person as they are,
+     * sends one confirmation mail, and does NOTHING else that can start mail: no
+     * tags, no sequence, no reply, no campaign touch. All of that waits for the
+     * click on the link in `form_confirmations`, so a stranger typing somebody
+     * else's address into a public form can cause one throttled confirmation
+     * and nothing more.
+     *
+     * The column defaults to 0 so every form that existed before this shipped
+     * keeps behaving exactly as it did on the sites it is already embedded in.
+     * `createForm` defaults new forms to on, which is Kōlea's default.
+     */
+    doubleOptIn: integer('double_opt_in', { mode: 'boolean' }).notNull().default(false),
     // Observable in D1, because Workers logs are gone in a week.
     submitCount: integer('submit_count').notNull().default(0),
     lastSubmittedAt: ts('last_submitted_at'),
@@ -746,6 +759,52 @@ export const downloadGrants = sqliteTable(
     uniqueIndex('download_grants_token_key').on(t.token),
     uniqueIndex('download_grants_person_key').on(t.formId, t.subscriberId),
     index('download_grants_subscriber_idx').on(t.subscriberId),
+  ],
+)
+
+/**
+ * ⭐ One open request to confirm a double opt-in signup: the link in the
+ * confirmation mail is `/f/<slug>/confirm/<token>`.
+ *
+ * A row rather than an HMAC of (form, person), for the same reasons as
+ * `subscribers.unsub_token`: it needs no key in the Worker, it can expire, and
+ * it is the record of *when* somebody asked and *when* they confirmed — the
+ * consent provenance a signup is worth keeping.
+ *
+ * A re-submit while one is still open reuses it (same token, so every copy of
+ * the mail works) rather than minting another. Once confirmed or expired it is
+ * history, and a later submit opens a new row, so the old `confirmed_at` is
+ * never rewritten. How many mails a row may cause is not stored here: it is
+ * counted from `messages` (kind `confirmation`), which already records every one.
+ *
+ * Cascade on both sides: a confirmation for a deleted form or person answers
+ * no question, and the mail it caused is kept in `messages` anyway.
+ */
+export const formConfirmations = sqliteTable(
+  'form_confirmations',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    formId: integer('form_id')
+      .notNull()
+      .references(() => forms.id, { onDelete: 'cascade' }),
+    subscriberId: integer('subscriber_id')
+      .notNull()
+      .references(() => subscribers.id, { onDelete: 'cascade' }),
+    /** The unguessable half of the URL. Nothing else authenticates the click. */
+    token: text('token').notNull(),
+    status: text('status', { enum: ['pending', 'confirmed'] })
+      .notNull()
+      .default('pending'),
+    createdAt: ts('created_at').notNull(),
+    /** Seven days, as Kōlea. After it the link shows "expired" and changes nothing. */
+    expiresAt: ts('expires_at').notNull(),
+    confirmedAt: ts('confirmed_at'),
+  },
+  (t) => [
+    uniqueIndex('form_confirmations_token_key').on(t.token),
+    // "Is there already an open one for this person on this form?" — every submit.
+    index('form_confirmations_person_idx').on(t.formId, t.subscriberId),
+    index('form_confirmations_subscriber_idx').on(t.subscriberId),
   ],
 )
 
@@ -991,7 +1050,13 @@ export const messages = sqliteTable(
     subscriberId: integer('subscriber_id')
       .notNull()
       .references(() => subscribers.id, { onDelete: 'cascade' }),
-    kind: text('kind', { enum: ['broadcast', 'sequence', 'transactional', 'form'] }).notNull(),
+    // `confirmation` is a double opt-in confirmation (see `form_confirmations`):
+    // system mail with no footer and no tracking, like `transactional`, but
+    // blocked by ANY suppression rather than only a bounce or complaint. Nobody
+    // who asked for nothing at all gets mail because a stranger typed their address.
+    kind: text('kind', {
+      enum: ['broadcast', 'sequence', 'transactional', 'form', 'confirmation'],
+    }).notNull(),
     // nullable-fk: exactly one source per `kind`; transactional has none.
     broadcastId: integer('broadcast_id').references(() => broadcasts.id, { onDelete: 'cascade' }),
     /**

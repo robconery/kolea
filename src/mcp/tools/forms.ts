@@ -92,7 +92,7 @@ export function registerForms(server: McpServer, ctx: Ctx): void {
     'form_create',
     {
       description:
-        'Create a signup form. Submissions upsert the subscriber, apply the tags, enroll them in sequence_id if set, and record an attribution touch for campaign_id if set.',
+        'Create a signup form. Submissions upsert the subscriber, apply the tags, enroll them in sequence_id if set, and record an attribution touch for campaign_id if set. double_opt_in defaults to true: a submit then creates the person as pending and sends one confirmation email, and the tags, sequence, reply and touch all wait until they click the link in it.',
       inputSchema: z.object({
         name: z.string().min(1),
         slug: z.string().optional().describe('Defaults to a slug of the name; uniqueness is enforced'),
@@ -101,10 +101,15 @@ export function registerForms(server: McpServer, ctx: Ctx): void {
         campaign_id: z.number().int().nullable().optional(),
         redirect_url: z.string().nullable().optional().describe('Where the browser lands after posting'),
         success_message: z.string().optional(),
+        double_opt_in: z
+          .boolean()
+          .optional()
+          .describe('Require an email confirmation before anything else happens. Defaults to true'),
       }),
     },
     async (args) => {
       const id = await createForm(ctx.db, {
+        doubleOptIn: args.double_opt_in ?? true,
         name: args.name,
         ...(args.slug ? { slug: args.slug } : {}),
         tagIds: args.tag_ids ?? [],
@@ -124,7 +129,7 @@ export function registerForms(server: McpServer, ctx: Ctx): void {
     'form_update',
     {
       description:
-        'Update a form. Omitted fields are cleared, not kept — read the form with form_get first and pass the whole shape back. The reply and its file are not touched here; the reply has its own tool, form_set_reply.',
+        'Update a form. Omitted fields are cleared, not kept — read the form with form_get first and pass the whole shape back. The one exception is double_opt_in: omitted keeps what the form has, so confirmation is never switched off by accident. The reply and its file are not touched here; the reply has its own tool, form_set_reply.',
       inputSchema: z.object({
         id: z.number().int(),
         name: z.string().min(1),
@@ -135,6 +140,10 @@ export function registerForms(server: McpServer, ctx: Ctx): void {
         redirect_url: z.string().nullable().optional(),
         success_message: z.string().optional(),
         is_active: z.boolean().optional(),
+        double_opt_in: z
+          .boolean()
+          .optional()
+          .describe('Require an email confirmation first. Omitted keeps the current setting'),
       }),
     },
     async (args) => {
@@ -150,6 +159,7 @@ export function registerForms(server: McpServer, ctx: Ctx): void {
         redirectUrl: args.redirect_url ?? null,
         ...(args.success_message ? { successMessage: args.success_message } : {}),
         isActive: args.is_active ?? true,
+        ...(args.double_opt_in === undefined ? {} : { doubleOptIn: args.double_opt_in }),
       })
       return ok({ updated: true })
     },
