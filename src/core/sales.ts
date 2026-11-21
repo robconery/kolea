@@ -24,6 +24,14 @@ export interface SaleInput {
   status?: 'paid' | 'refunded'
   occurredAt?: Date
   meta?: Record<string, unknown>
+  /**
+   * `explicit` credits only the campaign named on the sale and never infers one
+   * from the buyer's last touch. History imports use it: a 2019 sale must not be
+   * credited to a campaign the buyer touched in 2026 (Kōlea SPEC 16.6).
+   */
+  attribution?: 'auto' | 'explicit'
+  /** `subscribers.source` for a buyer created by this sale. Defaults to `sale`. */
+  buyerSource?: string
 }
 
 export type SaleStatus = 'recorded' | 'refunded' | 'duplicate' | 'invalid_email' | 'invalid_amount'
@@ -119,7 +127,7 @@ export async function recordSale(db: Db, input: SaleInput): Promise<SaleResult> 
   const existingSub = await db.select().from(subscribers).where(eq(subscribers.email, email)).get()
   let subscriberId = existingSub?.id
   if (!subscriberId) {
-    const { id } = await upsertBuyer(db, email, input.name ?? null)
+    const { id } = await upsertBuyer(db, email, input.name ?? null, input.buyerSource ?? 'sale')
     if (!id) return { status: 'invalid_email' }
     subscriberId = id
   } else if (input.name && !existingSub?.name) {
@@ -145,7 +153,7 @@ export async function recordSale(db: Db, input: SaleInput): Promise<SaleResult> 
     }
   }
 
-  if (!campaignId) {
+  if (!campaignId && input.attribution !== 'explicit') {
     const touch = await lastTouch(db, subscriberId)
     if (touch) {
       const campaign = await db
@@ -260,11 +268,11 @@ export async function recordSale(db: Db, input: SaleInput): Promise<SaleResult> 
  * `subscribe`-triggered sequences stay out of it either way — post-purchase mail
  * comes from the tags on the sale, which is the explicit, visible path.
  */
-async function upsertBuyer(db: Db, email: string, name: string | null) {
+async function upsertBuyer(db: Db, email: string, name: string | null, source: string) {
   return await upsertSubscriber(db, {
     email,
     name,
-    source: 'sale',
+    source,
     status: 'pending',
     triggerSubscribeSequences: false,
   })

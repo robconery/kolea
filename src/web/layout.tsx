@@ -998,6 +998,8 @@ const NAV: ({ grp: string } | { href: string; key: string; label: string })[] = 
   // magnet is built and where the file lives, and it was unfindable one level in.
   { href: '/forms', key: 'forms', label: 'Forms' },
   { href: '/sales', key: 'sales', label: 'Sales' },
+  // Bookkeeping for the years before Stripe: next to the ledger it fills in.
+  { href: '/sales/import', key: 'simport', label: 'Import sales' },
   // Directly under Sales, because that is where it is used from: a sale is the
   // thing you press the button on, and this is what the button says.
   { href: '/purchase-mail', key: 'pmail', label: 'Purchase mail' },
