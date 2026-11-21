@@ -84,6 +84,19 @@ export interface Env {
   RESEND_API_KEY?: string
   RESEND_WEBHOOK_SECRET?: string
 
+  /** Private API key (`key-…`). Required when `EMAIL_PROVIDER=mailgun`. */
+  MAILGUN_API_KEY?: string
+  /** The sending domain registered in Mailgun, e.g. `mg.example.com`. */
+  MAILGUN_DOMAIN?: string
+  /**
+   * "HTTP webhook signing key" from Mailgun's Webhooks page — not the API key.
+   * Without it `/webhooks/mailgun` fails closed with a 503, which Mailgun
+   * retries, so events wait for the key instead of being accepted unsigned.
+   */
+  MAILGUN_WEBHOOK_SIGNING_KEY?: string
+  /** `us` (default, api.mailgun.net) or `eu` (api.eu.mailgun.net). Must match the account. */
+  MAILGUN_REGION?: string
+
   /**
    * The unguessable path segment the MCP server answers on: `/mcp/<secret>`.
    * Unset means the endpoint 404s — MCP is off unless deliberately turned on.
