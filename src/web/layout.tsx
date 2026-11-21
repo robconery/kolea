@@ -962,6 +962,26 @@ const ICONS: Record<string, string> = {
   /* A key: what an agent or another app holds instead of a login. */
   agents: 'M8.4 15.6a3.6 3.6 0 1 0 0-7.2 3.6 3.6 0 0 0 0 7.2ZM12 12h8.2M17.4 12v2.6M20.2 12v2',
   help: 'M12 3.8a8.2 8.2 0 1 0 0 16.4 8.2 8.2 0 0 0 0-16.4Zm-2.4 5.5a2.5 2.5 0 1 1 3.3 2.4c-.6.2-.9.8-.9 1.4v.6m0 2.5v.1',
+  /* A speech bubble with a quote in it: what a reader said back. */
+  testi: 'M4.4 5.4h15.2v10.4h-8.2l-4.2 3.6v-3.6H4.4V5.4ZM8.8 9.2v1.4c0 .9-.4 1.5-1.2 1.8M12.6 9.2v1.4c0 .9-.4 1.5-1.2 1.8',
+  /* A pencil: something that drafts for you. */
+  ghost: 'M15.6 4.4l4 4L9.2 18.8l-5 1 1-5L15.6 4.4ZM13.4 6.6l4 4',
+  /* An arrow coming down into a receipt: past sales brought in. */
+  simport: 'M6.6 10.4v10.2l1.8-1.4 1.8 1.4 1.8-1.4 1.8 1.4 1.8-1.4 1.8 1.4V10.4M12 3.4v9m-3-3 3 3 3-3',
+  /* A boxed product: what is on the shelf right now. */
+  forsale: 'M4.4 8.4 12 4.4l7.6 4v8.2L12 20.6l-7.6-4V8.4Zm0 0 7.6 4 7.6-4M12 12.4v8.2',
+  /* A globe: the domain mail is sent from. */
+  dom: 'M12 3.6a8.4 8.4 0 1 0 0 16.8 8.4 8.4 0 0 0 0-16.8ZM3.6 12h16.8M12 3.6c-2.2 2.3-3.4 5.1-3.4 8.4s1.2 6.1 3.4 8.4m0-16.8c2.2 2.3 3.4 5.1 3.4 8.4s-1.2 6.1-3.4 8.4',
+  /* A framed picture: a hill and a sun. */
+  media: 'M4.4 5.4h15.2v13.2H4.4V5.4Zm0 10 4.2-4.2 3.4 3.4 2.4-2.4 5.2 5.2M15.4 8.4a1.2 1.2 0 1 0 0 2.4 1.2 1.2 0 0 0 0-2.4Z',
+  /* A person with a tick: someone allowed into the console. */
+  team: 'M10 11.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4ZM4.2 19.4c.5-3.1 2.9-5 5.8-5 1.6 0 3 .6 4 1.5M15.4 17.2l1.8 1.8 3.4-3.8',
+  /* Two sparkles: the writing helpers. */
+  aiset: 'M10.4 4.6c.5 3.6 2 5.1 5.6 5.6-3.6.5-5.1 2-5.6 5.6-.5-3.6-2-5.1-5.6-5.6 3.6-.5 5.1-2 5.6-5.6ZM17.4 14.6c.2 1.5.9 2.2 2.4 2.4-1.5.2-2.2.9-2.4 2.4-.2-1.5-.9-2.2-2.4-2.4 1.5-.2 2.2-.9 2.4-2.4Z',
+  /* Two chain links: an outside app joined to this one. */
+  apps: 'M10.4 13.6a3.6 3.6 0 0 0 5.1 0l3-3a3.6 3.6 0 0 0-5.1-5.1l-1.2 1.2M13.6 10.4a3.6 3.6 0 0 0-5.1 0l-3 3a3.6 3.6 0 0 0 5.1 5.1l1.2-1.2',
+  /* A checklist with the last box still open: first-run setup. */
+  setup: 'M4.6 6.6 6 8l2.4-2.6M4.6 12.2 6 13.6l2.4-2.6M4.8 16.6h2.8v2.8H4.8v-2.8ZM11.4 6.8h8M11.4 12.4h8M11.4 18h8',
 }
 
 const Icon: FC<{ k: string; w?: number }> = ({ k, w = 1.3 }) => (
