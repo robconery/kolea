@@ -61,6 +61,7 @@ import { auditWrites } from './web/audit.ts'
 import { topicsAdmin } from './web/admin-topics.tsx'
 import { requireOperator } from './web/auth.ts'
 import { requireRole } from './web/roles.ts'
+import { sameOriginWrites } from './web/same-origin.ts'
 import { teamAdmin } from './web/admin-team.tsx'
 import { isSiteHost, site } from './web/site.tsx'
 import { prefs } from './web/prefs.tsx'
@@ -169,6 +170,8 @@ app.all('/mcp', (c) =>
 // Who: the Access JWT, verified, and the person's row on the team
 // (`core/team.ts`). Somebody Access let in who is not on the team stops here.
 app.use('*', requireOperator)
+// Cross-site form posts are refused before anything else sees them.
+app.use('*', sameOriginWrites)
 // Every console write, refusals included, attributed to the Access identity
 // `requireOperator` just verified, with their role. After the gate on purpose:
 // a request Access turned away never reached the app, and recording those would

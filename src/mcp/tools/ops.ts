@@ -122,6 +122,11 @@ export function registerOps(server: McpServer, ctx: Ctx): void {
       annotations: { readOnlyHint: true },
     },
     async ({ sql }) => {
+      // Raw SQL reads everything the fixed tools deliberately leave out, so a
+      // read-only grant (an OAuth app approved without "allow changes") does not
+      // get it. Admin keys keep it for analytics; credentials are refused for
+      // everyone by `checkQuery`.
+      if (ctx.readOnly) return fail('db_query is not available to a read-only connection.')
       const check = checkQuery(sql)
       if (!check.ok) {
         return fail(

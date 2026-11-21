@@ -63,7 +63,8 @@ api.post('/api/send', async (c) => {
 
 // ───────────────────────────────────────────────── provider webhooks
 
-api.post('/webhooks/:provider', async (c) => {
+// Named providers only: the admin's own `/webhooks/:id` screens share the prefix.
+api.post('/webhooks/:provider{resend|mailgun|stripe}', async (c) => {
   const db = getDb(c.env)
   const name = c.req.param('provider')
 

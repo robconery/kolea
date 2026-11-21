@@ -13,6 +13,10 @@ export const mediaRoutes = new Hono<{ Bindings: Env }>()
  */
 mediaRoutes.get('/media/:key{.+}', async (c) => {
   const key = c.req.param('key')
+  // Uploaded themes keep their assets in the same bucket. Those are served by
+  // the public site's host, never here: an SVG with a <script> in someone's
+  // theme must not run on the console's origin.
+  if (key.startsWith('themes/')) return c.notFound()
   const object = await c.env.MEDIA.get(key)
   if (!object) return c.notFound()
 
@@ -21,6 +25,9 @@ mediaRoutes.get('/media/:key{.+}', async (c) => {
   headers.set('etag', object.httpEtag)
   // Keys are content-addressed by a random token, so a URL never changes meaning.
   headers.set('Cache-Control', 'public, max-age=31536000, immutable')
+  // Belt and braces: never sniffed into HTML, and sandboxed if it is an SVG.
+  headers.set('X-Content-Type-Options', 'nosniff')
+  headers.set('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox")
 
   return new Response(object.body, { headers })
 })

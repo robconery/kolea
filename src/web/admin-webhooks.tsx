@@ -244,7 +244,7 @@ const DeliveryRow: FC<{ d: WebhookDelivery }> = ({ d }) => (
   </tr>
 )
 
-webhooksAdmin.get('/webhooks/:id', async (c) => {
+webhooksAdmin.get('/webhooks/:id{[0-9]+}', async (c) => {
   const id = Number(c.req.param('id'))
   const db = getDb(c.env)
   const endpoint = Number.isInteger(id) ? await getWebhookEndpoint(db, id) : null
@@ -348,7 +348,7 @@ webhooksAdmin.get('/webhooks/:id', async (c) => {
   )
 })
 
-webhooksAdmin.post('/webhooks/:id', async (c) => {
+webhooksAdmin.post('/webhooks/:id{[0-9]+}', async (c) => {
   const id = Number(c.req.param('id'))
   const form = await c.req.formData()
   const result = await updateWebhookEndpoint(getDb(c.env), id, {
@@ -361,7 +361,7 @@ webhooksAdmin.post('/webhooks/:id', async (c) => {
   return c.redirect(go(`/webhooks/${id}`, 'Saved.'), 303)
 })
 
-webhooksAdmin.post('/webhooks/:id/delete', async (c) => {
+webhooksAdmin.post('/webhooks/:id{[0-9]+}/delete', async (c) => {
   const id = Number(c.req.param('id'))
   const gone = Number.isInteger(id) && (await deleteWebhookEndpoint(getDb(c.env), id))
   return c.redirect(go('/webhooks', gone ? 'Endpoint deleted with its delivery log.' : 'No such endpoint.', !gone), 303)
