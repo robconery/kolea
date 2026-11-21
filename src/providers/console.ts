@@ -1,6 +1,6 @@
 import type { Db } from '../db/index.ts'
 import { devOutbox } from '../db/schema.ts'
-import type { EmailProvider, OutgoingEmail, SendResult } from './types.ts'
+import type { DomainIdentity, EmailProvider, OutgoingEmail, ProviderDomain, SendResult } from './types.ts'
 
 /**
  * Local-development provider. Writes fully rendered mail to `dev_outbox` instead
@@ -9,6 +9,7 @@ import type { EmailProvider, OutgoingEmail, SendResult } from './types.ts'
  */
 export class ConsoleProvider implements EmailProvider {
   readonly name = 'console'
+  readonly domains: DomainIdentity = consoleDomains
 
   constructor(private readonly db: Db) {}
 
@@ -38,5 +39,33 @@ export class ConsoleProvider implements EmailProvider {
 
   async parseWebhook(): Promise<[]> {
     return []
+  }
+}
+
+/**
+ * The console provider's domains "API": the same shape of records Resend asks
+ * for (a DKIM key, a return-path MX and TXT on `send.<domain>`), on obviously
+ * local values, and always willing to send. Nothing leaves the machine, so the
+ * verdict on a domain locally is the DNS check's alone — which, with
+ * `DNS_RESOLVER=fake`, is whatever one-click setup or a spec put there.
+ */
+export const consoleDomains: DomainIdentity = {
+  async register(name) {
+    return { ok: true, domain: consoleDomain(name) }
+  },
+  async verify(name) {
+    return { ok: true, domain: consoleDomain(name) }
+  },
+}
+
+function consoleDomain(name: string): ProviderDomain {
+  return {
+    id: `console-${name}`,
+    state: 'active',
+    records: [
+      { purpose: 'dkim', type: 'TXT', name: `kolea._domainkey.${name}`, value: `p=CONSOLE-DKIM-KEY-FOR-${name.toUpperCase()}` },
+      { purpose: 'return_path', type: 'MX', name: `send.${name}`, value: 'feedback.console.invalid', priority: 10 },
+      { purpose: 'return_path', type: 'TXT', name: `send.${name}`, value: 'v=spf1 include:spf.console.invalid ~all' },
+    ],
   }
 }

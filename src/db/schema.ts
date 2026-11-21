@@ -1977,3 +1977,95 @@ export const pageViews = sqliteTable(
 )
 
 export type PageView = typeof pageViews.$inferSelect
+
+// ─────────────────────────────────────────────────────────── sending domains
+
+/**
+ * One DNS record the email provider asks for, as the provider said it when the
+ * domain was registered (Kōlea SPEC 6.1.2). Stored, not recomputed: the DKIM key
+ * is the provider's and only the provider can say what it is.
+ *
+ * `return_path` is the bounce domain (Resend's `send.<domain>` MX + TXT, the
+ * envelope MAIL FROM): mail whose MAIL FROM is not on the sender's domain fails
+ * DMARC's SPF alignment. A provider's *receiving* MX and its own tracking CNAME
+ * are never stored: the first would take over the domain's incoming mail, the
+ * second would track on the provider's host instead of ours.
+ */
+export interface ProviderDomainRecord {
+  purpose: 'dkim' | 'spf' | 'return_path'
+  type: 'TXT' | 'CNAME' | 'MX'
+  /** Fully qualified. */
+  name: string
+  value: string
+  /** MX only. */
+  priority?: number
+}
+
+/**
+ * What the last check saw at each record's name, keyed by record id (`dkim1`,
+ * `spf`, `return_path1`, `dmarc`, `tracking`). `existing` is a DMARC record of
+ * the operator's own, which is left alone and counts as fine.
+ */
+export type DomainRecordStatus = 'unchecked' | 'found' | 'missing' | 'mismatch' | 'existing'
+
+/**
+ * ⭐ A domain mail is sent from (Kōlea SPEC 6.1, ported without the hosted parts:
+ * no per-account ownership TXT, no provider sub-accounts, no staff verification).
+ *
+ * `status` moves only through `core/domains.ts` `transition()`:
+ * `pending → verified | failed`, `verified → failed`, `failed → verified`.
+ * Verified means every required record answers in DNS **and** the provider says
+ * it will sign for the domain. A check that cannot reach the provider or DNS
+ * changes nothing: an outage is not the operator's fault (6.1.5).
+ *
+ * `name` is unique and lowercased: one row per domain, single operator. There
+ * is no `removed` status — removing a domain deletes the row, because nothing
+ * references it (the From address lives in `FROM_EMAIL`, not on a row).
+ *
+ * `provider` is the `EMAIL_PROVIDER` the records came from. Switching provider
+ * makes the stored records stale; the next check re-registers when it differs.
+ * `provider_domain_id` is the provider's handle (Resend's domain id), null until
+ * registration succeeds — a provider outage at add time still adds the domain,
+ * and the next check registers it.
+ *
+ * `next_check_at` drives the minutely cron: quick backoff while pending, daily
+ * once settled, null when automatic polling has given up (the screen's "Check
+ * now" still works). `check_attempt` counts the pending polls for that backoff.
+ */
+export const sendingDomains = sqliteTable(
+  'sending_domains',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    name: text('name').notNull(),
+    status: text('status', { enum: ['pending', 'verified', 'failed'] })
+      .notNull()
+      .default('pending'),
+    provider: text('provider').notNull(),
+    providerDomainId: text('provider_domain_id'),
+    /** The provider's own verdict at the last check. Null until it has been asked. */
+    providerState: text('provider_state', { enum: ['unverified', 'active', 'failed'] }),
+    providerRecords: text('provider_records', { mode: 'json' })
+      .notNull()
+      .$type<ProviderDomainRecord[]>()
+      .default([]),
+    recordStatuses: text('record_statuses', { mode: 'json' })
+      .notNull()
+      .$type<Record<string, DomainRecordStatus>>()
+      .default({}),
+    /** Why the last check or registration could not finish. Cleared on success. */
+    lastError: text('last_error'),
+    checkAttempt: integer('check_attempt').notNull().default(0),
+    lastCheckedAt: ts('last_checked_at'),
+    nextCheckAt: ts('next_check_at'),
+    verifiedAt: ts('verified_at'),
+    failedAt: ts('failed_at'),
+    createdAt: ts('created_at').notNull(),
+    updatedAt: ts('updated_at').notNull(),
+  },
+  (t) => [
+    uniqueIndex('sending_domains_name_key').on(t.name),
+    index('sending_domains_next_check_idx').on(t.nextCheckAt),
+  ],
+)
+
+export type SendingDomain = typeof sendingDomains.$inferSelect

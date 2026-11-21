@@ -1014,6 +1014,8 @@ const NAV: ({ grp: string } | { href: string; key: string; label: string })[] = 
   { grp: 'System' },
   { href: '/site', key: 'site', label: 'Profile' },
   { href: '/themes', key: 'theme', label: 'Themes' },
+  // Where mail is sent from, and whether DNS agrees.
+  { href: '/domains', key: 'dom', label: 'Sending domains' },
   { href: '/consent', key: 'cons', label: 'Consent' },
   { href: '/settings', key: 'set', label: 'Settings' },
   { href: '/help', key: 'help', label: 'Help' },

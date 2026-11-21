@@ -82,6 +82,26 @@ export interface Env {
   AI_MONTHLY_BUDGET_USD?: string
 
   RESEND_API_KEY?: string
+
+  /**
+   * How sending-domain records are looked up (`core/domains.ts`). Unset means
+   * real DNS: DNS-over-HTTPS to Cloudflare's 1.1.1.1, read-only and keyless.
+   * `"fake"` uses the in-memory resolver in `providers/dns.ts` — the suite
+   * pins it, and it is handy locally alongside `CLOUDFLARE_DNS=fake`.
+   */
+  DNS_RESOLVER?: string
+  /**
+   * Which Cloudflare DNS API one-click setup talks to. Unset means the real v4
+   * API, used only when `CLOUDFLARE_DNS_API_TOKEN` is set. `"fake"` writes into
+   * the in-memory DNS instead, so local one-click setup verifies end to end.
+   */
+  CLOUDFLARE_DNS?: string
+  /**
+   * A Cloudflare API token scoped to **Zone:Read + DNS:Edit** on the zones you
+   * send from. A secret, not a var. Unset hides the one-click "Add to
+   * Cloudflare" button; the records can always be copied by hand.
+   */
+  CLOUDFLARE_DNS_API_TOKEN?: string
   RESEND_WEBHOOK_SECRET?: string
 
   /**

@@ -8,6 +8,7 @@ import {
   resumeBroadcast,
   startBroadcast,
 } from '../core/broadcasts.ts'
+import { fromAddressStanding } from '../core/domains.ts'
 import { listCampaigns } from '../core/campaigns.ts'
 import { storeMedia } from '../core/media.ts'
 import { setPostTags, tagSlug, tagsForPost } from '../core/post-tags.ts'
@@ -1246,6 +1247,17 @@ mail.get('/broadcasts/:id/send', async (c) => {
   const warnings: string[] = []
   if (words > 0 && words < 150) warnings.push(`It's short: ${words} words. Is it finished?`)
   if (/\b(TODO|TK|XXX|lorem ipsum)\b/i.test(`${b.subject} ${text}`)) warnings.push('It contains a placeholder (TODO, TK, XXX or lorem ipsum).')
+  // Kōlea blocks a send from an unverified domain (its SPEC 6.3.1). Here it
+  // warns: the domain may well have been verified at the provider long before
+  // the Sending domains screen existed.
+  const standing = await fromAddressStanding(c.env, db)
+  if (standing.domain && standing.status !== 'verified') {
+    warnings.push(
+      standing.status === 'unknown'
+        ? `It comes from ${c.env.FROM_EMAIL}, and ${standing.domain} isn't set up under Sending domains, so nothing here has checked its DNS.`
+        : `It comes from ${c.env.FROM_EMAIL}, and ${standing.domain} is ${standing.status} under Sending domains. Mail from it may land in spam or be refused.`,
+    )
+  }
 
   const people = `${audienceSize.toLocaleString('en-US')} ${audienceSize === 1 ? 'person' : 'people'}`
 
