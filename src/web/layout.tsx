@@ -1071,6 +1071,9 @@ const NAV: ({ grp: string } | { href: string; key: string; label: string })[] = 
   { href: '/settings/agents', key: 'agents', label: 'Agents & keys' },
   // Apps approved over OAuth ("paste a URL into Claude"). Separate from API keys.
   { href: '/connected-apps', key: 'apps', label: 'Connected apps' },
+  // The first-run checklist. Here as well as on the dashboard, so dismissing it
+  // there never loses it.
+  { href: '/onboarding', key: 'setup', label: 'Get set up' },
   { href: '/help', key: 'help', label: 'Help' },
 ]
 

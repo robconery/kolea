@@ -31,6 +31,7 @@ import { audience } from './web/admin-audience.tsx'
 import { cleanupAdmin } from './web/admin-cleanup.tsx'
 import { campaignsAdmin } from './web/admin-campaigns.tsx'
 import { domainsAdmin } from './web/admin-domains.tsx'
+import { onboardingAdmin } from './web/admin-onboarding.tsx'
 import { conversionsAdmin } from './web/admin-conversions.tsx'
 import { fieldsAdmin } from './web/admin-fields.tsx'
 import { membersAdmin } from './web/admin-members.tsx'
@@ -196,6 +197,8 @@ app.route('/', siteAdmin)
 app.route('/', themesAdmin)
 // Sending domains: operator config, nothing public.
 app.route('/', domainsAdmin)
+// First-run checklist (Kōlea SPEC 21.4). Links out to the screens above; sends nothing.
+app.route('/', onboardingAdmin)
 app.route('/', mediaAdmin)
 app.route('/', topicsAdmin)
 // Ahead of `mail`, which owns `/sequences/:id` and would read "templates" as an id.

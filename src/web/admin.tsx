@@ -26,6 +26,8 @@ import { GoalBar } from './admin-goals.tsx'
 import { StoreHeadline, TierCard, monthColumn } from './admin-store.tsx'
 import { ColumnChart } from './charts.tsx'
 import { Flash, Layout, fmtDate, fmtMoney, statusPill } from './layout.tsx'
+import { offerChecklist, onboardingProgress } from '../core/onboarding.ts'
+import { OnboardingCard } from './admin-onboarding.tsx'
 
 export const admin = new Hono<{ Bindings: Env }>()
 
@@ -76,6 +78,10 @@ admin.get('/', async (c) => {
   // answer on its own: revenue says how much came in, a goal says whether that
   // was the number you were aiming at.
   const goals = await activeGoals(db, 4)
+
+  // First run (Kōlea SPEC 21.4): the checklist sits above everything until each
+  // step is settled or the operator dismisses it.
+  const setup = await onboardingProgress(c.env, db)
 
   const recent = await db
     .select({
@@ -128,6 +134,8 @@ admin.get('/', async (c) => {
       </div>
 
       <Flash msg={c.req.query('flash')} />
+
+      {offerChecklist(setup) ? <OnboardingCard progress={setup} from="/" /> : null}
 
       {(subs?.n ?? 0) === 0 ? (
         <div class="note">
