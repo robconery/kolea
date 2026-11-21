@@ -5,7 +5,7 @@ import { broadcasts, events, messages } from '../db/schema.ts'
 import type { Env } from '../types.ts'
 import { canReceiveBroadcastIn, loadConsentSnapshot } from './consent.ts'
 import { publishPost } from './posts.ts'
-import { resolveSegment } from './segments.ts'
+import { audienceUpperBound, resolveSegment } from './segments.ts'
 import { dispatch } from './sending.ts'
 
 // ─────────────────────────────────────────────────── authoring
@@ -324,20 +324,26 @@ export async function dispatchBroadcastPage(
     }
   }
 
-  const candidates = await resolveSegment(db, b.segment ?? {}, b.cursorSubscriberId, PAGE)
+  // ⭐ Resolve once (SPEC 3.5). The audience is bounded the first time a page
+  // runs — the `scheduled → sending` pass above, or the next page of a send that
+  // was already in flight before the bound existed — and never again, so the
+  // cursor below can't walk into anybody who joined after the send began.
+  let upper = b.audienceUpperId
+  if (upper === null) {
+    upper = await audienceUpperBound(db, b.segment ?? {})
+    await db
+      .update(broadcasts)
+      .set({ audienceUpperId: upper })
+      .where(eq(broadcasts.id, broadcastId))
+  }
+
+  const candidates =
+    b.cursorSubscriberId >= upper
+      ? []
+      : await resolveSegment(db, b.segment ?? {}, b.cursorSubscriberId, PAGE, upper)
 
   if (candidates.length === 0) {
-    const remaining = await db
-      .select({ n: count() })
-      .from(messages)
-      .where(and(eq(messages.broadcastId, broadcastId), eq(messages.status, 'queued')))
-      .get()
-    if ((remaining?.n ?? 0) === 0) {
-      await db
-        .update(broadcasts)
-        .set({ status: 'sent', sentAt: new Date() })
-        .where(eq(broadcasts.id, broadcastId))
-    }
+    await closeIfFinished(db, broadcastId)
     return { materialized: 0, done: true }
   }
 
@@ -382,7 +388,26 @@ export async function dispatchBroadcastPage(
 
   await dispatch(env, db, created)
 
-  return { materialized: created.length, done: candidates.length < PAGE }
+  // A short page was the last one. Close in the same pass when nothing is left
+  // queued (an inline send, or a page that was all suppressed); otherwise the
+  // queue still holds mail and the next tick closes it.
+  const done = candidates.length < PAGE || lastId >= upper
+  if (done) await closeIfFinished(db, broadcastId)
+  return { materialized: created.length, done }
+}
+
+/** `sent` once the walk is over and no message for it is still `queued` (SPEC 3.7). */
+async function closeIfFinished(db: Db, broadcastId: number): Promise<void> {
+  const remaining = await db
+    .select({ n: count() })
+    .from(messages)
+    .where(and(eq(messages.broadcastId, broadcastId), eq(messages.status, 'queued')))
+    .get()
+  if ((remaining?.n ?? 0) > 0) return
+  await db
+    .update(broadcasts)
+    .set({ status: 'sent', sentAt: new Date() })
+    .where(and(eq(broadcasts.id, broadcastId), eq(broadcasts.status, 'sending')))
 }
 
 /**

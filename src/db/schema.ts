@@ -231,6 +231,27 @@ export const broadcasts = sqliteTable(
     // large broadcast writes its `messages` rows across several cron ticks, resuming
     // from the last subscriber id it reached.
     cursorSubscriberId: integer('cursor_subscriber_id').notNull().default(0),
+    /**
+     * ⭐ The audience, frozen at dispatch (SPEC 3.5). The highest subscriber id
+     * the segment matched at the `scheduled → sending` transition; every later
+     * page of the cursored walk stops at it. Without it, the cursor walks into
+     * people who joined *during* the send, and a broadcast keeps finding new
+     * readers for as long as it takes to finish.
+     *
+     * An id bound is enough on its own because `subscribers.id` is
+     * AUTOINCREMENT — SQLite never reuses one, so nobody created after the
+     * freeze can land at or below it. Only *who existed* is frozen: the rule is
+     * still evaluated live on each page, under the bound, exactly as kolea-pro
+     * does it, so a person tagged into the segment mid-send who already
+     * existed below the bound is reached, and anyone who left (status, tag,
+     * suppression) is not. Consent is re-checked again at the provider call.
+     *
+     * Null means not yet frozen: a draft, a scheduled send, an imported
+     * archive row, or a send that was already in flight when this column
+     * arrived (frozen at its next page — the closest thing to "at dispatch"
+     * left for it). 0 means the audience was empty.
+     */
+    audienceUpperId: integer('audience_upper_id'),
     createdAt: ts('created_at').notNull(),
 
     // ── Imported engagement totals (Kit history).
@@ -1345,7 +1366,8 @@ export const preflightTokens = sqliteTable(
   {
     id: integer('id').primaryKey({ autoIncrement: true }),
     tokenHash: text('token_hash').notNull(),
-    kind: text('kind', { enum: ['broadcast_send', 'sequence_activate'] }).notNull(),
+    // TS-level enum only (no CHECK), so a new kind needs no migration.
+    kind: text('kind', { enum: ['broadcast_send', 'sequence_activate', 'undelivered_send_again'] }).notNull(),
     targetId: integer('target_id').notNull(),
     /** Hash of the previewed subject + body + audience rule. */
     digest: text('digest').notNull(),

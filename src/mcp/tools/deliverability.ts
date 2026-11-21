@@ -1,5 +1,5 @@
 import type { McpServer } from '@modelcontextprotocol/server'
-import { and, desc, eq } from 'drizzle-orm'
+import { and, desc, eq, inArray } from 'drizzle-orm'
 import * as z from 'zod/v4'
 import {
   canReceiveBroadcastIn,
@@ -11,8 +11,22 @@ import {
   unsuppressAddress,
 } from '../../core/consent.ts'
 import { normalizeEmail } from '../../core/ids.ts'
+import { type ResendTarget, resendableIds, sendAgain, undeliveredMail } from '../../core/undelivered.ts'
 import { devOutbox, events, messages, sequences, subscribers, suppressions } from '../../db/schema.ts'
-import { type Ctx, clampLimit, defineTool, fail, ok } from '../kit.ts'
+import { type Ctx, clampLimit, defineTool, fail, failed, ok } from '../kit.ts'
+import { SEND_DISABLED, consumePreflight, digestOf, mintPreflight, sendingAllowed } from '../preflight.ts'
+
+const TARGET = z.object({
+  kind: z
+    .enum(['broadcast', 'step', 'message'])
+    .describe('broadcast: every failed message of one broadcast; step: of one sequence step; message: one message'),
+  id: z.number().int().describe('The broadcast id, sequence step id, or message id'),
+})
+
+/** The token binds to exactly the rows previewed: one more failure since, and it dies. */
+async function undeliveredDigest(target: ResendTarget, ids: number[]): Promise<string> {
+  return await digestOf(['undelivered', target.kind, target.id, ids])
+}
 
 const REASONS = ['unsubscribed_all', 'hard_bounce', 'complaint', 'manual'] as const
 
@@ -255,6 +269,92 @@ export function registerDeliverability(server: McpServer, ctx: Ctx): void {
         })
       }
       return ok(rows.map((r) => ({ ...r, text: r.text.slice(0, 1500) })))
+    },
+  )
+
+  defineTool(
+    server,
+    ctx,
+    'undelivered_list',
+    {
+      description:
+        'Mail that should have gone and did not: messages the queue gave up on or the provider refused, grouped by broadcast, sequence step, or single message. Cancelled broadcasts, suppressed mail, and anything the provider accepted are never listed. `renderedToOutbox` counts mail the console provider rendered instead of sending; that is not offered for re-sending.',
+      inputSchema: z.object({}),
+      annotations: { readOnlyHint: true },
+    },
+    async () => {
+      const report = await undeliveredMail(ctx.db, 20)
+      return ok({ total: report.total, groups: report.groups, renderedToOutbox: report.renderedToOutbox })
+    },
+  )
+
+  defineTool(
+    server,
+    ctx,
+    'undelivered_preflight',
+    {
+      description:
+        'Preview sending failed mail again for one target, and get the preflight_token undelivered_send_again requires. Shows how many messages, to whom, and why they failed. The token is single-use, lasts 10 minutes, and dies if the set of failed messages changes.',
+      inputSchema: z.object({ target: TARGET }),
+      annotations: { readOnlyHint: true },
+    },
+    async ({ target }) => {
+      const ids = await resendableIds(ctx.db, target)
+      if (ids.length === 0) return fail('Nothing to send again for that target.')
+
+      const sample = await ctx.db
+        .select({ id: messages.id, toEmail: messages.toEmail, subject: messages.subject, error: messages.error })
+        .from(messages)
+        .where(inArray(messages.id, ids.slice(0, 10)))
+        .all()
+      const { token, expiresAt } = await mintPreflight(
+        ctx.db,
+        'undelivered_send_again',
+        target.id,
+        await undeliveredDigest(target, ids),
+        ids.length,
+      )
+      return ok({
+        target,
+        messages: ids.length,
+        sample,
+        note: 'Consent is checked again at send time; anyone who unsubscribed since is skipped. Nobody who already got it is mailed twice.',
+        preflight_token: token,
+        expiresAt,
+      })
+    },
+  )
+
+  defineTool(
+    server,
+    ctx,
+    'undelivered_send_again',
+    {
+      description:
+        'Put failed mail for one target back through the normal send path. Requires a preflight_token from undelivered_preflight for the same target, minted since the last change to its failed messages. Real mail goes out.',
+      inputSchema: z.object({ target: TARGET, preflight_token: z.string().describe('From undelivered_preflight') }),
+      annotations: { destructiveHint: true, idempotentHint: true },
+    },
+    async ({ target, preflight_token }) => {
+      if (!sendingAllowed(ctx.env)) return fail(SEND_DISABLED)
+
+      const ids = await resendableIds(ctx.db, target)
+      const check = await consumePreflight(
+        ctx.db,
+        'undelivered_send_again',
+        target.id,
+        await undeliveredDigest(target, ids),
+        preflight_token,
+      )
+      if (!check.ok) {
+        return fail(
+          `Refusing to send: ${check.reason}.`,
+          `Call undelivered_preflight({ target: ${JSON.stringify(target)} }) and pass the token it returns.`,
+        )
+      }
+
+      const result = await sendAgain(ctx.env, ctx.db, target)
+      return result.ok ? ok({ requeued: result.requeued }) : failed(result)
     },
   )
 }

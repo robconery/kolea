@@ -32,6 +32,7 @@ import { store } from './web/admin-store.tsx'
 import { tagging } from './web/admin-tags.tsx'
 import { siteAdmin } from './web/admin-site.tsx'
 import { themesAdmin } from './web/admin-themes.tsx'
+import { undeliveredAdmin } from './web/admin-undelivered.tsx'
 import { requireOperator } from './web/auth.ts'
 import { isSiteHost, site } from './web/site.tsx'
 import { prefs } from './web/prefs.tsx'
@@ -124,6 +125,7 @@ app.route('/', themesAdmin)
 // Ahead of `mail`, which owns `/sequences/:id` and would read "templates" as an id.
 app.route('/', sequenceTemplatesAdmin)
 app.route('/', mail)
+app.route('/', undeliveredAdmin)
 // Ahead of `campaignsAdmin`, which owns `/sales`, so `/sales/:id/thanks` is
 // matched by the router that implements it rather than by anything broader.
 app.route('/', purchaseMailAdmin)
