@@ -36,6 +36,7 @@ export const HELPERS: Helper[] = [
   { task: 'cleanup', label: 'Clean this up', what: "Rewrites a draft without flattening the writer's voice." },
   { task: 'sequence-plan', label: 'Sequence plan', what: 'Reads the brief and plans the story a sequence tells.' },
   { task: 'sequence-mail', label: 'Sequence mails', what: 'Writes each mail of a drafted sequence, all at once.' },
+  { task: 'council', label: 'Reader council', what: 'Three readers and an editor read a draft and say what to keep and cut.' },
 ]
 
 export type Maker = 'anthropic' | 'openai'

@@ -3285,3 +3285,89 @@ export const memberSubscriptions = sqliteTable(
 
 export type MemberSubscription = typeof memberSubscriptions.$inferSelect
 export type PremiumCheckout = typeof premiumCheckouts.$inferSelect
+
+// ─────────────────────────────────────────────────────────── reader council
+//
+// Advisory only. Nothing here sends, schedules, holds or blocks mail, and
+// nothing a subscriber can see reads these tables. A review is what a model
+// said about a draft, kept so the operator can reread what they paid for.
+
+/**
+ * Who the council's three readers are: four dials, each a fixed choice
+ * (`core/council.ts` holds the choices and the sentences they become). One
+ * row (`id = 1`), created on first save; no row means the defaults.
+ *
+ * ⚠️ This is the whole of "the audience" a model ever hears about. No
+ * subscriber row, address, name, count or tag is read to build a persona:
+ * the operator describes their readers with these dials and Big Mailer's own
+ * sentences go into the prompt, so nothing typed here (or by a subscriber)
+ * can reach a model as instructions. Ported as-is from Kōlea.
+ */
+export const councilAudience = sqliteTable('council_audience', {
+  id: integer('id').primaryKey(),
+  field: text('field', {
+    enum: ['developers', 'designers', 'founders', 'creators', 'marketers', 'educators', 'general'],
+  })
+    .notNull()
+    .default('general'),
+  expertise: text('expertise', { enum: ['newcomer', 'practitioner', 'expert'] })
+    .notNull()
+    .default('practitioner'),
+  purpose: text('purpose', { enum: ['learn', 'keep_up', 'perspective', 'story'] })
+    .notNull()
+    .default('perspective'),
+  attention: text('attention', { enum: ['skims', 'reads', 'devours'] }).notNull().default('reads'),
+  updatedAt: ts('updated_at').notNull(),
+})
+
+export type CouncilAudience = typeof councilAudience.$inferSelect
+
+/**
+ * One reading of one draft by the council: a broadcast or a sequence step,
+ * never both (`core/council.ts` sets exactly one). Every review is kept, newest
+ * first, so an earlier verdict can be reread after the draft has moved on.
+ *
+ * `status` is the lifecycle: `reading` is written before the model is called,
+ * then it becomes `done` (with `review`) or `failed` (with `error`). A failed
+ * or abandoned row never shows as a finished review. Readiness and budget are
+ * checked before the row exists, so "AI is off" and "budget used up" leave no
+ * row at all.
+ *
+ * `draft_subject` / `draft_text` are the snapshot the council read (the
+ * operator's own words, as plain markdown), so the notes' anchors still point
+ * at the right passage after the draft is edited. `review` is untrusted model
+ * output, cleaned on the way in and escaped on render; each note's `quote` was
+ * checked against `draft_text` and blanked if it was not there.
+ */
+export const councilReviews = sqliteTable(
+  'council_reviews',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    // nullable-fk: exactly one of these two is set. Cascade: a review of a
+    // deleted draft is about nothing.
+    broadcastId: integer('broadcast_id').references(() => broadcasts.id, { onDelete: 'cascade' }),
+    // nullable-fk: see broadcast_id.
+    sequenceStepId: integer('sequence_step_id').references(() => sequenceSteps.id, { onDelete: 'cascade' }),
+    status: text('status', { enum: ['reading', 'done', 'failed'] }).notNull(),
+    draftSubject: text('draft_subject').notNull(),
+    draftText: text('draft_text').notNull(),
+    /** The four dials as they were when the council sat: `{ field, expertise, purpose, attention }`. */
+    audience: text('audience', { mode: 'json' }).notNull().$type<Record<string, string>>(),
+    /** `CouncilReview` from `core/council.ts`; null until `done`. */
+    review: text('review', { mode: 'json' }).$type<unknown>(),
+    /** Note id → `dismissed`, for the notes the operator read and is leaving. */
+    resolved: text('resolved', { mode: 'json' }).notNull().$type<Record<string, string>>().default({}),
+    model: text('model'),
+    /** What the call cost, as `ai_calls` recorded it. The budget sums `ai_calls`, not this. */
+    costUsd: real('cost_usd').notNull().default(0),
+    error: text('error'),
+    createdAt: ts('created_at').notNull(),
+    finishedAt: ts('finished_at'),
+  },
+  (t) => [
+    index('council_reviews_broadcast_idx').on(t.broadcastId, t.createdAt),
+    index('council_reviews_step_idx').on(t.sequenceStepId, t.createdAt),
+  ],
+)
+
+export type CouncilReviewRow = typeof councilReviews.$inferSelect
