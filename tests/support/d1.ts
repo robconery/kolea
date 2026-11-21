@@ -30,6 +30,9 @@
  * - **The 100-bound-parameter cap.** A statement binding more than 100 values
  *   throws here as it does on D1, so an unchunked `inArray` fails a spec
  *   instead of production.
+ * - **The 5-term compound SELECT cap.** D1 refuses `a union all b union all …`
+ *   past five terms (`too many terms in compound SELECT`); stock SQLite allows
+ *   500. Modelled by counting compound operators at each nesting level.
  * - **Statements are counted** (`queryCount`), so a spec can hold one
  *   invocation to D1's 1,000-query cap. Counting, not refusing: the cap is per
  *   Worker invocation and a spec decides where one begins (`resetQueryCount`).
@@ -87,6 +90,50 @@ function meta(overrides: Partial<Meta> = {}): Meta {
 
 /** D1's cap on bound parameters per statement. */
 export const D1_MAX_PARAMS = 100
+
+/** D1's cap on terms in one compound SELECT (SQLITE_LIMIT_COMPOUND_SELECT). */
+export const D1_MAX_COMPOUND_TERMS = 5
+
+/**
+ * Throws if any single compound SELECT in `sql` has more than five terms.
+ * Counts `union` / `intersect` / `except` per parenthesis level, skipping
+ * quoted strings and identifiers, so a subquery's terms are its own.
+ */
+export function assertCompoundTerms(sql: string): void {
+  const stack: number[] = [1]
+  let i = 0
+  while (i < sql.length) {
+    const ch = sql[i] as string
+    if (ch === "'" || ch === '"' || ch === '`') {
+      const end = sql.indexOf(ch, i + 1)
+      i = end === -1 ? sql.length : end + 1
+      continue
+    }
+    if (ch === '(') {
+      stack.push(1)
+      i++
+      continue
+    }
+    if (ch === ')') {
+      if (stack.length > 1) stack.pop()
+      i++
+      continue
+    }
+    if (/[a-z]/i.test(ch) && (i === 0 || !/[\w$]/.test(sql[i - 1] as string))) {
+      const word = /^[a-z_]\w*/i.exec(sql.slice(i))?.[0] ?? ch
+      if (/^(union|intersect|except)$/i.test(word)) {
+        const top = stack.length - 1
+        stack[top] = (stack[top] as number) + 1
+        if ((stack[top] as number) > D1_MAX_COMPOUND_TERMS) {
+          throw new Error('D1_ERROR: too many terms in compound SELECT: SQLITE_ERROR')
+        }
+      }
+      i += word.length
+      continue
+    }
+    i++
+  }
+}
 
 /** One prepared statement, with its bound parameters. Immutable, like D1's. */
 class FakeD1PreparedStatement {
@@ -174,6 +221,9 @@ export class FakeD1Database {
   constructor(readonly sqlite: Database) {}
 
   prepare(sql: string): FakeD1PreparedStatement {
+    // D1 refuses a compound SELECT past five terms. Modelled, because local
+    // SQLite allows 500 and the Logs page shipped as a production-only 500.
+    assertCompoundTerms(sql)
     return new FakeD1PreparedStatement(this.sqlite, sql, this.counter)
   }
 

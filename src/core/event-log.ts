@@ -429,7 +429,7 @@ export async function searchLog(
 
   const rows = (await db.all(sql`
     select src, sid, at, type, name, email, ref, n1, n2, detail, x, target
-    from (${sql.join(parts, sql` union all `)})
+    from (${unionAll(parts)})
     order by at desc, src asc, sid desc
     limit ${limit + 1}
   `)) as Row[]
@@ -444,6 +444,24 @@ export async function searchLog(
       nextCursor: more && last ? encodeCursor({ at: Number(last.at), src: last.src, sid: Number(last.sid) }) : null,
     },
   }
+}
+
+/**
+ * D1 caps a compound SELECT at 5 terms (`too many terms in compound SELECT`);
+ * stock SQLite allows 500, so the test suite would never notice. The log has
+ * more branches than that, so they are unioned in groups of at most 5, each
+ * group wrapped in its own subquery, and the groups unioned in turn. A
+ * subquery in FROM is a separate SELECT, so each compound stays under the cap.
+ */
+export const D1_MAX_COMPOUND_TERMS = 5
+
+function unionAll(parts: SQL[]): SQL {
+  if (parts.length <= D1_MAX_COMPOUND_TERMS) return sql.join(parts, sql` union all `)
+  const groups: SQL[] = []
+  for (let i = 0; i < parts.length; i += D1_MAX_COMPOUND_TERMS) {
+    groups.push(sql`select * from (${unionAll(parts.slice(i, i + D1_MAX_COMPOUND_TERMS))})`)
+  }
+  return unionAll(groups)
 }
 
 function typesIn(cat: string): string[] {
