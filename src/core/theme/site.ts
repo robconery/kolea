@@ -23,6 +23,7 @@ import {
 } from '../posts.ts'
 import { renderPostHtml } from '../render-web.ts'
 import { escapeHtml } from '../text.ts'
+import { wall } from '../testimonials.ts'
 import { helpers } from './helpers.ts'
 import { Renderer, safe } from './interpreter.ts'
 import type {
@@ -793,6 +794,40 @@ export async function renderSubscribe(req: SiteRequest): Promise<Rendered> {
     root: { post: syntheticPage('Subscribe', html, '/subscribe', cfg) },
     meta: {
       title: `Subscribe · ${cfg.title}`,
+      description: cfg.tagline || null,
+      image: null,
+      type: 'website',
+      publishedAt: null,
+      noindex: false,
+    },
+  })
+}
+
+/**
+ * `/testimonials`: the wall. Only what the writer allowed and the operator
+ * approved (`core/testimonials.ts` `wall`), every word escaped, no address.
+ */
+export async function renderTestimonials(req: SiteRequest): Promise<Rendered> {
+  const { cfg } = req
+  const e = escapeHtml
+  const cards = await wall(req.db)
+  const html = cards.length
+    ? cards
+        .map(
+          (t) =>
+            `<blockquote class="kolea-testimonial">${t.body
+              .split(/\n{2,}/)
+              .map((p) => `<p>${e(p).replace(/\n/g, '<br />')}</p>`)
+              .join('')}<footer>${e(t.displayName)}</footer></blockquote>`,
+        )
+        .join('')
+    : '<p>Nothing here yet.</p>'
+  return render(req, {
+    templates: ['testimonials', 'page', 'post'],
+    contexts: ['page'],
+    root: { post: syntheticPage('What readers say', html, '/testimonials', cfg) },
+    meta: {
+      title: `What readers say · ${cfg.title}`,
       description: cfg.tagline || null,
       image: null,
       type: 'website',

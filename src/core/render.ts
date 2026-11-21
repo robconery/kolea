@@ -2,7 +2,7 @@ import { marked } from 'marked'
 import type { DocNode, MergeExtra, MergeExtras } from '../db/schema.ts'
 import { type Scope, formatScope } from './consent.ts'
 import { shareOnFacebookUrl, shareOnLinkedInUrl, shareOnXUrl } from './posts.ts'
-import { escapeHtml, mergeFields } from './text.ts'
+import { escapeHtml, mergeFields, testimonialPath } from './text.ts'
 import { docIsEmpty, renderDocToEmailHtml, renderDocToText } from './render-doc.ts'
 
 marked.setOptions({ gfm: true, breaks: false })
@@ -101,6 +101,15 @@ export interface EmailBody {
 export function renderEmail(body: EmailBody, ctx: RenderContext): RenderedEmail {
   const scopeParam = encodeURIComponent(formatScope(ctx.scope))
 
+  // `{{testimonial_link}}` is this reader's own link to write a testimonial,
+  // carrying their token as the proof of who they are (`core/testimonials.ts`).
+  // Marketing mail only: a receipt is not the place to ask, so transactional
+  // mail (no footer) resolves it to nothing, as Kōlea does.
+  const extras: MergeExtras = {
+    testimonial_link: ctx.showFooter ? `${ctx.publicUrl}${testimonialPath(ctx.unsubToken)}` : '',
+    ...ctx.extras,
+  }
+
   // `m` is the message that carried this link, so an unsubscribe can be charged
   // to the mail that caused it. It is a hint, not an authority — the preference
   // centre checks the message actually belongs to the token holder before
@@ -129,8 +138,8 @@ export function renderEmail(body: EmailBody, ctx: RenderContext): RenderedEmail 
   // a numbered list in the other. The walker resolves merge-tag *nodes* during
   // the walk, so it has to be handed the right surface up front — the second
   // pass further down only catches literal `{{…}}` text that survived.
-  const htmlExtras = flattenExtras(ctx.extras, 'html')
-  const textExtras = flattenExtras(ctx.extras, 'text')
+  const htmlExtras = flattenExtras(extras, 'html')
+  const textExtras = flattenExtras(extras, 'text')
   const htmlMergeValue = (field: string): string =>
     mergeFieldValue(field, ctx.subscriber, htmlExtras)
   const textMergeValue = (field: string): string =>
@@ -158,7 +167,7 @@ export function renderEmail(body: EmailBody, ctx: RenderContext): RenderedEmail 
   // as a *link target* — the href of a button or a link — and the
   // document walker only merges text nodes. Cheap, and it means the operator can
   // put the token wherever it reads best without learning which places work.
-  for (const [field, value] of Object.entries(ctx.extras ?? {})) {
+  for (const [field, value] of Object.entries(extras)) {
     const token = `{{${field}}}`
     const html = extraHtml(value)
     const text = extraText(value)

@@ -24,6 +24,8 @@ import { campaignsAdmin } from './web/admin-campaigns.tsx'
 import { conversionsAdmin } from './web/admin-conversions.tsx'
 import { purchaseMailAdmin } from './web/admin-purchase-mail.tsx'
 import { saleImportAdmin } from './web/admin-sale-import.tsx'
+import { testimonialsAdmin } from './web/admin-testimonials.tsx'
+import { testimonialForm } from './web/testimonial-form.tsx'
 import { goalsAdmin } from './web/admin-goals.tsx'
 import { help } from './web/admin-help.tsx'
 import { mail } from './web/admin-mail.tsx'
@@ -83,6 +85,7 @@ app.get('/robots.txt', (c) => c.text('User-agent: *\nDisallow: /\n'))
 // Public: preference center, tracking, webhooks, transactional API, signup.
 // Everything else is operator-only (SPEC 8.2).
 app.route('/', prefs)
+app.route('/', testimonialForm)
 app.route('/', api)
 // Signup forms: posted to from other people's websites, so public by definition.
 app.route('/', formsApi)
@@ -129,6 +132,7 @@ app.route('/', mail)
 // matched by the router that implements it rather than by anything broader.
 app.route('/', purchaseMailAdmin)
 app.route('/', saleImportAdmin)
+app.route('/', testimonialsAdmin)
 app.route('/', campaignsAdmin)
 app.route('/', conversionsAdmin)
 app.route('/', goalsAdmin)

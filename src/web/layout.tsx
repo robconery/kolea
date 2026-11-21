@@ -970,6 +970,8 @@ const NAV: ({ grp: string } | { href: string; key: string; label: string })[] = 
   // an enrollment — effectively undiscoverable.
   { href: '/tags', key: 'tags', label: 'Tags & automation' },
   { href: '/segments', key: 'segs', label: 'Segments' },
+  // What the people on the list say back, waiting on a yes before the wall.
+  { href: '/testimonials', key: 'testi', label: 'Testimonials' },
   // ⭐ Mail sits directly under the audience: who is on the list, then what
   // goes out to them — the two screens used every day, at the top.
   { grp: 'Mail' },
