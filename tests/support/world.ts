@@ -52,8 +52,14 @@ export interface World {
   fetch(path: string, init?: RequestInit): Promise<Response>
   /** Same, for a form post — the shape every public page actually submits. */
   post(path: string, form: Record<string, string>): Promise<Response>
-  /** Run the minutely cron: sequence ticks plus scheduled broadcast pages. */
-  tick(): Promise<void>
+  /**
+   * Run the minutely cron: sequence ticks plus scheduled broadcast pages.
+   *
+   * `at` is the cron's `scheduledTime` — the one clock the Worker is handed
+   * rather than reading for itself — so a spec can run the tick at 03:00 in
+   * Honolulu without touching `Date`. Omitted, it is now.
+   */
+  tick(at?: Date): Promise<void>
   /** Await everything handed to `waitUntil`, including work it started itself. */
   settle(): Promise<void>
   /** Everything the console provider "sent", newest last. */
@@ -163,8 +169,12 @@ export function createWorld(overrides: Partial<Env> = {}): World {
       })
     },
 
-    async tick() {
-      await worker.scheduled({ cron: '*/1 * * * *' } as ScheduledController, env, ctx)
+    async tick(at) {
+      await worker.scheduled(
+        { cron: '*/1 * * * *', scheduledTime: (at ?? new Date()).getTime() } as ScheduledController,
+        env,
+        ctx,
+      )
       await settle()
     },
 

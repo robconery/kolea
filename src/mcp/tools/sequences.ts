@@ -22,10 +22,13 @@ import {
   setExit,
   setSequenceActive,
   stepsFor,
+  storedWindow,
   tickSequences,
   updateSequence,
   updateStep,
 } from '../../core/sequences.ts'
+import { clock, parseClock } from '../../core/send-window.ts'
+import { getTimeZone, setTimeZone } from '../../core/site-settings.ts'
 import { subscribers, tags } from '../../db/schema.ts'
 import { type Ctx, clampLimit, defineTool, fail, failed, ok } from '../kit.ts'
 import { consumePreflight, digestOf, mintPreflight } from '../preflight.ts'
@@ -79,8 +82,12 @@ export function registerSequences(server: McpServer, ctx: Ctx): void {
         ? await ctx.db.select().from(tags).where(eq(tags.id, seq.triggerTagId)).get()
         : null
 
+      const window = storedWindow(seq.sendWindowStart, seq.sendWindowEnd)
       return ok({
         ...seq,
+        sendWindow: window
+          ? { start: clock(window.start), end: clock(window.end), timeZone: await getTimeZone(ctx.db) }
+          : null,
         triggerTag: triggerTag?.name ?? null,
         steps: await stepsFor(ctx.db, id),
         stats: await sequenceStats(ctx.db, id),
@@ -132,7 +139,7 @@ export function registerSequences(server: McpServer, ctx: Ctx): void {
     'sequence_update',
     {
       description:
-        'Change a sequence’s name, description, trigger or campaign, and how people leave it. next_sequence_id: finishers of the last step are enrolled there (null ends the chain; applies only to people who finish from now on, and only while that sequence is live). exits_set: tags that pull someone out early, each optionally leading into another sequence. An exit cancels the enrollment and records why; it is NOT an opt-out and writes no consent record. It also keeps holders of that tag from being enrolled. Opt-outs, unsubscribe-from-everything, bounces and complaints always end an enrollment and cannot be configured. Not its steps.',
+        'Change a sequence’s name, description, trigger or campaign, and how people leave it. next_sequence_id: finishers of the last step are enrolled there (null ends the chain; applies only to people who finish from now on, and only while that sequence is live). exits_set: tags that pull someone out early, each optionally leading into another sequence. An exit cancels the enrollment and records why; it is NOT an opt-out and writes no consent record. It also keeps holders of that tag from being enrolled. Opt-outs, unsubscribe-from-everything, bounces and complaints always end an enrollment and cannot be configured. send_window: only send between start and end ("HH:MM", end exclusive; an end before the start runs past midnight), read in the install-wide time_zone; a step due outside it waits for the next opening and is never skipped; null clears it. time_zone: an IANA name like "Pacific/Honolulu"; it is ONE setting for the whole install, so changing it moves every sequence\'s window. Not its steps.',
       inputSchema: z.object({
         id: z.number().int(),
         name: z.string().min(1).optional(),
@@ -151,10 +158,35 @@ export function registerSequences(server: McpServer, ctx: Ctx): void {
           .optional()
           .describe('Add these exits, or change where an existing one leads.'),
         exits_remove: z.array(z.number().int()).optional().describe('Tag ids whose exit to remove.'),
+        send_window: z
+          .object({
+            start: z.string().regex(/^\d{1,2}:\d{2}$/).describe('HH:MM, inclusive'),
+            end: z.string().regex(/^\d{1,2}:\d{2}$/).describe('HH:MM, exclusive'),
+          })
+          .nullable()
+          .optional()
+          .describe('Only send inside this window, in time_zone. null removes it.'),
+        time_zone: z
+          .string()
+          .optional()
+          .describe('The install-wide IANA time zone every send window is read in.'),
       }),
     },
     async (args) => {
+      if (args.time_zone !== undefined) {
+        const tz = await setTimeZone(ctx.db, args.time_zone)
+        if (!tz.ok) return failed(tz)
+      }
+      let sendWindow: { start: number | null; end: number | null } | null | undefined
+      if (args.send_window === null) sendWindow = null
+      else if (args.send_window) {
+        const start = parseClock(args.send_window.start)
+        const end = parseClock(args.send_window.end)
+        if (start === 'invalid' || end === 'invalid') return fail('send_window times must be HH:MM, 00:00 to 23:59.')
+        sendWindow = { start, end }
+      }
       const result = await updateSequence(ctx.db, args.id, {
+        ...(sendWindow !== undefined ? { sendWindow } : {}),
         ...(args.name !== undefined ? { name: args.name } : {}),
         ...(args.description !== undefined ? { description: args.description } : {}),
         ...(args.trigger !== undefined ? { trigger: args.trigger } : {}),

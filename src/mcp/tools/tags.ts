@@ -143,7 +143,7 @@ export function registerTags(server: McpServer, ctx: Ctx): void {
     'tagrule_create',
     {
       description:
-        'Create an auto-tagging rule. Scope it to one broadcast or one sequence, or leave both unset to watch every message. url_contains only applies to click rules. Rules apply to events from now on — they do not backfill.',
+        'Create an auto-tagging rule. Scope it to one broadcast or one sequence, or leave both unset to watch every message. url_contains only applies to click rules. Rules apply to events from now on — they do not backfill. An open rule fires only on a reader\'s open: machine opens (Apple Mail Privacy Protection, scanners) are recorded but fire no rule.',
       inputSchema: z.object({
         name: z.string().min(1),
         event: z.enum(EVENTS),

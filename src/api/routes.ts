@@ -1,5 +1,5 @@
 import { type Context, Hono } from 'hono'
-import { applyProviderEvent, recordEvent } from '../core/events.ts'
+import { applyProviderEvent } from '../core/events.ts'
 import { dispatch, webhookReaderFor } from '../core/sending.ts'
 import {
   type StripeEventEnvelope,
@@ -134,47 +134,6 @@ async function stripeWebhook(c: Context<{ Bindings: Env }>) {
     return c.json({ error: String(err), event: event.id }, 500)
   }
 }
-
-// ───────────────────────────────────────────────── tracking
-
-const PIXEL = Uint8Array.from(
-  atob('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'),
-  (ch) => ch.charCodeAt(0),
-)
-
-api.get('/t/open/:id{[0-9]+\\.gif}', async (c) => {
-  const db = getDb(c.env)
-  const messageId = Number(c.req.param('id').replace('.gif', ''))
-
-  // Recording must never be able to break the pixel (SPEC 5.4) — a message row
-  // deleted after send would otherwise 500 this from inboxes forever.
-  try {
-    if (messageId) await recordEvent(db, messageId, 'open')
-  } catch {
-    /* swallow — the pixel matters more than the datapoint */
-  }
-
-  return c.body(PIXEL as unknown as ArrayBuffer, 200, {
-    'Content-Type': 'image/gif',
-    'Cache-Control': 'no-store, no-cache, must-revalidate, private',
-  })
-})
-
-api.get('/t/click/:id', async (c) => {
-  const db = getDb(c.env)
-  const messageId = Number(c.req.param('id'))
-  const url = c.req.query('u')
-  if (!url) return c.notFound()
-
-  // Recording must never be able to break the reader's click (SPEC 5.4).
-  try {
-    if (messageId) await recordEvent(db, messageId, 'click', { url })
-  } catch {
-    /* swallow — the redirect matters more than the datapoint */
-  }
-
-  return c.redirect(url, 302)
-})
 
 // ───────────────────────────────────────────────── public signup
 

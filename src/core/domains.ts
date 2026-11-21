@@ -11,6 +11,7 @@ import { type DnsAnswer, type DnsResolver, DohResolver, FakeDns } from '../provi
 import type { DomainIdentity, ProviderDomain } from '../providers/types.ts'
 import type { Env } from '../types.ts'
 import { providerFor } from './sending.ts'
+import { trackingHosts } from './tracking-host.ts'
 
 /**
  * ⭐ Sending domains — the domain mail is sent from, the DNS records it needs,
@@ -164,17 +165,24 @@ export interface DomainRecord {
 }
 
 /**
- * ⚠️ The seam for the custom tracking hostname (gap.md "Custom tracking
- * hostname", built on another branch). When opens and clicks are served from
- * the sender's own subdomain, that subdomain needs a CNAME to this Worker, and
- * if it sits under a sending domain it belongs on that domain's checklist.
+ * The custom tracking hostname (`TRACKING_HOST`, `core/tracking-host.ts`).
+ * When opens and clicks are served from the sender's own subdomain, that
+ * subdomain needs a CNAME to this Worker's host (`PUBLIC_URL`), and if it sits
+ * under a sending domain it belongs on that domain's checklist.
  *
- * Returns the tracking host and the CNAME target, or null when no custom
- * tracking host is set. The tracking branch replaces this body with its own
- * lookup; nothing else here needs to change.
+ * Only the CURRENT host (the first entry) is asked for: older entries keep
+ * answering for mail already sent, and their records already exist.
  */
-export function customTracking(_env: Env): { host: string; target: string } | null {
-  return null
+export function customTracking(env: Env): { host: string; target: string } | null {
+  const [host] = trackingHosts(env)
+  if (!host) return null
+  let target: string
+  try {
+    target = new URL(env.PUBLIC_URL).host
+  } catch {
+    return null
+  }
+  return { host: host.split(':')[0]!, target }
 }
 
 function hostOf(name: string, domain: string): string {

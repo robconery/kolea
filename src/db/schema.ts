@@ -476,6 +476,21 @@ export const sequences = sqliteTable(
     nextSequenceId: integer('next_sequence_id').references((): AnySQLiteColumn => sequences.id, {
       onDelete: 'set null',
     }),
+    /**
+     * The send-time window (Kōlea SPEC 12.1.2): minutes after local midnight in
+     * the operator's time zone (`site_settings.time_zone`), start inclusive, end
+     * exclusive. A start after the end wraps past midnight (22:00–06:00).
+     *
+     * Both null means no window — a due step goes at the next minutely tick,
+     * which is how every sequence behaved before this existed. Both set or both
+     * null, never one, and never equal: `core/send-window.ts` checks that on
+     * every write, since SQLite cannot be told after the fact.
+     *
+     * A due step outside the window is not skipped: the tick moves the
+     * enrollment's `next_run_at` to the window's next opening and sends it then.
+     */
+    sendWindowStart: integer('send_window_start'),
+    sendWindowEnd: integer('send_window_end'),
     createdAt: ts('created_at').notNull(),
 
     // ── Imported engagement totals (Kit history). Same contract as
@@ -1336,6 +1351,23 @@ export const events = sqliteTable(
     meta: text('meta', { mode: 'json' }).notNull().$type<Record<string, unknown>>().default({}),
     // Idempotency for replayed provider webhooks (SPEC 5.3).
     dedupeKey: text('dedupe_key'),
+    /**
+     * ⭐ A machine fetched this, not a reader: Apple Mail Privacy Protection,
+     * an image prefetcher, a corporate link scanner (Kōlea SPEC 11.2). Decided
+     * once, at the pixel, by `core/machine-opens.ts`; the reason and the user
+     * agent ride in `meta`.
+     *
+     * A column, not a meta key, because every reader count in the app filters on
+     * it — `json_extract` in twenty WHERE clauses is twenty chances to forget one.
+     * The row is still written: "how much of my open rate is Apple?" is a fair
+     * question, and dropping the hit would make it unanswerable.
+     *
+     * Only ever true for `open`. A click is a person deciding to go somewhere and
+     * stays untouched; provider events (webhooks) carry no request to judge, and
+     * history imported before this column existed defaults to false — it is what
+     * the counts always said.
+     */
+    machine: integer('machine', { mode: 'boolean' }).notNull().default(false),
   },
   (t) => [
     index('events_message_type_idx').on(t.messageId, t.type),
@@ -2691,6 +2723,13 @@ export const siteSettings = sqliteTable('site_settings', {
    * MCP without anyone touching a template.
    */
   profile: text('profile', { mode: 'json' }).notNull().$type<Record<string, unknown>>().default({}),
+  /**
+   * The operator's IANA time zone (`Pacific/Honolulu`). One for the install, as
+   * Kōlea keeps one per account: every sequence's send window is read in it.
+   * Null means UTC. Validated against the runtime's own zone list on write, so
+   * the tick never meets a name `Intl` cannot read.
+   */
+  timeZone: text('time_zone'),
   updatedAt: ts('updated_at').notNull(),
 })
 

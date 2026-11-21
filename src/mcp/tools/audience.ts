@@ -212,6 +212,7 @@ export function registerAudience(server: McpServer, ctx: Ctx): void {
             .select({
               messageId: events.messageId,
               type: events.type,
+              machine: events.machine,
               occurredAt: events.occurredAt,
               meta: events.meta,
             })

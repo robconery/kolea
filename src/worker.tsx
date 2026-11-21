@@ -5,6 +5,7 @@ import { formsApi } from './api/forms.tsx'
 import { mediaRoutes } from './api/media.ts'
 import { oauthApi } from './api/oauth.ts'
 import { api } from './api/routes.ts'
+import { tracking } from './api/tracking.ts'
 import { salesApi } from './api/sales.ts'
 import { withActivitySource } from './core/activity.ts'
 import { sendBroadcastNow } from './core/broadcasts.ts'
@@ -12,6 +13,7 @@ import { checkDueDomains } from './core/domains.ts'
 import { advanceImports } from './core/importers/runs.ts'
 import { sendMessages } from './core/sending.ts'
 import { tickSequences } from './core/sequences.ts'
+import { isTrackingHost } from './core/tracking-host.ts'
 import { syncStripeCatalog } from './core/stripe-catalog.ts'
 import { syncStripe } from './core/stripe.ts'
 import { deliverDueWebhooks } from './core/webhooks.ts'
@@ -59,6 +61,17 @@ import { prefs } from './web/prefs.tsx'
 import { seed } from './web/seed.tsx'
 
 const app = new Hono<{ Bindings: Env }>()
+
+/**
+ * The whole of what a tracking host (`TRACKING_HOST`) serves: the pixel and the
+ * click redirect, and a 404 for every other path. Its own app, not a branch of
+ * the console's, for the same reason the public site is: the console puts
+ * `requireOperator` on `*`, and a host with no Access in front of it must never
+ * enter that router at all.
+ */
+const trackingHost = new Hono<{ Bindings: Env }>()
+trackingHost.route('/', tracking)
+trackingHost.notFound((c) => c.text('Not found', 404))
 
 /**
  * Stamp every activity row with how the request got here.
@@ -109,6 +122,10 @@ app.use('/api/sales', auditWrites('key'))
 
 app.route('/', prefs)
 app.route('/', testimonialForm)
+// The pixel and tracked links. Always answered here, on `PUBLIC_URL`'s host, even
+// once `TRACKING_HOST` moves new mail elsewhere: every link sent before that
+// still names this host, and always will.
+app.route('/', tracking)
 app.route('/', api)
 // Signup forms: posted to from other people's websites, so public by definition.
 app.route('/', formsApi)
@@ -202,11 +219,11 @@ app.route('/', seed)
 
 export default {
   /**
-   * Two apps, one Worker, split by hostname.
+   * Three apps, one Worker, split by hostname.
    *
-   * `SITE_URL`'s host gets the public blog; every other host gets the admin
-   * console. The split is here at the door rather than inside the router because
-   * the admin app puts `requireOperator` on `*` — mounting public pages into it
+   * `TRACKING_HOST`'s host gets only the tracking routes; `SITE_URL`'s host gets
+   * the public blog; every other host gets the admin console. The split is here
+   * at the door rather than inside the router because the admin app puts `requireOperator` on `*` — mounting public pages into it
    * would mean a reader's request passing through the operator gate and relying
    * on route ordering to survive. Two apps means a public request never enters
    * the guarded router at all, and a new admin route can never accidentally be
@@ -215,6 +232,14 @@ export default {
    * With `SITE_URL` unset (the default) nothing reaches the site app.
    */
   fetch(request: Request, env: Env, ctx: ExecutionContext) {
+    // First, because it is the narrowest: a tracking host answers two routes and
+    // nothing else. `trackingHosts()` refuses SITE_URL's and PUBLIC_URL's hosts,
+    // so this can never take either app's traffic.
+    if (isTrackingHost(request, env)) {
+      return withActivitySource('web', () =>
+        trackingHost.fetch(request, env, ctx as unknown as never),
+      )
+    }
     if (isSiteHost(request, env)) {
       return withActivitySource('site', () =>
         site.fetch(request, env, ctx as unknown as never),
@@ -263,7 +288,10 @@ export default {
     ctx.waitUntil(
       withActivitySource('cron', async () => {
         const db = getDb(env)
-        await tickSequences(env, db)
+        // The minute the cron was meant for, so a late start still reads each
+        // sequence's send window for that minute.
+        const now = Number.isFinite(controller.scheduledTime) ? new Date(controller.scheduledTime) : new Date()
+        await tickSequences(env, db, now)
 
         // One broadcast per tick, several pages deep. Taking five at a time and
         // one page each meant the D1 query budget bought 400 recipients a minute;

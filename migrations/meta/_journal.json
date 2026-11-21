@@ -309,6 +309,13 @@
       "when": 1795249666070,
       "tag": "0043_blue_rawhide_kid",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "6",
+      "when": 1795249723319,
+      "tag": "0044_great_rocket_racer",
+      "breakpoints": true
     }
   ]
 }

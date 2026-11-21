@@ -660,7 +660,8 @@ export async function broadcastFunnel(db: Db, broadcastId: number): Promise<Funn
   const counts = await db
     .select({
       reached: sql<number>`count(distinct ${messages.id})`,
-      opened: sql<number>`count(distinct case when ${events.type} = 'open' then ${messages.id} end)`,
+      // A machine open is not a reader (Kōlea SPEC 11.2) — see `events.machine`.
+      opened: sql<number>`count(distinct case when ${events.type} = 'open' and ${events.machine} = 0 then ${messages.id} end)`,
       clicked: sql<number>`count(distinct case when ${events.type} = 'click' then ${messages.id} end)`,
       bounced: sql<number>`count(distinct case when ${events.type} = 'bounce' then ${messages.id} end)`,
     })

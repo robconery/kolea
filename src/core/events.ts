@@ -5,6 +5,7 @@ import type { ProviderEvent } from '../providers/types.ts'
 import { logActivity } from './activity.ts'
 import { touchFromMessage } from './campaigns.ts'
 import { suppressAddress, unsubscribeAll } from './consent.ts'
+import { classifyOpen } from './machine-opens.ts'
 import { applyTagRules } from './tagging.ts'
 import { emitWebhook, subscriberPayload } from './webhooks.ts'
 
@@ -14,16 +15,30 @@ export async function recordEvent(
   type: ProviderEvent['type'],
   meta: Record<string, unknown> = {},
   dedupeKey?: string,
+  opts: { machine?: boolean; at?: Date } = {},
 ): Promise<void> {
+  const machine = opts.machine ?? false
   const inserted = await db
     .insert(events)
-    .values({ messageId, type, occurredAt: new Date(), meta, dedupeKey: dedupeKey ?? null })
+    .values({
+      messageId,
+      type,
+      occurredAt: opts.at ?? new Date(),
+      meta,
+      dedupeKey: dedupeKey ?? null,
+      machine,
+    })
     .onConflictDoNothing()
     .returning({ id: events.id })
 
   // A replayed webhook loses the race on `dedupe_key` and inserts nothing — the
   // rules already ran the first time round.
   if (inserted.length === 0) return
+
+  // A machine is not a person acting, so it fires nothing: no tag rule, no
+  // sequence it would start (Kōlea SPEC 11.2, `TagRules`). The row above is the
+  // whole of what a prefetch is allowed to do.
+  if (machine) return
 
   try {
     await applyTagRules(db, messageId, type, meta)
@@ -42,6 +57,42 @@ export async function recordEvent(
       /* same reasoning as above — attribution is never worth a broken redirect */
     }
   }
+}
+
+/**
+ * The open pixel was fetched: judge the hit, then record it.
+ *
+ * A machine open (`core/machine-opens.ts`) is still written, flagged, so the
+ * share of opens that are Apple's can be shown; it is left out of every reader
+ * count and fires no tag rule. The timing check measures from `sent_at`, when the
+ * provider took the mail, falling back to when the row was queued.
+ *
+ * Throws only if the message is gone, which the pixel route swallows.
+ */
+export async function recordOpen(
+  db: Db,
+  messageId: number,
+  request: { userAgent: string | null | undefined; ip: string | null | undefined },
+  at: Date = new Date(),
+): Promise<void> {
+  const msg = await db
+    .select({ sentAt: messages.sentAt, createdAt: messages.createdAt })
+    .from(messages)
+    .where(eq(messages.id, messageId))
+    .get()
+  if (!msg) return
+
+  const verdict = classifyOpen({
+    userAgent: request.userAgent,
+    ip: request.ip,
+    sentAt: msg.sentAt ?? msg.createdAt,
+    at,
+  })
+  const meta: Record<string, unknown> = {}
+  if (request.userAgent) meta.user_agent = request.userAgent.slice(0, 512)
+  if (verdict.machine) meta.machine_reason = verdict.reason
+
+  await recordEvent(db, messageId, 'open', meta, undefined, { machine: verdict.machine, at })
 }
 
 /**

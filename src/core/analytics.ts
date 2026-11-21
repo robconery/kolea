@@ -176,7 +176,7 @@ export async function sequencePerformance(db: Db): Promise<SequencePerf[]> {
   const live = (await db.all(sql`
     select ss.sequence_id as id,
            count(distinct m.id) as recipients,
-           count(distinct case when e.type = 'open' then e.message_id end) as opened,
+           count(distinct case when e.type = 'open' and e.machine = 0 then e.message_id end) as opened,
            count(distinct case when e.type = 'click' then e.message_id end) as clicked,
            count(distinct case when e.type = 'bounce' then e.message_id end) as bounced,
            count(distinct case when e.type = 'complaint' then e.message_id end) as complained,
@@ -339,7 +339,7 @@ export async function sequenceSteps(db: Db, sequenceId: number): Promise<StepPer
   const rows = (await db.all(sql`
     select ss.id, ss.position, ss.subject, ss.delay_days,
            count(distinct m.id) as sent,
-           count(distinct case when e.type = 'open' then e.message_id end) as opened,
+           count(distinct case when e.type = 'open' and e.machine = 0 then e.message_id end) as opened,
            count(distinct case when e.type = 'click' then e.message_id end) as clicked,
            count(distinct case when e.type = 'bounce' then e.message_id end) as bounced,
            count(distinct case when e.type = 'unsubscribe' then e.message_id end) as unsubscribed
@@ -747,7 +747,7 @@ export async function listHealth(db: Db, now = Date.now()): Promise<ListHealth> 
   const eng = (await db.get(sql`
     select count(distinct m.subscriber_id) as n
     from events e join messages m on m.id = e.message_id
-    where e.type in ('open', 'click') and e.occurred_at >= ${since90}
+    where (e.type = 'click' or (e.type = 'open' and e.machine = 0)) and e.occurred_at >= ${since90}
   `)) as { n: number } | undefined
   const engaged = Number(eng?.n ?? 0)
 

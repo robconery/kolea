@@ -20,6 +20,7 @@ import { fieldKeys } from './fields.ts'
 import { normalizeEmail } from './ids.ts'
 import { authoredLead, postUrl } from './posts.ts'
 import { BROADCAST_SCOPE_LABEL, type EmailBody, renderEmail } from './render.ts'
+import { trackingBaseUrl } from './tracking-host.ts'
 
 /**
  * ⭐ Where a preview goes. Never a form field, never a subscriber the operator
@@ -424,6 +425,7 @@ export async function sendMessages(
 
     const rendered = renderEmail(resolved.body, {
       publicUrl: env.PUBLIC_URL,
+      trackingUrl: trackingBaseUrl(env),
       messageId: msg.id,
       unsubToken: sub.unsubToken,
       scope: resolved.scope,

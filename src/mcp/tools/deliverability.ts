@@ -99,6 +99,7 @@ export function registerDeliverability(server: McpServer, ctx: Ctx): void {
       const evs = await ctx.db
         .select({
           type: events.type,
+          machine: events.machine,
           occurredAt: events.occurredAt,
           meta: events.meta,
         })

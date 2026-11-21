@@ -16,6 +16,25 @@ export interface Env {
   PUBLIC_URL: string
 
   /**
+   * The sender's own tracking subdomain, e.g. `links.example.com`. Optional.
+   *
+   * Set, new mail's open pixel and tracked links use this host instead of
+   * `PUBLIC_URL`'s, and `worker.tsx` answers `/t/open` and `/t/click` on it —
+   * and nothing else: every other path on it is a 404, so the console can never
+   * be reached through a host with no Access in front of it. The DNS record must
+   * point at this Worker (a Custom Domain or route on the zone).
+   *
+   * ⚠️ Append-only. Links already in inboxes name the host they were sent with,
+   * forever. A comma-separated list is accepted: the first entry is used for new
+   * mail, every entry keeps answering. Never delete a host that has been used;
+   * move it later in the list. `PUBLIC_URL` itself always keeps answering.
+   *
+   * Unset (the default) means tracking uses `PUBLIC_URL`, exactly as before.
+   * See `core/tracking-host.ts`.
+   */
+  TRACKING_HOST?: string
+
+  /**
    * The public site's own origin, e.g. `https://a.bigmachine.io`.
    *
    * Hostname dispatch, not a path prefix: `worker.tsx` routes a request whose
