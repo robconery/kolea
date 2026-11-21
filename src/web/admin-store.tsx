@@ -11,6 +11,7 @@ import {
 } from '../core/insights.ts'
 import { type SegmentIdea, customerSplit, suggestSegments } from '../core/segment-ideas.ts'
 import { createSegment } from '../core/segments.ts'
+import { putOnSale, recentCheckouts, storeCatalog, takeOffSale } from '../core/store.ts'
 import { getDb } from '../db/index.ts'
 import { type SegmentRule, purchaseStats, purchases, subscribers } from '../db/schema.ts'
 import type { Env } from '../types.ts'
@@ -840,4 +841,201 @@ store.post('/store/ideas/create', async (c) => {
   // separate, deliberate act.
   const id = await createSegment(db, name, rule)
   return c.redirect(`/segments/${id}?flash=${encodeURIComponent(`Segment "${name}" created.`)}`)
+})
+
+// ───────────────────────────────────────────────────────── for sale
+
+/**
+ * What the public site sells, picked from the mirrored Stripe catalog.
+ *
+ * One listing per product, at one active one-time price, at `/offers/<slug>`.
+ * The rules (what counts as sellable, reserved slugs) live in `core/store.ts`;
+ * this screen only offers them. Products and prices themselves are edited in
+ * Stripe and arrive through the catalog sync.
+ */
+store.get('/store/for-sale', async (c) => {
+  const db = getDb(c.env)
+  const [catalog, checkouts] = await Promise.all([storeCatalog(db), recentCheckouts(db)])
+  const siteUrl = c.env.SITE_URL?.replace(/\/$/, '') ?? ''
+
+  return c.html(
+    <Layout title="For sale" nav="forsale">
+      <div class="head">
+        <div>
+          <h1>For sale</h1>
+          <div class="sub">
+            Products from your Stripe catalog that the site sells, each on its own page with a Buy
+            button.
+          </div>
+        </div>
+      </div>
+
+      <Flash msg={c.req.query('flash')} kind={c.req.query('kind')} />
+
+      {!c.env.SITE_URL || !c.env.STRIPE_SECRET_KEY ? (
+        <div class="flash warn">
+          The site cannot sell yet: {!c.env.SITE_URL ? 'SITE_URL' : 'STRIPE_SECRET_KEY'} is not set.
+        </div>
+      ) : null}
+
+      <div class="card">
+        <div class="card-b flush">
+          {catalog.length ? (
+            <table>
+              <thead>
+                <tr>
+                  <th>Product</th>
+                  <th>Price</th>
+                  <th>Page</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {catalog.map((entry) => {
+                  const formId = `sale-${entry.product.id}`
+                  return (
+                    <tr>
+                      <td>
+                        <div style="font-weight:500">
+                          {entry.product.name}
+                          {entry.listing ? (
+                            <span class="pill ok" style="margin-left:6px">
+                              on sale
+                            </span>
+                          ) : null}
+                          {!entry.product.active ? <span class="faint"> · archived in Stripe</span> : null}
+                        </div>
+                        <div class="faint mono">{entry.product.metadata.sku ?? entry.product.id}</div>
+                      </td>
+                      <td>
+                        {entry.prices.length ? (
+                          <select name="price_id" form={formId} aria-label="Price">
+                            {entry.prices.map((p) => (
+                              <option value={p.id} selected={entry.listing?.priceId === p.id}>
+                                {fmtMoney(p.unitAmount ?? 0, p.currency)}
+                                {p.nickname ? ` · ${p.nickname}` : ''}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span class="faint">No one-time price</span>
+                        )}
+                      </td>
+                      <td>
+                        {entry.prices.length && entry.product.active ? (
+                          <input
+                            name="slug"
+                            form={formId}
+                            aria-label="Page address"
+                            placeholder={entry.product.metadata.sku ?? 'slug'}
+                            value={entry.listing?.slug ?? ''}
+                            style="width:160px"
+                          />
+                        ) : null}
+                        {entry.listing ? (
+                          <div class="faint">
+                            <a href={`${siteUrl}/offers/${entry.listing.slug}`}>/offers/{entry.listing.slug}</a>
+                          </div>
+                        ) : null}
+                      </td>
+                      <td style="text-align:right;white-space:nowrap">
+                        {entry.prices.length && entry.product.active ? (
+                          <form id={formId} method="post" action="/store/for-sale" style="display:inline">
+                            <input type="hidden" name="product_id" value={entry.product.id} />
+                            <button class="btn sm primary">{entry.listing ? 'Save' : 'Put on sale'}</button>
+                          </form>
+                        ) : null}
+                        {entry.listing ? (
+                          <form method="post" action="/store/for-sale/remove" style="display:inline;margin-left:6px">
+                            <input type="hidden" name="product_id" value={entry.product.id} />
+                            <button class="btn sm">Take off sale</button>
+                          </form>
+                        ) : null}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          ) : (
+            <div class="empty">
+              <p>No products mirrored from Stripe yet. Run the catalog sync first.</p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {checkouts.length ? (
+        <div class="card">
+          <div class="card-h">
+            <h2>Recent checkouts</h2>
+          </div>
+          <div class="card-b flush">
+            <table>
+              <thead>
+                <tr>
+                  <th>Started</th>
+                  <th>Offer</th>
+                  <th class="num">Amount</th>
+                  <th>From post</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {checkouts.map((k) => (
+                  <tr>
+                    <td>{fmtDay(k.createdAt)}</td>
+                    <td class="mono">{k.offerSlug}</td>
+                    <td class="num">{fmtMoney(k.amountCents, k.currency)}</td>
+                    <td>
+                      {k.convertedFromBroadcastId ? (
+                        <a href={`/broadcasts/${k.convertedFromBroadcastId}`}>#{k.convertedFromBroadcastId}</a>
+                      ) : (
+                        <span class="faint">-</span>
+                      )}
+                    </td>
+                    <td>
+                      {k.status === 'completed' && k.saleId ? (
+                        <a href={`/sales/${k.saleId}/thanks`} title="Purchase mail for this sale">paid</a>
+                      ) : (
+                        <span class={k.status === 'failed' ? 'pill warn' : 'faint'} title={k.lastError ?? ''}>
+                          {k.status}
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : null}
+    </Layout>,
+  )
+})
+
+const SALE_REFUSALS: Record<string, string> = {
+  no_product: 'That product is not in the catalog, or is archived in Stripe.',
+  bad_price: 'That price is not an active one-time price on this product.',
+  bad_slug: 'That page address cannot be used. Letters, numbers and dashes; not "return" or "cancel".',
+  slug_taken: 'Another product already uses that page address.',
+}
+
+store.post('/store/for-sale', async (c) => {
+  const form = await c.req.formData()
+  const result = await putOnSale(getDb(c.env), {
+    productId: String(form.get('product_id') ?? ''),
+    priceId: String(form.get('price_id') ?? ''),
+    slug: String(form.get('slug') ?? ''),
+  })
+  if (!result.ok) {
+    return c.redirect(`/store/for-sale?flash=${encodeURIComponent(SALE_REFUSALS[result.reason]!)}&kind=warn`)
+  }
+  return c.redirect(`/store/for-sale?flash=${encodeURIComponent(`On sale at /offers/${result.slug}.`)}`)
+})
+
+store.post('/store/for-sale/remove', async (c) => {
+  const form = await c.req.formData()
+  await takeOffSale(getDb(c.env), String(form.get('product_id') ?? ''))
+  return c.redirect('/store/for-sale?flash=Taken off sale.')
 })

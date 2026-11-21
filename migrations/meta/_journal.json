@@ -232,6 +232,13 @@
       "when": 1795249132179,
       "tag": "0032_many_omega_sentinel",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1795249151927,
+      "tag": "0033_sloppy_swordsman",
+      "breakpoints": true
     }
   ]
 }

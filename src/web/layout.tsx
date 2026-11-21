@@ -1017,6 +1017,7 @@ const NAV: ({ grp: string } | { href: string; key: string; label: string })[] = 
   { href: '/conversions', key: 'conv', label: 'Conversions' },
   { href: '/store', key: 'store', label: 'Store overview' },
   { href: '/store/offers', key: 'offers', label: 'Offers' },
+  { href: '/store/for-sale', key: 'forsale', label: 'For sale' },
   { href: '/store/customers', key: 'cust', label: 'Customers' },
   { href: '/store/ideas', key: 'ideas', label: 'Segment ideas' },
   // Who the site is (the profile) and how it looks (themes) sit with the rest

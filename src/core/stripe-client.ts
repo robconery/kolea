@@ -280,3 +280,72 @@ export function idOf(value: string | { id: string } | null | undefined): string 
 export function subscriptionOf(invoice: StripeInvoice): string | null {
   return idOf(invoice.parent?.subscription_details?.subscription)
 }
+
+// ───────────────────────────────────────────────── one-off checkout (store)
+
+/**
+ * What the store asks Stripe for: one price, quantity one, payment mode.
+ *
+ * Kept apart from any subscription Checkout on purpose. The two differ in the
+ * mode, in what the webhook does with them, and in who may start one, and a
+ * shared builder with a `mode` flag is how a store page ends up opening a
+ * subscription.
+ */
+export interface OneOffCheckoutInput {
+  priceId: string
+  /** The `store_checkouts` token. Also the idempotency key, so a double-clicked
+      Buy opens one session, not two. */
+  token: string
+  successUrl: string
+  cancelUrl: string
+}
+
+export interface OneOffCheckoutSession {
+  id: string
+  url: string
+}
+
+/**
+ * `POST /v1/checkout/sessions` in payment mode.
+ *
+ * The token goes on `metadata.bm_checkout` and `client_reference_id`; the
+ * webhook matches the completed session back to its row by both the token and
+ * the session id. Quantity is fixed at one and not adjustable: an offer is a
+ * thing one person buys, and a basket is a different product.
+ */
+export async function createOneOffCheckoutSession(
+  env: Env,
+  input: OneOffCheckoutInput,
+): Promise<OneOffCheckoutSession> {
+  const path = '/checkout/sessions'
+  const body = new URLSearchParams({
+    mode: 'payment',
+    'line_items[0][price]': input.priceId,
+    'line_items[0][quantity]': '1',
+    success_url: input.successUrl,
+    cancel_url: input.cancelUrl,
+    client_reference_id: input.token,
+    'metadata[bm_checkout]': input.token,
+    // The charge carries it too, so the nightly reconcile (which reads charges,
+    // not sessions) can still tell a store sale from any other.
+    'payment_intent_data[metadata][bm_checkout]': input.token,
+  })
+
+  const res = await fetch(`${API}${path}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${requireStripeKey(env)}`,
+      'Stripe-Version': STRIPE_API_VERSION,
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Idempotency-Key': `bm-checkout-${input.token}`,
+    },
+    body,
+  })
+
+  if (!res.ok) throw new StripeError(res.status, path, await res.text())
+  const session = (await res.json()) as { id?: string; url?: string | null }
+  if (!session.id || !session.url?.startsWith('https://')) {
+    throw new StripeError(res.status, path, 'no checkout url in the response')
+  }
+  return { id: session.id, url: session.url }
+}

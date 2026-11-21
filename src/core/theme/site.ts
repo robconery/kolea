@@ -802,6 +802,33 @@ export async function renderSubscribe(req: SiteRequest): Promise<Rendered> {
   })
 }
 
+/**
+ * A page the site makes itself (the store's offer pages, its return and cancel
+ * pages), rendered through the theme's `page` template like `/subscribe`, so
+ * every theme dresses it without knowing it exists. `html` is trusted markup
+ * the caller has already escaped.
+ */
+export async function renderSitePage(
+  req: SiteRequest,
+  page: { title: string; html: string; path: string; description?: string | null; noindex?: boolean; status?: number },
+): Promise<Rendered> {
+  const { cfg } = req
+  return render(req, {
+    templates: ['page', 'post'],
+    contexts: ['page'],
+    root: { post: syntheticPage(page.title, page.html, page.path, cfg) },
+    meta: {
+      title: `${page.title} · ${cfg.title}`,
+      description: page.description ?? null,
+      image: null,
+      type: 'website',
+      publishedAt: null,
+      noindex: page.noindex ?? false,
+    },
+    status: page.status,
+  })
+}
+
 export async function renderError(req: SiteRequest, status: number, message?: string): Promise<Rendered> {
   const templates = [`error-${status}`, `error-${String(status)[0]}xx`, 'error']
   return render(req, {
