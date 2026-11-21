@@ -1,1 +1,0 @@
-ALTER TABLE `messages` ADD `claimed_at` integer;

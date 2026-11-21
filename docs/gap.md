@@ -93,6 +93,85 @@ Big Mailer already has: suggest a subject, clean this up, draft a sequence from 
 | In-app onboarding | A guided first run inside the app: name and from address, sending domain, site, an import or a form, a welcome sequence, the first broadcast. Big Mailer has a Claude Code install guide (`/onboard`) instead. | M |
 | Held mail, released later | kolea-pro holds mail behind a kill switch and always shows a way to send it once the hold is lifted. Big Mailer's console provider renders to the Outbox. **Check** whether held mail can be released from there. | S to M |
 
+## ✅ Status on `feat/kolea-parity` (2026-11-21)
+
+Built overnight on branch `feat/kolea-parity`, one feature per merge, each with a spec in `tests/specs/`. Nothing deployed. **Done** = built, specced and green; **Partial** = built with a named piece left out; **Not done** = not built.
+
+### Mail and sending
+
+| Feature | Status | Note |
+|---|---|---|
+| Double opt-in | Done | Per-form switch (new forms default on, existing forms stay off); scanner-safe confirm page; throttled per address and form. |
+| Mailgun adapter | Done | `EMAIL_PROVIDER=mailgun`, signed `/webhooks/mailgun`; an unknown send outcome is held back from "send again". |
+| Sending domain setup | Done | `/domains`: records, checks, one-click Cloudflare DNS; unverified From domain warns rather than blocks. |
+| Custom tracking hostname | Done | `TRACKING_HOST`; that host serves only `/t/*`, old links keep working. |
+| Machine-open detection | Done | Kōlea's detector; machine opens kept as rows, left out of every reader count and tag rule. |
+| Sequence send-time window | Done | Per-sequence window in one install time zone, DST-safe. |
+| Transactional templates | Done | `/api/send` with `template` + `variables`, body snapshotted per message; `template_*` MCP tools. |
+| Resend failed form replies | Done | Form screen card and `form_resend_replies` (preflight token required). |
+
+### Audience
+
+| Feature | Status | Note |
+|---|---|---|
+| Custom fields | Done | Typed fields, segment conditions, `{{key\|fallback}}` merge tags, CSV and form mapping. No `field_*` MCP tools (Kōlea has none). |
+| Clean up | Done | Groups, backup CSV, typed-count confirm, paged deletes; leavers stay blocked on re-import. |
+| Importers from other tools | Partial | Kit, Ghost, Mailchimp and Drip lists and sent mail, resumable on the cron. Not imported: drafts, Ghost tags as topics, Mailchimp/Drip automations. |
+
+### Public site and members
+
+| Feature | Status | Note |
+|---|---|---|
+| Members and Premium | Partial | Magic-link sign-in, members/premium posts, Stripe subscription Checkout and webhooks, Members screen. No Stripe Billing Portal; needs a Stripe key allowed to create Checkout Sessions. |
+| Store checkout | Done | `/offers` pages, Stripe Checkout in payment mode, converting post recorded. |
+| Testimonials | Done | `{{testimonial_link}}`, public form, approve/hide, `/testimonials` wall. |
+| Topics | Done | `/topics` screen, `topic_list` / `topic_update`. |
+| Media library | Done | `/media` screen and an "Image from library" picker in the editor. |
+
+### Money
+
+| Feature | Status | Note |
+|---|---|---|
+| Sales history import | Done | CSV, integer cents, idempotent, mails nobody and fires no webhooks; 100 rows per upload. |
+
+### Writing help (AI)
+
+| Feature | Status | Note |
+|---|---|---|
+| Ghostwriter | Partial | Voice sliders, learn-from-my-writing, composer drafts and sequence takes. Kōlea's extra named voices and voice-from-URL left out. |
+| Reader council and review desk | Partial | Three readers and an editor, review desk with margin notes. Kōlea's "fix this note" second pass left out. |
+| Launch Studio | Done | Seven steps, builds a paused sequence; no MCP tools yet. |
+| Key and model choices | Done | Own OpenRouter/Anthropic/OpenAI key (AES-GCM, needs `AI_KEY_ENCRYPTION_SECRET`), model per helper. |
+
+### API, agents and integrations
+
+| Feature | Status | Note |
+|---|---|---|
+| REST API | Partial | `/api/v1` over subscribers, tags, segments, forms, broadcasts, sequences, templates, posts, topics, site, sales and stats, with OpenAPI and `read`/`send`/`admin` keys. Left out of v1: CSV import, step editing, campaigns, webhooks, suppressions. |
+| Outbound webhooks | Done | Signed, retried with backoff on the cron, delivery log, `webhook_*` MCP tools. |
+| MCP by URL with OAuth | Done | OAuth 2.1 + PKCE at `/mcp`, read-only by default, Connected apps screen. |
+| Agent send switch on screen | Done | System > Agents & keys, plus a sensitive-changes switch. Also gates `/api/v1` sends. |
+| API key screen | Done | Create (token shown once), list, revoke; `read` scope added. |
+| Missing MCP tools | Done | All listed tools exist now, plus `undelivered_*` and `member_list`. |
+
+### Operating it
+
+| Feature | Status | Note |
+|---|---|---|
+| Event log | Done | `/logs` read over the existing tables, `log_search` / `log_types`; 90 days shown, nothing pruned. |
+| Audit trail | Done | Every console and API-key write with actor and role, refusals included; MCP calls folded in. |
+| More than one person | Done | Owner/admin/writer roles on Cloudflare Access identity; sign-in methods stay with Access. No invitation email. |
+| In-app onboarding | Done | Six-step checklist on the dashboard, progress read from real state. |
+| Held mail, released later | Partial | Failed mail has an Undelivered screen and "send again". Mail rendered while `EMAIL_PROVIDER=console` is not offered for release. |
+
+### Where kolea-pro changed a rule
+
+| Rule | Status | Note |
+|---|---|---|
+| Audience resolved once, at send | Done | Upper subscriber id frozen at dispatch; consent still re-checked at send. |
+| Machine opens excluded | Done | See above. |
+| Send-time window | Done | See above. |
+
 ## Where kolea-pro changed a rule
 
 kolea-pro's SPEC changed three of Big Mailer's behaviours on purpose. Big Mailer should take these too.

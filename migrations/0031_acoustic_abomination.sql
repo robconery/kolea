@@ -1,1 +1,0 @@
-ALTER TABLE `broadcasts` ADD `audience_upper_id` integer;
