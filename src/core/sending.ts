@@ -2,6 +2,7 @@ import { eq, inArray } from 'drizzle-orm'
 import type { Db } from '../db/index.ts'
 import { broadcasts, messages, sequenceSteps, sequences, subscribers } from '../db/schema.ts'
 import { ConsoleProvider } from '../providers/console.ts'
+import { MailgunProvider } from '../providers/mailgun.ts'
 import { ResendProvider } from '../providers/resend.ts'
 import type { EmailProvider, OutgoingEmail } from '../providers/types.ts'
 import type { Env, SendJob } from '../types.ts'
@@ -123,7 +124,61 @@ function providerFor(env: Env, db: Db): EmailProvider {
     if (!env.RESEND_API_KEY) throw new Error('EMAIL_PROVIDER=resend but RESEND_API_KEY is unset')
     return new ResendProvider(env.RESEND_API_KEY)
   }
+  if (env.EMAIL_PROVIDER === 'mailgun') {
+    if (!env.MAILGUN_API_KEY) throw new Error('EMAIL_PROVIDER=mailgun but MAILGUN_API_KEY is unset')
+    if (!env.MAILGUN_DOMAIN) throw new Error('EMAIL_PROVIDER=mailgun but MAILGUN_DOMAIN is unset')
+    return new MailgunProvider({
+      apiKey: env.MAILGUN_API_KEY,
+      domain: env.MAILGUN_DOMAIN,
+      region: env.MAILGUN_REGION,
+    })
+  }
   return new ConsoleProvider(db)
+}
+
+/**
+ * What `POST /webhooks/:provider` needs to read one provider's webhook: the
+ * adapter, its signing secret, and the status that tells that provider "refused,
+ * do not send this again". Or why the route cannot take it at all.
+ *
+ * Lives here so the route never names an adapter. Reading a webhook needs no
+ * send key: Mailgun's is verified with the signing key alone, so the route works
+ * whichever provider is currently sending (mail already out still reports in).
+ */
+export type WebhookReader =
+  | { ok: true; provider: EmailProvider; secret: string | undefined; rejectStatus: 401 | 406 }
+  | { ok: false; status: 400 | 404 | 503; error: string }
+
+export function webhookReaderFor(env: Env, name: string): WebhookReader {
+  if (name === 'resend') {
+    if (!env.RESEND_API_KEY) return { ok: false, status: 400, error: 'provider not configured' }
+    return {
+      ok: true,
+      provider: new ResendProvider(env.RESEND_API_KEY),
+      secret: env.RESEND_WEBHOOK_SECRET,
+      rejectStatus: 401,
+    }
+  }
+  if (name === 'mailgun') {
+    // Fails closed, like Stripe's. A 503 is one Mailgun retries for hours, so a
+    // bounce posted before the key was set still lands once it is.
+    if (!env.MAILGUN_WEBHOOK_SIGNING_KEY) {
+      return { ok: false, status: 503, error: 'MAILGUN_WEBHOOK_SIGNING_KEY is not configured' }
+    }
+    return {
+      ok: true,
+      provider: new MailgunProvider({
+        apiKey: env.MAILGUN_API_KEY ?? '',
+        domain: env.MAILGUN_DOMAIN ?? '',
+        region: env.MAILGUN_REGION,
+      }),
+      secret: env.MAILGUN_WEBHOOK_SIGNING_KEY,
+      // Mailgun reads 406 as "refused, stop retrying"; anything else but 200 it
+      // retries. A forged or stale signature will not get better with time.
+      rejectStatus: 406,
+    }
+  }
+  return { ok: false, status: 404, error: 'unknown provider' }
 }
 
 /**

@@ -21,7 +21,11 @@ export type SendResult =
 
 export interface ProviderEvent {
   providerMessageId: string
-  type: 'delivered' | 'open' | 'click' | 'bounce' | 'complaint' | 'failed'
+  /**
+   * `unsubscribe` is a provider telling us it will no longer deliver to this
+   * address because the reader asked it to (Mailgun's own unsubscribe list).
+   */
+  type: 'delivered' | 'open' | 'click' | 'bounce' | 'complaint' | 'failed' | 'unsubscribe'
   occurredAt: Date
   /** Hard bounces suppress the address; soft bounces do not. */
   hardBounce?: boolean

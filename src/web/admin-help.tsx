@@ -620,6 +620,13 @@ then  tag them <tag>`}</Code>
                 <td class="muted">Delivery, bounce and complaint events from the provider.</td>
               </tr>
               <tr>
+                <td class="mono">POST /webhooks/mailgun</td>
+                <td>
+                  <span class="pill warn">signed</span>
+                </td>
+                <td class="muted">The same events, when Mailgun is the provider.</td>
+              </tr>
+              <tr>
                 <td class="mono">GET /p/:token</td>
                 <td>
                   <span class="pill ok">public</span>

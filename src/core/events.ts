@@ -4,7 +4,7 @@ import { events, messages, subscribers } from '../db/schema.ts'
 import type { ProviderEvent } from '../providers/types.ts'
 import { logActivity } from './activity.ts'
 import { touchFromMessage } from './campaigns.ts'
-import { suppressAddress } from './consent.ts'
+import { suppressAddress, unsubscribeAll } from './consent.ts'
 import { applyTagRules } from './tagging.ts'
 
 export async function recordEvent(
@@ -57,6 +57,11 @@ export async function applyProviderEvent(db: Db, ev: ProviderEvent): Promise<voi
     .get()
   if (!msg) return
 
+  if (ev.type === 'unsubscribe') {
+    await applyProviderUnsubscribe(db, msg, ev)
+    return
+  }
+
   await recordEvent(db, msg.id, ev.type, ev.meta ?? {}, ev.dedupeKey)
 
   if (ev.type === 'bounce' && ev.hardBounce) {
@@ -76,6 +81,46 @@ export async function applyProviderEvent(db: Db, ev: ProviderEvent): Promise<voi
       .where(eq(subscribers.id, msg.subscriberId))
     await logLeaving(db, msg.subscriberId, 'complained', msg.id, msg.toEmail)
   }
+}
+
+/**
+ * The provider says the reader asked it to stop (Mailgun's own unsubscribe list).
+ *
+ * The provider will refuse that address from now on whatever we think, so the
+ * honest reading is "off everything": the same suppression the reader's own
+ * "unsubscribe from everything" writes. Keeping them `active` here would mean
+ * every later send quietly fails at the provider — mail silently dropped.
+ *
+ * Like the preference centre's unsubscribe, it skips tag rules and attribution
+ * (`recordEvent`): it is a consent change, not engagement. The event row is the
+ * countable mark, and its dedupe key makes a replay change nothing. A person
+ * already bounced or complained keeps that status; they are suppressed already.
+ */
+async function applyProviderUnsubscribe(
+  db: Db,
+  msg: typeof messages.$inferSelect,
+  ev: ProviderEvent,
+): Promise<void> {
+  const inserted = await db
+    .insert(events)
+    .values({
+      messageId: msg.id,
+      type: 'unsubscribe',
+      occurredAt: ev.occurredAt,
+      meta: { ...(ev.meta ?? {}), action: 'all' },
+      dedupeKey: ev.dedupeKey ?? null,
+    })
+    .onConflictDoNothing()
+    .returning({ id: events.id })
+  if (inserted.length === 0) return
+
+  const sub = await db
+    .select({ status: subscribers.status })
+    .from(subscribers)
+    .where(eq(subscribers.id, msg.subscriberId))
+    .get()
+  if (!sub || sub.status === 'bounced' || sub.status === 'complained') return
+  await unsubscribeAll(db, msg.subscriberId, msg.toEmail)
 }
 
 /**

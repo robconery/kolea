@@ -2,7 +2,7 @@ import { eq } from 'drizzle-orm'
 import { type Context, Hono } from 'hono'
 import { applyProviderEvent, recordEvent } from '../core/events.ts'
 import { isValidEmail, normalizeEmail } from '../core/ids.ts'
-import { dispatch } from '../core/sending.ts'
+import { dispatch, webhookReaderFor } from '../core/sending.ts'
 import {
   type StripeEventEnvelope,
   handleStripeEvent,
@@ -11,7 +11,6 @@ import {
 import { upsertSubscriber } from '../core/subscribers.ts'
 import { getDb } from '../db/index.ts'
 import { messages, subscribers } from '../db/schema.ts'
-import { ResendProvider } from '../providers/resend.ts'
 import type { Env } from '../types.ts'
 import { verifyApiKey } from './auth.ts'
 
@@ -106,18 +105,20 @@ api.post('/webhooks/:provider', async (c) => {
   const name = c.req.param('provider')
 
   if (name === 'stripe') return await stripeWebhook(c)
-  if (name !== 'resend') return c.json({ error: 'unknown provider' }, 404)
-  if (!c.env.RESEND_API_KEY) return c.json({ error: 'provider not configured' }, 400)
+  const reader = webhookReaderFor(c.env, name)
+  if (!reader.ok) return c.json({ error: reader.error }, reader.status)
 
-  const provider = new ResendProvider(c.env.RESEND_API_KEY)
+  let evs: Awaited<ReturnType<typeof reader.provider.parseWebhook>>
   try {
-    const evs = await provider.parseWebhook(c.req.raw, c.env.RESEND_WEBHOOK_SECRET)
-    for (const ev of evs) await applyProviderEvent(db, ev)
-    return c.json({ ok: true, applied: evs.length })
+    evs = await reader.provider.parseWebhook(c.req.raw, reader.secret)
   } catch (err) {
     // A bad signature is rejected and observable, never silently accepted.
-    return c.json({ error: String(err) }, 401)
+    return c.json({ error: String(err) }, reader.rejectStatus)
   }
+  // Outside the try: a database failure here is a 500 the provider retries, not
+  // a "bad signature" that tells it to give up on a real bounce.
+  for (const ev of evs) await applyProviderEvent(db, ev)
+  return c.json({ ok: true, applied: evs.length })
 })
 
 /**
