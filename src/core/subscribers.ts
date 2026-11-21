@@ -4,6 +4,7 @@ import { subscriberTags, subscribers, tags } from '../db/schema.ts'
 import { logActivity } from './activity.ts'
 import { isValidEmail, normalizeEmail, randomToken, slugify } from './ids.ts'
 import { enrollOnSubscribe, enrollOnTag, exitOnTag } from './sequences.ts'
+import { emitWebhook, subscriberPayload } from './webhooks.ts'
 
 export interface UpsertInput {
   email: string
@@ -88,6 +89,19 @@ export async function upsertSubscriber(
       })
     }
 
+    // A buyer on file joining the list is news to a receiver; an import is not.
+    if (promoting && input.source !== 'import') {
+      await emitWebhook(
+        db,
+        'subscribed',
+        async () => {
+          const subscriber = await subscriberPayload(db, existing.id)
+          return subscriber && { subscriber, via: 'promoted' }
+        },
+        { dedupeKey: `promoted:${existing.id}` },
+      )
+    }
+
     if (input.tagIds?.length) await addTags(db, existing.id, input.tagIds)
     if (promoting && input.triggerSubscribeSequences !== false) {
       await enrollOnSubscribe(db, existing.id)
@@ -119,6 +133,19 @@ export async function upsertSubscriber(
     meta: { email, origin: input.source ?? null },
     dedupeKey: `${wantedStatus === 'active' ? 'subscribed' : 'pending'}:${id}`,
   })
+
+  // A CSV import is history, not news (Kōlea SPEC 20.2): it emits nothing.
+  if (wantedStatus === 'active' && input.source !== 'import') {
+    await emitWebhook(
+      db,
+      'subscribed',
+      async () => {
+        const subscriber = await subscriberPayload(db, id)
+        return subscriber && { subscriber, via: 'subscribed' }
+      },
+      { dedupeKey: `subscribed:${id}` },
+    )
+  }
 
   if (input.tagIds?.length) await addTags(db, id, input.tagIds)
   // `pending` means "we have their address, they did not ask for mail" — the

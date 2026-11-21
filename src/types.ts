@@ -91,6 +91,20 @@ export interface Env {
   MCP_PATH_SECRET?: string
   /** "true" lets MCP tools put mail on the wire. Anything else is a kill switch. */
   MCP_ALLOW_SEND?: string
+  /**
+   * "true" lets MCP tools make sensitive changes — today the webhook writes
+   * (`webhook_create` / `webhook_update` / `webhook_delete`), which decide where
+   * subscriber data is POSTed. Anything else refuses them. Read only through
+   * `agentsMaySensitive()` in `core/sensitive.ts`.
+   */
+  MCP_ALLOW_SENSITIVE?: string
+
+  /**
+   * Which adapter POSTs outbound webhooks (`providers/webhooks.ts`). Unset or
+   * `fetch` is the real one, and production must leave it so. `fake` records
+   * requests in memory and never touches the network — the test suite only.
+   */
+  WEBHOOK_TRANSPORT?: string
 
   /** Restricted read key: charges, refunds, customers, products, prices. */
   STRIPE_SECRET_KEY?: string

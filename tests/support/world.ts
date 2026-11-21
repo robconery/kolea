@@ -16,6 +16,7 @@
  * | `MEDIA`/`DOWNLOADS` | in-memory buckets      | R2 holds bytes; no rule lives there. |
  * | `ASSETS`     | 404 fetcher                   | Static assets are Cloudflare's, not ours. |
  * | mail         | `EMAIL_PROVIDER=console`      | The kill switch (CLAUDE.md). Mail lands in `dev_outbox` and the spec reads it. |
+ * | webhooks     | `WEBHOOK_TRANSPORT=fake`      | Outbound POSTs are recorded in memory, never sent. |
  *
  * ⚠️ `EMAIL_PROVIDER` is `console` here and must stay that way. A spec that
  * flips it to `resend` would need `RESEND_API_KEY`, and the only thing standing
@@ -110,6 +111,10 @@ export function createWorld(overrides: Partial<Env> = {}): World {
     // The admin console is behind Cloudflare Access in production. A spec that
     // wants to prove the gate exists creates its own world without this.
     DEV_AUTH_BYPASS: 'true',
+
+    // Outbound webhooks go to an in-memory fake (`providers/webhooks.ts`), never
+    // the network. A spec reads and scripts it with `fakeTransportFor(env)`.
+    WEBHOOK_TRANSPORT: 'fake',
 
     ...overrides,
   }

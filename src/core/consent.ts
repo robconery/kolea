@@ -10,6 +10,7 @@ import {
 // `sequences` is used for existence checks as well as the preference listing.
 import { logActivity } from './activity.ts'
 import { normalizeEmail } from './ids.ts'
+import { emitWebhook, subscriberPayload } from './webhooks.ts'
 
 /**
  * ⭐ Scoped consent.
@@ -271,6 +272,24 @@ export async function unsubscribeBroadcasts(db: Db, subscriberId: number) {
   // return, so the history of who left and when exists nowhere else. Net list
   // growth is uncomputable without this row.
   await logActivity(db, { type: 'unsubscribed', subscriberId, meta: { scope: 'broadcasts' } })
+  await emitUnsubscribed(db, subscriberId, 'broadcasts')
+}
+
+/**
+ * Tell webhook receivers. Leaving one *sequence* is deliberately not an
+ * `unsubscribed` event: it is a narrower choice, and a receiver mirroring the
+ * list must not read it as leaving the newsletter (invariant 2).
+ */
+async function emitUnsubscribed(db: Db, subscriberId: number, scope: 'broadcasts' | 'everything') {
+  await emitWebhook(
+    db,
+    'unsubscribed',
+    async () => {
+      const subscriber = await subscriberPayload(db, subscriberId)
+      return subscriber && { subscriber, scope }
+    },
+    scope === 'everything' ? { dedupeKey: `unsub_all:${subscriberId}` } : {},
+  )
 }
 
 export async function resubscribeBroadcasts(db: Db, subscriberId: number) {
@@ -279,6 +298,10 @@ export async function resubscribeBroadcasts(db: Db, subscriberId: number) {
     .set({ status: 'active', unsubscribedAt: null })
     .where(eq(subscribers.id, subscriberId))
   await logActivity(db, { type: 'resubscribed', subscriberId })
+  await emitWebhook(db, 'subscribed', async () => {
+    const subscriber = await subscriberPayload(db, subscriberId)
+    return subscriber && { subscriber, via: 'resubscribed' }
+  })
 }
 
 /**
@@ -317,6 +340,7 @@ export async function unsubscribeAll(db: Db, subscriberId: number, email: string
     meta: { email: normalizeEmail(email), sequencesCancelled: cancelled.map((c) => c.sequenceId) },
     dedupeKey: `unsub_all:${subscriberId}`,
   })
+  await emitUnsubscribed(db, subscriberId, 'everything')
 }
 
 export async function suppressAddress(

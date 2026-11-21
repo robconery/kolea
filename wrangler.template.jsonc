@@ -191,7 +191,9 @@
 				"CF_ACCESS_TEAM_DOMAIN": "{{CF_ACCESS_TEAM_DOMAIN}}",
 				"CF_ACCESS_AUD": "{{CF_ACCESS_AUD}}",
 				// MCP can read and draft everything, but cannot send until this is "true".
-				"MCP_ALLOW_SEND": "false"
+				"MCP_ALLOW_SEND": "false",
+				// Nor make sensitive changes (where webhooks POST subscriber data).
+				"MCP_ALLOW_SENSITIVE": "false"
 			}
 		}
 	}
