@@ -349,3 +349,107 @@ export async function createOneOffCheckoutSession(
   }
   return { id: session.id, url: session.url }
 }
+
+// ───────────────────────────────────────────────── Premium subscriptions (members)
+//
+// Kept in their own section, with their own POST helper, on purpose: the store's
+// one-off Checkout lives beside this and the two are merged by hand. Nothing
+// here is shared with it except `requireStripeKey`, the version pin and
+// `StripeError`.
+
+/**
+ * One form-encoded POST. Stripe's write endpoints take
+ * `application/x-www-form-urlencoded` with bracketed keys
+ * (`line_items[0][price]`), not JSON. `undefined`/`null` values are dropped.
+ */
+async function premiumStripePost<T>(
+  env: Env,
+  path: string,
+  params: Record<string, string | number | null | undefined>,
+): Promise<T> {
+  const body = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null) continue
+    body.set(key, String(value))
+  }
+  const res = await fetch(`${API}${path}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${requireStripeKey(env)}`,
+      'Stripe-Version': STRIPE_API_VERSION,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body,
+  })
+  if (!res.ok) throw new StripeError(res.status, path, await res.text())
+  return (await res.json()) as T
+}
+
+export interface SubscriptionCheckoutInput {
+  priceId: string
+  successUrl: string
+  cancelUrl: string
+  /** `premium_checkouts.token` — read back by the webhook from `metadata.kolea_checkout`. */
+  checkoutToken: string
+  /** The signed-in member's address, so Stripe pre-fills it. Null lets Stripe ask. */
+  customerEmail?: string | null
+  /** The converting post, for anyone reading the session in the Stripe dashboard. */
+  postId?: number | null
+}
+
+/**
+ * Create a Checkout Session in subscription mode for one recurring price.
+ *
+ * The token goes on the session (`metadata`, `client_reference_id`) and on the
+ * subscription it creates (`subscription_data[metadata]`), so either object
+ * leads back to the `premium_checkouts` row. Needs a key allowed to write
+ * Checkout Sessions — the read-only restricted key cannot.
+ */
+export async function createSubscriptionCheckoutSession(
+  env: Env,
+  input: SubscriptionCheckoutInput,
+): Promise<{ id: string; url: string }> {
+  const session = await premiumStripePost<{ id: string; url: string | null }>(env, '/checkout/sessions', {
+    mode: 'subscription',
+    'line_items[0][price]': input.priceId,
+    'line_items[0][quantity]': 1,
+    success_url: input.successUrl,
+    cancel_url: input.cancelUrl,
+    client_reference_id: input.checkoutToken,
+    customer_email: input.customerEmail ?? undefined,
+    'metadata[kolea_checkout]': input.checkoutToken,
+    'metadata[kolea_post_id]': input.postId ?? undefined,
+    'subscription_data[metadata][kolea_checkout]': input.checkoutToken,
+  })
+  if (!session.url) throw new Error(`Stripe returned checkout session ${session.id} without a url`)
+  return { id: session.id, url: session.url }
+}
+
+/**
+ * Only the fields we read. ⚠️ In this API version the billing period moved off
+ * the subscription onto its items (`items.data[].current_period_end`); the old
+ * top-level field is read only as a fallback.
+ */
+export interface StripeSubscriptionObject {
+  id: string
+  status: string
+  customer: string | { id: string } | null
+  cancel_at_period_end?: boolean
+  current_period_end?: number | null
+  cancellation_details?: { reason?: string | null; comment?: string | null } | null
+  metadata?: Record<string, string>
+  items?: StripeList<{
+    id: string
+    current_period_end?: number | null
+    price?: {
+      id: string
+      unit_amount: number | null
+      currency: string
+      recurring?: { interval: string; interval_count: number } | null
+    } | null
+  }>
+}
+
+export async function retrieveStripeSubscription(env: Env, id: string): Promise<StripeSubscriptionObject> {
+  return await stripeGet<StripeSubscriptionObject>(env, `/subscriptions/${encodeURIComponent(id)}`, {})
+}

@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import type { Context } from 'hono'
 import { getPostTagBySlug, listPublicTags, tagsForPost, tagsForPosts } from '../core/post-tags.ts'
 import { type Post, allPostSlugs, getPostBySlug, postPath, recentPosts } from '../core/posts.ts'
+import { decideAccess, isGated, teaserHtml } from '../core/member-access.ts'
 import { renderPostHtml } from '../core/render-web.ts'
 import {
   type Rendered,
@@ -34,6 +35,7 @@ import { recordDwell, recordPageView } from '../core/traffic.ts'
 import { getDb } from '../db/index.ts'
 import type { PostTag } from '../db/schema.ts'
 import type { Env } from '../types.ts'
+import { memberRoutes, viewerOf } from './site-members.ts'
 
 /**
  * ⭐ The public site.
@@ -92,15 +94,33 @@ async function siteRequest(c: Ctx): Promise<SiteRequest> {
  */
 const PAGE_CACHE = { 'Cache-Control': 'public, max-age=60, s-maxage=300' }
 
+/**
+ * A gated post's page depends on who is reading, so it is never held by a
+ * shared cache (Kōlea SPEC 15.11.5). Everything else is the same for everyone.
+ */
+const PRIVATE_PAGE = { 'Cache-Control': 'private, no-store' }
+
 function send(
   c: Ctx,
   r: Rendered | null,
   req: SiteRequest,
   postId?: number,
+  perReader = false,
 ): Promise<Response> | Response {
   if (!r) return notFound(c, req)
   const html = r.status === 200 ? withBeacon(r.html, postId ?? null) : r.html
-  return c.html(html, r.status as 200, r.status === 200 ? PAGE_CACHE : undefined)
+  const headers = perReader ? PRIVATE_PAGE : r.status === 200 ? PAGE_CACHE : undefined
+  return c.html(html, r.status as 200, headers)
+}
+
+/**
+ * A post page. Only a gated post reads the member cookie — a public post's page
+ * is identical for everyone and stays cacheable.
+ */
+async function sendPost(c: Ctx, req: SiteRequest, post: Post, tags: PostTag[]) {
+  if (!isGated(post.accessLevel)) return send(c, await renderPost(req, post, tags), req, post.id)
+  const viewer = await viewerOf(c)
+  return send(c, await renderPost(req, post, tags, viewer.kind), req, post.id, true)
 }
 
 // ─────────────────────────────────────────────────────────── the beacon
@@ -484,6 +504,9 @@ site.post('/offers/:slug/buy', async (c) => {
   }
 })
 
+// Members and Premium: fixed paths, so they go above the catch-alls.
+site.route('/', memberRoutes)
+
 // ── The catch-alls. Registered last: every fixed path above must win over them.
 
 site.get('/:tag/page/:n', async (c) => {
@@ -502,7 +525,7 @@ site.get('/:tag/:slug', async (c) => {
   const tags = await tagsForPost(req.db, post.id)
   const canonical = postPath(post.slug, tags[0]?.slug)
   if (canonical !== c.req.path) return c.redirect(canonical, 301)
-  return send(c, await renderPost(req, post, tags), req, post.id)
+  return sendPost(c, req, post, tags)
 })
 
 /**
@@ -517,7 +540,7 @@ site.get('/:slug', async (c) => {
   if (post) {
     const tags = await tagsForPost(req.db, post.id)
     if (tags[0]) return c.redirect(postPath(post.slug, tags[0].slug), 301)
-    return send(c, await renderPost(req, post, tags), req, post.id)
+    return sendPost(c, req, post, tags)
   }
   const tag = await getPostTagBySlug(req.db, slug)
   return send(c, tag ? await renderTag(req, tag, 1) : null, req)
@@ -531,7 +554,11 @@ function rss(cfg: SiteConfig, posts: Post[], tags: Map<number, PostTag[]>): stri
   const items = posts
     .map((p) => {
       const url = `${cfg.origin}${postPath(p.slug, tags.get(p.id)?.[0]?.slug)}`
-      const body = renderPostHtml({ json: p.bodyJson, md: p.bodyMd })
+      // A feed is read by anybody, so a gated post carries only its teaser.
+      const body =
+        decideAccess('anonymous', p.accessLevel) === 'full'
+          ? renderPostHtml({ json: p.bodyJson, md: p.bodyMd })
+          : teaserHtml({ level: p.accessLevel, slug: p.slug, excerpt: p.excerpt, origin: cfg.origin })
       return [
         '<item>',
         `<title>${escapeHtml(p.subject)}</title>`,
@@ -540,8 +567,8 @@ function rss(cfg: SiteConfig, posts: Post[], tags: Map<number, PostTag[]>): stri
         `<guid isPermaLink="true">${escapeHtml(url)}</guid>`,
         `<pubDate>${p.publishedAt.toUTCString()}</pubDate>`,
         p.excerpt ? `<description>${escapeHtml(p.excerpt)}</description>` : '',
-        // Full text in the feed on purpose. The point of owning the list is that
-        // the reader gets the whole thing wherever they read.
+        // Full text in the feed on purpose (public posts). The point of owning the
+        // list is that the reader gets the whole thing wherever they read.
         `<content:encoded><![CDATA[${body.replaceAll(']]>', ']]&gt;')}]]></content:encoded>`,
         '</item>',
       ].join('')

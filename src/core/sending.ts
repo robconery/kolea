@@ -1,6 +1,6 @@
 import { eq, inArray } from 'drizzle-orm'
 import type { Db } from '../db/index.ts'
-import { broadcasts, messages, sequenceSteps, sequences, subscribers } from '../db/schema.ts'
+import { type MergeExtras, broadcasts, messages, sequenceSteps, sequences, subscribers } from '../db/schema.ts'
 import { ConsoleProvider } from '../providers/console.ts'
 import { MailgunProvider } from '../providers/mailgun.ts'
 import { ResendProvider } from '../providers/resend.ts'
@@ -265,6 +265,21 @@ export async function sendMessage(env: Env, db: Db, messageId: number): Promise<
   return outcomes.get(messageId) ?? { status: 'skipped' }
 }
 
+export interface SendOptions {
+  /**
+   * Merge values held in memory only, per message id, never written to the
+   * row. A member's sign-in link is the case: the token must never be stored
+   * in plain text (only its hash is, on `member_sign_in_links`), so it rides
+   * here for the one send and is gone afterwards. A message marked as needing
+   * one (`EPHEMERAL_PREFIX` on its idempotency key) that arrives without it is
+   * suppressed, never sent with a dead `{{…}}` in it.
+   */
+  extras?: Map<number, MergeExtras>
+}
+
+/** Idempotency-key prefix of messages whose merge values exist only in memory. */
+export const EPHEMERAL_PREFIX = 'ephemeral:'
+
 type MessageRow = typeof messages.$inferSelect
 type SubscriberRow = typeof subscribers.$inferSelect
 
@@ -297,6 +312,7 @@ export async function sendMessages(
   env: Env,
   db: Db,
   messageIds: number[],
+  opts: SendOptions = {},
 ): Promise<Map<number, SendOutcome>> {
   const outcomes = new Map<number, SendOutcome>()
   const ids = [...new Set(messageIds)]
@@ -391,6 +407,12 @@ export async function sendMessages(
       continue
     }
 
+    const ephemeral = opts.extras?.get(msg.id)
+    if (!ephemeral && msg.idempotencyKey?.startsWith(EPHEMERAL_PREFIX)) {
+      outcomes.set(msg.id, await markSuppressed(db, msg.id, 'ephemeral_link_gone'))
+      continue
+    }
+
     const block = eligibility(snapshot, msg, sub, resolved.scope)
     if (block.blocked) {
       outcomes.set(msg.id, await markSuppressed(db, msg.id, block.reason))
@@ -416,10 +438,11 @@ export async function sendMessages(
     // when the message was queued (purchase mail); `{{link}}` is looked up live
     // because a grant token never expires and the lookup is already batched.
     const extras =
-      msg.extras || grantToken
+      msg.extras || grantToken || ephemeral
         ? {
             ...(msg.extras ?? {}),
             ...(grantToken ? { link: downloadUrl(env.PUBLIC_URL, grantToken) } : {}),
+            ...(ephemeral ?? {}),
           }
         : undefined
 

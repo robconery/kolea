@@ -33,6 +33,7 @@ import { campaignsAdmin } from './web/admin-campaigns.tsx'
 import { domainsAdmin } from './web/admin-domains.tsx'
 import { conversionsAdmin } from './web/admin-conversions.tsx'
 import { fieldsAdmin } from './web/admin-fields.tsx'
+import { membersAdmin } from './web/admin-members.tsx'
 import { purchaseMailAdmin } from './web/admin-purchase-mail.tsx'
 import { transactionalAdmin } from './web/admin-transactional.tsx'
 import { saleImportAdmin } from './web/admin-sale-import.tsx'
@@ -209,6 +210,7 @@ app.route('/', saleImportAdmin)
 app.route('/', testimonialsAdmin)
 app.route('/', campaignsAdmin)
 app.route('/', conversionsAdmin)
+app.route('/', membersAdmin)
 app.route('/', goalsAdmin)
 // API keys and the agent switches. `/settings/agents`, beside `admin`'s `/settings`.
 app.route('/', agentsAdmin)

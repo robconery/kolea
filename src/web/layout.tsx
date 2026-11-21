@@ -892,6 +892,8 @@ mark.ph{background:rgba(123,79,158,.10);color:var(--plum);border-radius:4px;padd
  * this is eleven glyphs.
  */
 const ICONS: Record<string, string> = {
+  /* A key: readers who sign in, and the ones who pay. */
+  members: 'M8.4 15.6a3.6 3.6 0 1 0 0-7.2 3.6 3.6 0 0 0 0 7.2ZM11.6 12h8.8M17.6 12v3M20.4 12v2.2',
   home: 'M3.8 11.4 12 4.4l8.2 7M6.4 10v9.6h11.2V10M10.2 19.6v-5.2h3.6v5.2',
   /* A person in front of a page: who writes the site. */
   site: 'M12 11.2a3.4 3.4 0 1 0 0-6.8 3.4 3.4 0 0 0 0 6.8ZM5.6 19.6c.8-3.4 3.4-5.4 6.4-5.4s5.6 2 6.4 5.4',
@@ -1029,6 +1031,9 @@ const NAV: ({ grp: string } | { href: string; key: string; label: string })[] = 
   { href: '/sales', key: 'sales', label: 'Sales' },
   // Bookkeeping for the years before Stripe: next to the ledger it fills in.
   { href: '/sales/import', key: 'simport', label: 'Import sales' },
+  // Readers who sign in on the site and who pay for Premium: money, because
+  // Premium is the recurring part of it.
+  { href: '/members', key: 'members', label: 'Members' },
   // Directly under Sales, because that is where it is used from: a sale is the
   // thing you press the button on, and this is what the button says.
   { href: '/purchase-mail', key: 'pmail', label: 'Purchase mail' },

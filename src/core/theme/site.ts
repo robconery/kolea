@@ -21,6 +21,7 @@ import {
   postPath,
   shareOnXUrl,
 } from '../posts.ts'
+import { type ViewerKind, decideAccess, ghostVisibility, teaserHtml } from '../member-access.ts'
 import { renderPostHtml } from '../render-web.ts'
 import { escapeHtml } from '../text.ts'
 import { wall } from '../testimonials.ts'
@@ -193,7 +194,15 @@ export function ghostAuthor(cfg: SiteConfig, posts = 0): GhostAuthor {
   }
 }
 
-export function ghostPost(post: Post, tags: PostTag[], cfg: SiteConfig): GhostPost {
+/**
+ * A post in Ghost's shape. `viewer` decides whether `html` is the body or the
+ * teaser (core/member-access.ts). It defaults to `anonymous` on purpose: every
+ * caller but the post page renders something cached for everyone — listings,
+ * the front page, `{{#get}}`, next/prev — so a gated body can never reach one
+ * of them by a caller forgetting to pass a viewer.
+ */
+export function ghostPost(post: Post, tags: PostTag[], cfg: SiteConfig, viewer: ViewerKind = 'anonymous'): GhostPost {
+  const decision = decideAccess(viewer, post.accessLevel)
   const author = ghostAuthor(cfg)
   const gTags = tags.map((t) => ghostTag(t))
   const url = postPath(post.slug, tags[0]?.slug)
@@ -218,8 +227,8 @@ export function ghostPost(post: Post, tags: PostTag[], cfg: SiteConfig): GhostPo
     feature_image_caption: caption,
     featured: false,
     page: false,
-    visibility: 'public',
-    access: true,
+    visibility: ghostVisibility(post.accessLevel),
+    access: decision === 'full',
     comments: false,
     published_at: published,
     updated_at: published,
@@ -241,7 +250,11 @@ export function ghostPost(post: Post, tags: PostTag[], cfg: SiteConfig): GhostPo
   // The body and its reading time are rendered on first read, not up front:
   // an archive page of twelve cards reads neither.
   let html: string | null = null
-  const body = () => (html ??= renderPostHtml({ json: post.bodyJson, md: post.bodyMd }))
+  const body = () =>
+    (html ??=
+      decision === 'full'
+        ? renderPostHtml({ json: post.bodyJson, md: post.bodyMd })
+        : teaserHtml({ level: post.accessLevel, slug: post.slug, excerpt: post.excerpt }))
   Object.defineProperty(out, 'html', { enumerable: true, get: body })
   Object.defineProperty(out, 'reading_time', {
     enumerable: true,
@@ -705,9 +718,14 @@ export async function renderAuthor(req: SiteRequest, slug: string, page: number)
   })
 }
 
-export async function renderPost(req: SiteRequest, post: Post, tags: PostTag[]): Promise<Rendered> {
+export async function renderPost(
+  req: SiteRequest,
+  post: Post,
+  tags: PostTag[],
+  viewer: ViewerKind = 'anonymous',
+): Promise<Rendered> {
   const { cfg } = req
-  const gp = ghostPost(post, tags, cfg)
+  const gp = ghostPost(post, tags, cfg, viewer)
   return render(req, {
     templates: [`post-${post.slug}`, 'post'],
     contexts: ['post'],

@@ -11,6 +11,8 @@ import {
   unpublishPost,
   updatePostMeta,
 } from '../../core/posts.ts'
+import { listMembers } from '../../core/members.ts'
+import { ACCESS_LEVELS } from '../../core/member-access.ts'
 import { renderPostHtml } from '../../core/render-web.ts'
 import { type Ctx, defineTool, fail, failed, ok } from '../kit.ts'
 
@@ -57,6 +59,7 @@ export function registerPosts(server: McpServer, ctx: Ctx): void {
           excerpt: p.excerpt,
           featureImage: p.featureImage,
           publishedAt: p.publishedAt,
+          accessLevel: p.accessLevel,
         })),
       })
     },
@@ -84,6 +87,7 @@ export function registerPosts(server: McpServer, ctx: Ctx): void {
         excerpt: post.excerpt,
         featureImage: post.featureImage,
         publishedAt: post.publishedAt,
+        accessLevel: post.accessLevel,
         html: renderPostHtml({ json: post.bodyJson, md: post.bodyMd }),
       })
     },
@@ -95,7 +99,7 @@ export function registerPosts(server: McpServer, ctx: Ctx): void {
     'post_publish',
     {
       description:
-        'Put one broadcast on the public site. Sends nothing and changes nothing about the send — it sets a publish date, a slug and the card metadata. Re-running on a live post updates the metadata and keeps the original publish date. Omit slug/excerpt/featureImage to derive them from the subject and body. `tags` are post topics (never subscriber tags): the first is the primary topic and the first URL segment, so ["AI"] publishes at /ai/<slug>. Omit to leave the current topics alone; pass [] to clear them. `featured: true` puts it in the front page\'s "Start here" (newest first).',
+        'Put one broadcast on the public site. Sends nothing and changes nothing about the send — it sets a publish date, a slug and the card metadata. Re-running on a live post updates the metadata and keeps the original publish date. Omit slug/excerpt/featureImage to derive them from the subject and body. `tags` are post topics (never subscriber tags): the first is the primary topic and the first URL segment, so ["AI"] publishes at /ai/<slug>. Omit to leave the current topics alone; pass [] to clear them. `featured: true` puts it in the front page\'s "Start here" (newest first). `accessLevel` sets who can read it on the web: "public" (anyone), "members" (signed-in readers) or "premium" (paying members); omit to keep the current level. Gated posts show everyone else a teaser built from the hand-written excerpt only, and the level never changes who the mail goes to.',
       inputSchema: z.object({
         broadcastId: z.number().int(),
         slug: z.string().optional(),
@@ -103,14 +107,15 @@ export function registerPosts(server: McpServer, ctx: Ctx): void {
         featureImage: z.string().optional(),
         tags: z.array(z.string()).optional(),
         featured: z.boolean().optional(),
+        accessLevel: z.enum(ACCESS_LEVELS).optional(),
       }),
     },
-    async ({ broadcastId, slug, excerpt, featureImage, tags, featured }) => {
+    async ({ broadcastId, slug, excerpt, featureImage, tags, featured, accessLevel }) => {
       if (!ctx.env.SITE_URL) return offline()
       const before = await postStatus(ctx.db, broadcastId)
       if (!before) return fail('No such broadcast.')
 
-      const post = await publishPost(ctx.db, broadcastId, { slug, excerpt, featureImage })
+      const post = await publishPost(ctx.db, broadcastId, { slug, excerpt, featureImage, accessLevel })
       const topics = tags ? await setPostTags(ctx.db, broadcastId, tags) : await tagsForPost(ctx.db, broadcastId)
       if (featured !== undefined) await setPostFeatured(ctx.db, broadcastId, featured)
       return ok({
@@ -121,6 +126,7 @@ export function registerPosts(server: McpServer, ctx: Ctx): void {
         slug: post.slug,
         excerpt: post.excerpt,
         publishedAt: post.publishedAt,
+        accessLevel: post.accessLevel,
       })
     },
   )
@@ -158,6 +164,22 @@ export function registerPosts(server: McpServer, ctx: Ctx): void {
         tags: topics.map((t) => t.name),
         url: after.publishedAt && after.slug ? `${origin()}${postPath(after.slug, topics[0]?.slug)}` : null,
       })
+    },
+  )
+
+  defineTool(
+    server,
+    ctx,
+    'member_list',
+    {
+      description:
+        'Readers who have signed in on the public site or paid for Premium, newest first: their newsletter status (a separate fact from membership), Premium status (active, past_due, canceled) with price and interval, and the post whose call to action converted them. Read-only; Premium state is written only by the Stripe webhook.',
+      inputSchema: z.object({ limit: z.number().int().min(1).max(200).optional() }),
+      annotations: { readOnlyHint: true },
+    },
+    async ({ limit }) => {
+      const members = await listMembers(ctx.db, limit ?? 50)
+      return ok({ members })
     },
   )
 
