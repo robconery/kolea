@@ -53,4 +53,48 @@ export interface EmailProvider {
   sendBatch(emails: OutgoingEmail[]): Promise<SendResult[]>
   /** Verify + parse a provider webhook. Returns [] if it isn't ours to handle. */
   parseWebhook(request: Request, secret: string | undefined): Promise<ProviderEvent[]>
+  /** The provider's side of a sending domain, when it has an API for it. */
+  readonly domains?: DomainIdentity
+}
+
+// ───────────────────────────────────────────── sending domains (optional)
+
+/** One DNS record the provider wants at the sender's DNS host. Fully qualified name. */
+export interface ProviderRecord {
+  purpose: 'dkim' | 'spf' | 'return_path'
+  type: 'TXT' | 'CNAME' | 'MX'
+  name: string
+  value: string
+  priority?: number
+}
+
+/**
+ * A domain as the provider knows it.
+ *
+ * `active`: the provider found its records and signs for the domain.
+ * `unverified`: it has not seen them yet. `failed`: it gave up looking (Resend
+ * does after 72 hours) — a re-verify starts it looking again.
+ */
+export interface ProviderDomain {
+  id: string
+  state: 'unverified' | 'active' | 'failed'
+  records: ProviderRecord[]
+}
+
+export type ProviderDomainResult = { ok: true; domain: ProviderDomain } | { ok: false; error: string }
+
+/**
+ * "What records does the provider want for this domain, and will it send for
+ * it?" Optional on `EmailProvider`: a provider without a domains API simply has
+ * no `domains`, and the sending-domain screen then judges by DNS alone.
+ *
+ * Adapters must leave out a provider's *receiving* MX (it would take over the
+ * domain's inbound mail) and its own open/click tracking CNAME (Kōlea tracks
+ * on its own host). Neither belongs on the operator's checklist.
+ */
+export interface DomainIdentity {
+  /** Registers `name`, or finds it if the provider already holds it. Idempotent. */
+  register(name: string): Promise<ProviderDomainResult>
+  /** Asks the provider to look again, and reports what it now says. */
+  verify(name: string, providerDomainId: string): Promise<ProviderDomainResult>
 }

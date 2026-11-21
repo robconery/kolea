@@ -253,6 +253,13 @@
       "when": 1795249231462,
       "tag": "0035_lucky_stature",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "6",
+      "when": 1795249276369,
+      "tag": "0036_steep_mimic",
+      "breakpoints": true
     }
   ]
 }

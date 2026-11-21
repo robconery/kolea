@@ -120,7 +120,11 @@ function previewSourceId(target: PreviewTarget): number {
 /** D1 caps bound parameters at 100 per query. */
 const PARAM_CHUNK = 100
 
-function providerFor(env: Env, db: Db): EmailProvider {
+/**
+ * The configured provider. Exported for `core/domains.ts`, which asks the same
+ * provider which DNS records it wants — never for sending from outside here.
+ */
+export function providerFor(env: Env, db: Db): EmailProvider {
   if (env.EMAIL_PROVIDER === 'resend') {
     if (!env.RESEND_API_KEY) throw new Error('EMAIL_PROVIDER=resend but RESEND_API_KEY is unset')
     return new ResendProvider(env.RESEND_API_KEY)

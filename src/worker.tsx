@@ -7,6 +7,7 @@ import { api } from './api/routes.ts'
 import { salesApi } from './api/sales.ts'
 import { withActivitySource } from './core/activity.ts'
 import { sendBroadcastNow } from './core/broadcasts.ts'
+import { checkDueDomains } from './core/domains.ts'
 import { sendMessages } from './core/sending.ts'
 import { tickSequences } from './core/sequences.ts'
 import { syncStripeCatalog } from './core/stripe-catalog.ts'
@@ -21,6 +22,7 @@ import { analytics } from './web/admin-analytics.tsx'
 import { analyticsSequences } from './web/admin-analytics-sequences.tsx'
 import { audience } from './web/admin-audience.tsx'
 import { campaignsAdmin } from './web/admin-campaigns.tsx'
+import { domainsAdmin } from './web/admin-domains.tsx'
 import { conversionsAdmin } from './web/admin-conversions.tsx'
 import { purchaseMailAdmin } from './web/admin-purchase-mail.tsx'
 import { transactionalAdmin } from './web/admin-transactional.tsx'
@@ -126,6 +128,8 @@ app.route('/', store)
 // the site itself is a separate app, reached by hostname.
 app.route('/', siteAdmin)
 app.route('/', themesAdmin)
+// Sending domains: operator config, nothing public.
+app.route('/', domainsAdmin)
 // Ahead of `mail`, which owns `/sequences/:id` and would read "templates" as an id.
 app.route('/', sequenceTemplatesAdmin)
 app.route('/', mail)
@@ -225,6 +229,10 @@ export default {
           .all()
 
         for (const b of due) await sendBroadcastNow(env, db, b.id)
+
+        // One overdue sending-domain check, after the mail: it is a few DNS
+        // lookups and never throws, so it can neither delay nor break a send.
+        await checkDueDomains(env, db)
       }),
     )
   },
