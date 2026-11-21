@@ -1,6 +1,7 @@
 import { count, desc, eq, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { tickSequences } from '../core/sequences.ts'
+import { trackingBaseUrl } from '../core/tracking-host.ts'
 import { unsuppressAddress, suppressAddress } from '../core/consent.ts'
 import { getDb } from '../db/index.ts'
 import {
@@ -608,6 +609,12 @@ admin.get('/settings', async (c) => {
               <tr>
                 <td class="muted">Public URL</td>
                 <td class="mono">{c.env.PUBLIC_URL}</td>
+              </tr>
+              <tr>
+                <td class="muted">Tracking host</td>
+                <td class="mono">
+                  {c.env.TRACKING_HOST ? trackingBaseUrl(c.env) : 'Public URL (TRACKING_HOST not set)'}
+                </td>
               </tr>
               <tr>
                 <td class="muted">Queue</td>

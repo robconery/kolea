@@ -14,6 +14,12 @@ export { escapeHtml, mergeFields }
 
 export interface RenderContext {
   publicUrl: string
+  /**
+   * The origin the open pixel and tracked links are built on — `TRACKING_HOST`
+   * when one is set, else `publicUrl`. Everything else (the preference centre,
+   * downloads, media) stays on `publicUrl`. See `core/tracking-host.ts`.
+   */
+  trackingUrl?: string
   messageId: number
   unsubToken: string
   scope: Scope
@@ -117,12 +123,13 @@ export function renderEmail(body: EmailBody, ctx: RenderContext): RenderedEmail 
   // exempt for the same reason: the download is already counted on its grant
   // row, so the redirect would add a way for the one link that matters to break
   // and buy nothing.
+  const trackingUrl = ctx.trackingUrl ?? ctx.publicUrl
   const trackLink = (url: string): string => {
     if (!ctx.trackClicks) return url
     if (url.startsWith(`${ctx.publicUrl}/p/`)) return url
     if (url.startsWith(`${ctx.publicUrl}/d/`)) return url
     if (!/^https?:\/\//i.test(url)) return url
-    return `${ctx.publicUrl}/t/click/${ctx.messageId}?u=${encodeURIComponent(url)}`
+    return `${trackingUrl}/t/click/${ctx.messageId}?u=${encodeURIComponent(url)}`
   }
 
   // Two flattenings, because a `{{downloads}}` list is markup in one surface and
@@ -151,7 +158,7 @@ export function renderEmail(body: EmailBody, ctx: RenderContext): RenderedEmail 
   }
 
   const pixel = ctx.trackOpens
-    ? `<img src="${ctx.publicUrl}/t/open/${ctx.messageId}.gif" width="1" height="1" alt="" style="display:block;border:0" />`
+    ? `<img src="${trackingUrl}/t/open/${ctx.messageId}.gif" width="1" height="1" alt="" style="display:block;border:0" />`
     : ''
 
   // A second pass over the finished strings, because `{{link}}` is most useful
@@ -340,7 +347,7 @@ function rewriteLinks(html: string, ctx: RenderContext): string {
   return html.replace(/href="(https?:\/\/[^"]+)"/g, (match, url: string) => {
     if (url.startsWith(`${ctx.publicUrl}/p/`)) return match // never track the unsubscribe link
     if (url.startsWith(`${ctx.publicUrl}/d/`)) return match // nor the download, counted on its grant
-    return `href="${ctx.publicUrl}/t/click/${ctx.messageId}?u=${encodeURIComponent(url)}"`
+    return `href="${ctx.trackingUrl ?? ctx.publicUrl}/t/click/${ctx.messageId}?u=${encodeURIComponent(url)}"`
   })
 }
 

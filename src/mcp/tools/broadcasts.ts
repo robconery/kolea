@@ -16,6 +16,7 @@ import { canReceiveBroadcastIn, loadConsentSnapshot } from '../../core/consent.t
 import { mdToDoc } from '../../core/md-to-doc.ts'
 import { authoredLead, postUrl } from '../../core/posts.ts'
 import { previewHtml, renderEmail } from '../../core/render.ts'
+import { trackingBaseUrl } from '../../core/tracking-host.ts'
 import { countSegment, describeRule, getSegment, resolveSegment } from '../../core/segments.ts'
 import { sendPreview } from '../../core/sending.ts'
 import type { SegmentRule } from '../../db/schema.ts'
@@ -337,6 +338,7 @@ export function registerBroadcasts(server: McpServer, ctx: Ctx): void {
         { json: b.bodyJson, md: b.bodyMd },
         {
           publicUrl: ctx.env.PUBLIC_URL,
+          trackingUrl: trackingBaseUrl(ctx.env),
           messageId: 0,
           unsubToken: 'sample-token',
           scope: { kind: 'broadcast' },

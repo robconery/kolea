@@ -3,6 +3,7 @@ import { and, count, desc, eq, gte, lt } from 'drizzle-orm'
 import * as z from 'zod/v4'
 import { createApiKey, listApiKeys, revokeApiKey } from '../../core/api-keys.ts'
 import { revenueTotals } from '../../core/sales.ts'
+import { trackingBaseUrl } from '../../core/tracking-host.ts'
 import {
   broadcasts,
   campaigns,
@@ -169,6 +170,7 @@ export function registerOps(server: McpServer, ctx: Ctx): void {
         provider: ctx.env.EMAIL_PROVIDER,
         from: `${ctx.env.FROM_NAME} <${ctx.env.FROM_EMAIL}>`,
         publicUrl: ctx.env.PUBLIC_URL,
+        trackingUrl: trackingBaseUrl(ctx.env),
         mcpSendingEnabled: sendingAllowed(ctx.env),
         bindings: {
           queue: Boolean(ctx.env.SEND_QUEUE),
