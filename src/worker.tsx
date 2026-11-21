@@ -3,6 +3,7 @@ import { Hono } from 'hono'
 import { downloadRoutes } from './api/downloads.ts'
 import { formsApi } from './api/forms.tsx'
 import { mediaRoutes } from './api/media.ts'
+import { oauthApi } from './api/oauth.ts'
 import { api } from './api/routes.ts'
 import { salesApi } from './api/sales.ts'
 import { withActivitySource } from './core/activity.ts'
@@ -13,11 +14,12 @@ import { syncStripeCatalog } from './core/stripe-catalog.ts'
 import { syncStripe } from './core/stripe.ts'
 import { getDb } from './db/index.ts'
 import { broadcasts, messages } from './db/schema.ts'
-import { handleMcp } from './mcp/server.ts'
+import { handleMcp, handleOAuthMcp } from './mcp/server.ts'
 import type { Env, SendJob } from './types.ts'
 import { admin } from './web/admin.tsx'
 import { activityAdmin } from './web/admin-activity.tsx'
 import { analytics } from './web/admin-analytics.tsx'
+import { connectAdmin } from './web/admin-connect.tsx'
 import { analyticsSequences } from './web/admin-analytics-sequences.tsx'
 import { audience } from './web/admin-audience.tsx'
 import { campaignsAdmin } from './web/admin-campaigns.tsx'
@@ -54,7 +56,7 @@ const app = new Hono<{ Bindings: Env }>()
 app.use('*', (c, next) => {
   const path = new URL(c.req.url).pathname
   const source =
-    path.startsWith('/mcp/') ? 'mcp'
+    path === '/mcp' || path.startsWith('/mcp/') ? 'mcp'
     : path.startsWith('/f/') ? 'form'
     : path.startsWith('/api/stripe') || path.startsWith('/webhooks/stripe') ? 'stripe'
     : path.startsWith('/api/') || path.startsWith('/hooks/') ? 'api'
@@ -104,7 +106,22 @@ app.all('/mcp/:secret', (c) =>
   handleMcp(c.req.raw, c.env, c.executionCtx as unknown as ExecutionContext, c.req.param('secret')),
 )
 
+// MCP by URL with OAuth (see `core/oauth.ts`): discovery, client registration,
+// the token and revocation endpoints, and `/mcp` itself, authenticated by an
+// access token. All public — the callers are MCP clients, not browsers with an
+// Access session. ⚠️ Each path needs an Access **Bypass**: `/mcp`,
+// `/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server`,
+// `/oauth/register`, `/oauth/token`, `/oauth/revoke`. Never `/oauth/authorize` —
+// that is the operator's consent page, mounted below the gate in `connectAdmin`.
+app.route('/', oauthApi)
+app.all('/mcp', (c) =>
+  handleOAuthMcp(c.req.raw, c.env, c.executionCtx as unknown as ExecutionContext),
+)
+
 app.use('*', requireOperator)
+// The OAuth consent page and Connected apps. Behind the gate on purpose: the
+// operator approving here is the authentication for everything above.
+app.route('/', connectAdmin)
 app.route('/', admin)
 app.route('/', audience)
 // Read-only by construction — see the header note in `web/admin-analytics.tsx`.

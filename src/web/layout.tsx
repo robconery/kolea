@@ -1016,6 +1016,8 @@ const NAV: ({ grp: string } | { href: string; key: string; label: string })[] = 
   { href: '/themes', key: 'theme', label: 'Themes' },
   { href: '/consent', key: 'cons', label: 'Consent' },
   { href: '/settings', key: 'set', label: 'Settings' },
+  // Apps approved over OAuth ("paste a URL into Claude"). Separate from API keys.
+  { href: '/connected-apps', key: 'apps', label: 'Connected apps' },
   { href: '/help', key: 'help', label: 'Help' },
 ]
 
