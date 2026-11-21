@@ -59,6 +59,12 @@ export function registerBroadcasts(server: McpServer, ctx: Ctx): void {
   /** What the preflight token is bound to. Any edit to these invalidates it. */
   const broadcastDigest = (b: { subject: string; bodyMd: string; bodyJson: unknown; segment: unknown }) =>
     digestOf([b.subject, b.bodyMd, b.bodyJson, b.segment])
+  // What a resume will send: the current content, to whoever is left after
+  // `alreadySent`. A revise, or mail going out in between, kills the token.
+  const resumeDigest = (
+    b: { subject: string; bodyMd: string; bodyJson: unknown; segment: unknown },
+    alreadySent: number,
+  ) => digestOf(['resume', b.subject, b.bodyMd, b.bodyJson, b.segment, alreadySent])
 
   defineTool(
     server,
@@ -510,17 +516,59 @@ export function registerBroadcasts(server: McpServer, ctx: Ctx): void {
   defineTool(
     server,
     ctx,
+    'broadcast_resume_preflight',
+    {
+      description:
+        'MANDATORY before broadcast_resume. For a CANCELLED broadcast: how many already have it, roughly how many are left, the subject and body they will get, and a single-use preflight_token (10 minutes) bound to that content. Any edit (broadcast_revise) invalidates it. Nothing is sent.',
+      inputSchema: z.object({ id: z.number().int() }),
+      annotations: { readOnlyHint: true },
+    },
+    async ({ id }) => {
+      const b = await getBroadcast(ctx.db, id)
+      if (!b) return fail('No such broadcast.')
+      if (b.status !== 'cancelled') {
+        return fail(`Broadcast #${id} is ${b.status}; only a cancelled send can be resumed.`)
+      }
+      const outlook = (await resumeOutlook(ctx.db, id))!
+      if (outlook.remaining === 0) {
+        return fail('Everyone in the audience already has it — there is nobody to resume for.')
+      }
+      const { token, expiresAt } = await mintPreflight(
+        ctx.db,
+        'broadcast_resume',
+        id,
+        await resumeDigest(b, outlook.alreadySent),
+        outlook.remaining,
+      )
+      const warnings: string[] = []
+      if (!(await agentSendAllowed(ctx.env, ctx.db))) warnings.push(agentSendRefusal(ctx.env))
+      return ok({
+        broadcast: { id: b.id, subject: b.subject, status: b.status },
+        alreadySent: outlook.alreadySent,
+        expectedRemaining: outlook.remaining,
+        bodyText: b.bodyMd.slice(0, 2000),
+        note: 'The audience was frozen when the send started: nobody who joined since is included. Nobody who already has it gets it again.',
+        warnings,
+        preflight_token: token,
+        expiresAt,
+      })
+    },
+  )
+
+  defineTool(
+    server,
+    ctx,
     'broadcast_resume',
     {
       description:
-        'Pick a CANCELLED broadcast back up where it stopped. Nobody is mailed twice: everyone who already has a sent message for it is skipped, mail the provider already accepted is never re-sent, and the walk continues after the last person reached (anyone who joined since is included). Everyone from here on gets the current subject and body, so a correction saved with broadcast_revise is what they read. Pass confirm: "resume" — the same confirmation the admin screen asks for. Check broadcast_get first: this sends real mail.',
+        'Pick a CANCELLED broadcast back up where it stopped. Requires a preflight_token from broadcast_resume_preflight for this broadcast, unused, under 10 minutes old, and minted after the last edit. Nobody is mailed twice: everyone who already has a sent message for it is skipped, mail the provider already accepted is never re-sent, and the walk continues after the last person reached. The audience is the one frozen when the send started: people who joined after that are NOT included. Everyone from here on gets the current subject and body, so a correction saved with broadcast_revise is what they read (re-run the preflight after revising). This sends real mail.',
       inputSchema: z.object({
         id: z.number().int(),
-        confirm: z.literal('resume').describe('Exactly "resume". Read broadcast_get first.'),
+        preflight_token: z.string().describe('From broadcast_resume_preflight'),
       }),
       annotations: { destructiveHint: true, idempotentHint: false },
     },
-    async ({ id }) => {
+    async ({ id, preflight_token }) => {
       if (!(await agentSendAllowed(ctx.env, ctx.db))) return fail(agentSendRefusal(ctx.env))
 
       const b = await getBroadcast(ctx.db, id)
@@ -532,6 +580,20 @@ export function registerBroadcasts(server: McpServer, ctx: Ctx): void {
       // The confirmation screen offers no button at zero; neither does this.
       if (outlook.remaining === 0) {
         return fail('Everyone in the audience already has it — there is nobody to resume for.')
+      }
+
+      const check = await consumePreflight(
+        ctx.db,
+        'broadcast_resume',
+        id,
+        await resumeDigest(b, outlook.alreadySent),
+        preflight_token,
+      )
+      if (!check.ok) {
+        return fail(
+          `Refusing to resume: ${check.reason}.`,
+          `Call broadcast_resume_preflight({ id: ${id} }) and pass the token it returns.`,
+        )
       }
 
       const r = await resumeBroadcast(ctx.env, ctx.db, id)

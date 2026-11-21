@@ -1,5 +1,6 @@
 // gap.md → API, agents and integrations → "Missing MCP tools" (the ones that
-// wrap code Kōlea already had): broadcast_resume, broadcast_revise,
+// wrap code Kōlea already had): broadcast_resume (behind
+// broadcast_resume_preflight, like broadcast_send), broadcast_revise,
 // sequence_exit_set / _remove, sequence_template_*, theme_list / _activate,
 // post_update, sale_get, subscriber_unsubscribe, health.
 // Kōlea SPEC 9.10 (resume: nobody mailed twice), 9.11 (revise never sends),
@@ -72,7 +73,9 @@ describe('Feature: an agent at the controls', () => {
       w = agentWorld()
       id = await aHalfSentBroadcast(w)
       await aPerson(w, { email: 'later@example.test' })
-      reply = await (await agentFor(w)).call('broadcast_resume', { id, confirm: 'resume' })
+      const agent = await agentFor(w)
+      const preflight = await agent.call('broadcast_resume_preflight', { id })
+      reply = await agent.call('broadcast_resume', { id, preflight_token: preflight.json?.preflight_token })
       await w.settle()
       await w.tick()
     })
@@ -449,12 +452,12 @@ describe('Feature: an agent at the controls', () => {
     beforeAll(async () => {
       w = agentWorld(false)
       id = await aHalfSentBroadcast(w)
-      reply = await (await agentFor(w)).call('broadcast_resume', { id, confirm: 'resume' })
+      reply = await (await agentFor(w)).call('broadcast_resume', { id, preflight_token: 'x' })
       await w.settle()
     })
 
-    it('is refused', () => {
-      expect(reply.isError).toBe(true)
+    it('is refused by the send switch', () => {
+      expect(reply.text).toContain('switched off')
     })
 
     it('⭐ sends nothing', async () => {
@@ -466,7 +469,8 @@ describe('Feature: an agent at the controls', () => {
     })
   })
 
-  describe('Scenario: an agent tries to resume without the confirmation', () => {
+  describe('Scenario: an agent tries to resume without a preflight', () => {
+    // The same guard as broadcast_send: a confirm string is not a look.
     let w: World
     let id: number
     let reply: ToolReply
@@ -474,12 +478,35 @@ describe('Feature: an agent at the controls', () => {
     beforeAll(async () => {
       w = agentWorld()
       id = await aHalfSentBroadcast(w)
-      reply = await (await agentFor(w)).call('broadcast_resume', { id })
+      reply = await (await agentFor(w)).call('broadcast_resume', { id, preflight_token: 'made-up' })
       await w.settle()
     })
 
-    it('is refused', () => {
-      expect(reply.isError).toBe(true)
+    it('is refused for want of a preflight', () => {
+      expect(reply.text).toContain('broadcast_resume_preflight')
+    })
+
+    it('⭐ sends nothing', async () => {
+      expect(await mailsTo(w, 'stranded@example.test')).toBe(0)
+    })
+  })
+
+  describe('Scenario: an agent revises the broadcast after its resume preflight', () => {
+    let w: World
+    let reply: ToolReply
+
+    beforeAll(async () => {
+      w = agentWorld()
+      const id = await aHalfSentBroadcast(w)
+      const agent = await agentFor(w)
+      const preflight = await agent.call('broadcast_resume_preflight', { id })
+      await agent.call('broadcast_revise', { id, subject: 'Resumable, corrected' })
+      reply = await agent.call('broadcast_resume', { id, preflight_token: preflight.json?.preflight_token })
+      await w.settle()
+    })
+
+    it('is refused: what was previewed is not what would go', () => {
+      expect(reply.text).toContain('content changed')
     })
 
     it('⭐ sends nothing', async () => {
@@ -499,7 +526,7 @@ describe('Feature: an agent at the controls', () => {
       await startBroadcast(w.env, w.db, id)
       await w.db.update(broadcasts).set({ status: 'cancelled' }).where(eq(broadcasts.id, id))
       mailsBefore = (await w.outbox()).length
-      reply = await (await agentFor(w)).call('broadcast_resume', { id, confirm: 'resume' })
+      reply = await (await agentFor(w)).call('broadcast_resume_preflight', { id })
       await w.settle()
     })
 

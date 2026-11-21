@@ -3,7 +3,12 @@ import { randomToken, sha256 } from '../core/ids.ts'
 import type { Db } from '../db/index.ts'
 import { preflightTokens } from '../db/schema.ts'
 
-export type PreflightKind = 'broadcast_send' | 'sequence_activate' | 'undelivered_send_again'
+export type PreflightKind =
+  | 'broadcast_send'
+  | 'broadcast_resume'
+  | 'sequence_activate'
+  | 'undelivered_send_again'
+  | 'form_resend_replies'
 
 /** Long enough that a preview can be read; short enough that a stale plan dies. */
 const TTL_MS = 10 * 60 * 1000
