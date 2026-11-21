@@ -1029,6 +1029,8 @@ const NAV: ({ grp: string } | { href: string; key: string; label: string })[] = 
   { href: '/themes', key: 'theme', label: 'Themes' },
   // Where mail is sent from, and whether DNS agrees.
   { href: '/domains', key: 'dom', label: 'Sending domains' },
+  // Every uploaded image, whichever screen it came in by.
+  { href: '/media', key: 'media', label: 'Media' },
   { href: '/consent', key: 'cons', label: 'Consent' },
   { href: '/settings', key: 'set', label: 'Settings' },
   // Which key pays for the writing helpers and which model each uses.

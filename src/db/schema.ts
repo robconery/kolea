@@ -1348,18 +1348,79 @@ export const activities = sqliteTable(
 
 // Global kill switch. Keyed by ADDRESS, not subscriber: bounced and transactional
 // addresses may have no subscriber row at all.
+//
+// `pruned` is what a list clean-up leaves behind for a deleted person who had
+// left the newsletter (`subscribers.status = 'unsubscribed'`). Their row is
+// gone, so without this a re-import would bring them back `active` and the next
+// broadcast would reach somebody who said no (Kōlea SPEC 1.6, 8.3.4). A deleted
+// bounced or complained person keeps `hard_bounce` / `complaint` instead, so
+// transactional mail stays blocked for them too. Text enum, no CHECK: adding a
+// value needs no migration.
 export const suppressions = sqliteTable(
   'suppressions',
   {
     id: integer('id').primaryKey({ autoIncrement: true }),
     email: text('email').notNull(),
     reason: text('reason', {
-      enum: ['unsubscribed_all', 'hard_bounce', 'complaint', 'manual'],
+      enum: ['unsubscribed_all', 'hard_bounce', 'complaint', 'manual', 'pruned'],
     }).notNull(),
     createdAt: ts('created_at').notNull(),
   },
   (t) => [uniqueIndex('suppressions_email_key').on(t.email)],
 )
+
+/**
+ * ⭐ A list clean-up: groups of people picked for deletion, the exact people
+ * they held when the operator planned it, and how far the delete has got.
+ *
+ * The record of a destructive act, so it is a row and not a log line: the
+ * people are gone afterwards and this is the only trace of how many, from
+ * which groups, and when (Kōlea's `subscribers.pruned` audit entry).
+ *
+ * `subscriber_ids` is a snapshot taken at plan time, so the backup CSV and the
+ * delete cover exactly the same people. The delete still re-checks every id
+ * against the group rules as it goes (a person who opened a mail, bought
+ * something or has mail queued since the plan is skipped, never deleted), and
+ * `skipped` counts them. It pages through the snapshot with `position` because
+ * D1 allows 1,000 queries per invocation; a big clean-up finishes over several
+ * presses of Continue, and `status` stays `running` until it does.
+ *
+ * Ids rather than addresses: the snapshot should not outlive the people as a
+ * list of email addresses. Once the run is done the ids point at nothing.
+ */
+export const listPrunes = sqliteTable(
+  'list_prunes',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    groups: text('groups', { mode: 'json' }).notNull().$type<string[]>(),
+    /** The "no open or click in N days" window for `never_engaged`. */
+    inactiveDays: integer('inactive_days').notNull(),
+    subscriberIds: text('subscriber_ids', { mode: 'json' }).notNull().$type<number[]>(),
+    /** People per group at plan time: what the confirm step names. */
+    planned: text('planned', { mode: 'json' }).notNull().$type<Record<string, number>>(),
+    total: integer('total').notNull(),
+    /** Index into `subscriber_ids` the next page starts at. */
+    position: integer('position').notNull().default(0),
+    deleted: integer('deleted').notNull().default(0),
+    /** People per group actually deleted. */
+    deletedByGroup: text('deleted_by_group', { mode: 'json' })
+      .notNull()
+      .$type<Record<string, number>>()
+      .default({}),
+    /** In the snapshot but no longer prunable when their page came round. */
+    skipped: integer('skipped').notNull().default(0),
+    status: text('status', { enum: ['planned', 'running', 'done', 'cancelled'] })
+      .notNull()
+      .default('planned'),
+    backedUpAt: ts('backed_up_at'),
+    createdAt: ts('created_at').notNull(),
+    confirmedAt: ts('confirmed_at'),
+    finishedAt: ts('finished_at'),
+  },
+  (t) => [index('list_prunes_created_idx').on(t.createdAt)],
+)
+
+export type ListPrune = typeof listPrunes.$inferSelect
 
 export const apiKeys = sqliteTable(
   'api_keys',

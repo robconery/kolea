@@ -21,6 +21,7 @@ import { activityAdmin } from './web/admin-activity.tsx'
 import { analytics } from './web/admin-analytics.tsx'
 import { analyticsSequences } from './web/admin-analytics-sequences.tsx'
 import { audience } from './web/admin-audience.tsx'
+import { cleanupAdmin } from './web/admin-cleanup.tsx'
 import { campaignsAdmin } from './web/admin-campaigns.tsx'
 import { domainsAdmin } from './web/admin-domains.tsx'
 import { conversionsAdmin } from './web/admin-conversions.tsx'
@@ -29,6 +30,7 @@ import { transactionalAdmin } from './web/admin-transactional.tsx'
 import { goalsAdmin } from './web/admin-goals.tsx'
 import { help } from './web/admin-help.tsx'
 import { mail } from './web/admin-mail.tsx'
+import { mediaAdmin } from './web/admin-media.tsx'
 import { sequenceTemplatesAdmin } from './web/admin-sequence-templates.tsx'
 import { aiAdmin } from './web/admin-ai.ts'
 import { aiSettingsAdmin } from './web/admin-ai-settings.tsx'
@@ -112,6 +114,8 @@ app.all('/mcp/:secret', (c) =>
 
 app.use('*', requireOperator)
 app.route('/', admin)
+// Before `audience`, whose `/subscribers/:id` would claim `/subscribers/clean-up`.
+app.route('/', cleanupAdmin)
 app.route('/', audience)
 // Read-only by construction — see the header note in `web/admin-analytics.tsx`.
 // The sequence screens come first so `/analytics/sequences/:id` is matched by
@@ -130,6 +134,7 @@ app.route('/', siteAdmin)
 app.route('/', themesAdmin)
 // Sending domains: operator config, nothing public.
 app.route('/', domainsAdmin)
+app.route('/', mediaAdmin)
 // Ahead of `mail`, which owns `/sequences/:id` and would read "templates" as an id.
 app.route('/', sequenceTemplatesAdmin)
 app.route('/', mail)

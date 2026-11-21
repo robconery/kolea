@@ -260,6 +260,13 @@
       "when": 1795249276369,
       "tag": "0036_steep_mimic",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "6",
+      "when": 1795249293792,
+      "tag": "0037_sparkling_reptil",
+      "breakpoints": true
     }
   ]
 }

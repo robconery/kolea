@@ -29,7 +29,7 @@ async function undeliveredDigest(target: ResendTarget, ids: number[]): Promise<s
   return await digestOf(['undelivered', target.kind, target.id, ids])
 }
 
-const REASONS = ['unsubscribed_all', 'hard_bounce', 'complaint', 'manual'] as const
+const REASONS = ['unsubscribed_all', 'hard_bounce', 'complaint', 'manual', 'pruned'] as const
 
 /**
  * `unsubscribed_all` is missing on purpose: that reason means the subscriber
