@@ -468,6 +468,26 @@ describe('Feature: confirming a signup', () => {
     })
   })
 
+  describe('Scenario: a reader signs up on two confirming forms a minute apart', () => {
+    // The short gap is per form. Form B's link must not be swallowed because
+    // form A's just went; the daily cap is still per address.
+    let s: Setup
+    const email = 'both@example.test'
+    let confirmations: number
+
+    beforeAll(async () => {
+      s = await aConfirmingForm()
+      await createForm(s.world.db, { name: 'Second', slug: 'second', doubleOptIn: true })
+      await s.world.post('/f/toolkit', { email })
+      await s.world.post('/f/second', { email })
+      confirmations = (await subjectsTo(s.world, email)).length
+    })
+
+    it('sends a confirmation for each form', () => {
+      expect(confirmations).toBe(2)
+    })
+  })
+
   describe('Scenario: a suppressed address is typed into the form', () => {
     let s: Setup
     let sent: number

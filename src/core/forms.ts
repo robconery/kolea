@@ -552,7 +552,12 @@ async function countSubmit(db: Db, formId: number): Promise<void> {
 
 /** How long a confirmation link works. Kōlea's number. */
 export const CONFIRM_TTL_MS = 7 * 86_400_000
-/** No second confirmation to one address inside this gap, whichever form asked. */
+/**
+ * No second confirmation for the same form to one address inside this gap.
+ * Per (address, form): a reader signing up on two forms a minute apart is two
+ * requests, and the second link must reach them. The daily cap below is per
+ * address, across every form, and is what stops a mail-bomb.
+ */
 export const CONFIRM_MIN_GAP_MS = 10 * 60_000
 /** And no more than this many in any 24 hours. Kōlea's mail-bomb cap. */
 export const CONFIRM_MAX_PER_DAY = 3
@@ -578,7 +583,8 @@ export type ConfirmationMail =
  * never promoted, a buyer on file stays a buyer on file. Nothing that can start
  * mail runs (no tags, so no `tag_added` sequence; no subscribe sequences; no
  * form sequence; no reply), because the submitter has not yet proved the
- * address is theirs. One confirmation mail goes out, throttled per address.
+ * address is theirs. One confirmation mail goes out, throttled per address
+ * and form (and capped per address per day).
  */
 async function submitPending(
   env: Env,
@@ -693,9 +699,12 @@ async function requestConfirmation(
   }
 
   // ⭐ The mail-bomb throttle. Counted from `messages`, which records every
-  // confirmation whatever became of it, so a suppressed one counts too.
+  // confirmation whatever became of it, so a suppressed one counts too. The
+  // daily count is per address across all forms; the short gap is per form, so
+  // form B's confirmation is not swallowed because form A's just went.
   const recent = (await db.all(sql`
-    select count(*) as n, max(created_at) as last
+    select count(*) as n,
+      max(case when form_id = ${form.id} then created_at end) as last
     from messages
     where subscriber_id = ${subscriber.id} and kind = 'confirmation'
       and created_at > ${now - 86_400_000}
