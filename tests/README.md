@@ -119,12 +119,8 @@ quietly asserts what we wish were true. Where the two differ, the test says so
 in a comment and names the SPEC clause, so the disagreement is visible instead
 of forgotten:
 
-- **`sending-a-broadcast.spec.ts`** — a send that materializes its last
-  recipient leaves the broadcast `sending`; the *next* pass (the minutely cron)
-  marks it `sent`. SPEC 3.7 reads as though the first pass should close it.
-- **`sending-a-broadcast.spec.ts`** — someone who joins *while a send is still
-  in flight* is picked up by a later page of that same send, because recipients
-  are materialized behind a cursor over `subscribers.id`. SPEC 3.5 says
-  recipients are resolved once, at dispatch. At 13.7k subscribers the window is
-  minutes wide, so this is real. It may well be the *nicer* behaviour — but
-  SPEC and the code should agree either way.
+- None open. The two that lived in `sending-a-broadcast.spec.ts` (completion
+  on the *next* pass; a mid-send joiner picked up by the cursor) were
+  reconciled with SPEC 3.5 and 3.7: the audience is frozen at dispatch by
+  `broadcasts.audience_upper_id`, and the pass that clears the last queued
+  message closes the send.

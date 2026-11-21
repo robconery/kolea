@@ -1,4 +1,4 @@
-import { type SQL, and, asc, count, eq, gt, gte, inArray, lte, notInArray, sql } from 'drizzle-orm'
+import { type SQL, and, asc, count, eq, gt, gte, inArray, lte, max, notInArray, sql } from 'drizzle-orm'
 import type { Db } from '../db/index.ts'
 import {
   type Offer,
@@ -177,14 +177,37 @@ export async function resolveSegment(
   rule: SegmentRule,
   afterId = 0,
   limit = PAGE,
+  /** Inclusive upper bound on `subscribers.id` — a broadcast's frozen audience. */
+  upToId?: number,
 ): Promise<{ id: number; email: string; status: string }[]> {
   return await db
     .select({ id: subscribers.id, email: subscribers.email, status: subscribers.status })
     .from(subscribers)
-    .where(and(...ruleFilters(db, rule), gt(subscribers.id, afterId)))
+    .where(
+      and(
+        ...ruleFilters(db, rule),
+        gt(subscribers.id, afterId),
+        ...(upToId === undefined ? [] : [lte(subscribers.id, upToId)]),
+      ),
+    )
     .orderBy(asc(subscribers.id))
     .limit(limit)
     .all()
+}
+
+/**
+ * The highest subscriber id a rule matches right now, or 0 for nobody. A
+ * broadcast freezes this at dispatch (`broadcasts.audience_upper_id`) so its
+ * cursored walk can never reach somebody who joined after it started. One
+ * query, same WHERE builder as the count and the walk.
+ */
+export async function audienceUpperBound(db: Db, rule: SegmentRule): Promise<number> {
+  const row = await db
+    .select({ n: max(subscribers.id) })
+    .from(subscribers)
+    .where(and(...ruleFilters(db, rule)))
+    .get()
+  return row?.n ?? 0
 }
 
 export async function countSegment(db: Db, rule: SegmentRule): Promise<number> {

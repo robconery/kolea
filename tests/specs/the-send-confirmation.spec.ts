@@ -219,15 +219,22 @@ describe('Feature: resuming a cancelled send', () => {
       w = createWorld()
       await aPerson(w, { email: 'already@example.test' })
       await aPerson(w, { email: 'stranded@example.test' })
+      await aPerson(w, { email: 'later@example.test' })
       id = await aBroadcast(w, { subject: 'Resumable' })
       await startBroadcast(w.env, w.db, id)
       // What a cancel mid-send leaves behind: one row the provider never took…
       const stranded = await w.db.select().from(messages).where(eq(messages.toEmail, 'stranded@example.test')).get()
       await w.db.update(messages).set({ status: 'failed', error: 'broadcast cancelled', providerMessageId: null }).where(eq(messages.id, stranded!.id))
       await w.db.delete(devOutbox).where(eq(devOutbox.toEmail, 'stranded@example.test'))
-      await w.db.update(broadcasts).set({ status: 'cancelled' }).where(eq(broadcasts.id, id))
-      // …and people past the cursor the send never reached.
-      await aPerson(w, { email: 'later@example.test' })
+      // …and people in the audience past the cursor, whom the walk never reached.
+      // (They were on the list at dispatch: anyone who joined after it is not in
+      // this send at all, SPEC 3.5.)
+      await w.db.delete(messages).where(eq(messages.toEmail, 'later@example.test'))
+      await w.db.delete(devOutbox).where(eq(devOutbox.toEmail, 'later@example.test'))
+      await w.db
+        .update(broadcasts)
+        .set({ status: 'cancelled', cursorSubscriberId: stranded!.subscriberId })
+        .where(eq(broadcasts.id, id))
       res = await w.post(`/broadcasts/${id}/resume`, { confirm: 'resume' })
       await w.settle()
       // The minutely cron closes a send out once nothing is left, as always.
