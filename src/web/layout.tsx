@@ -1069,6 +1069,8 @@ const NAV: ({ grp: string } | { href: string; key: string; label: string })[] = 
   // where you go when something looks wrong, not a number you read daily.
   { href: '/logs', key: 'logs', label: 'Logs' },
   { href: '/settings', key: 'set', label: 'Settings' },
+  // Who can use this console and as what. Identity is Cloudflare Access's.
+  { href: '/team', key: 'team', label: 'Team' },
   // Which key pays for the writing helpers and which model each uses.
   { href: '/settings/ai', key: 'aiset', label: 'AI' },
   // Who may reach the mailer without a browser, and what agents may do.

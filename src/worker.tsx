@@ -60,6 +60,8 @@ import { webhooksAdmin } from './web/admin-webhooks.tsx'
 import { auditWrites } from './web/audit.ts'
 import { topicsAdmin } from './web/admin-topics.tsx'
 import { requireOperator } from './web/auth.ts'
+import { requireRole } from './web/roles.ts'
+import { teamAdmin } from './web/admin-team.tsx'
 import { isSiteHost, site } from './web/site.tsx'
 import { prefs } from './web/prefs.tsx'
 import { seed } from './web/seed.tsx'
@@ -164,15 +166,23 @@ app.all('/mcp', (c) =>
   handleOAuthMcp(c.req.raw, c.env, c.executionCtx as unknown as ExecutionContext),
 )
 
+// Who: the Access JWT, verified, and the person's row on the team
+// (`core/team.ts`). Somebody Access let in who is not on the team stops here.
 app.use('*', requireOperator)
-// The OAuth consent page and Connected apps. Behind the gate on purpose: the
-// operator approving here is the authentication for everything above.
-app.route('/', connectAdmin)
 // Every console write, refusals included, attributed to the Access identity
-// `requireOperator` just verified. After the gate on purpose: a request Access
-// turned away never reached the app, and recording those would let anyone on
-// the internet fill this table.
+// `requireOperator` just verified, with their role. After the gate on purpose:
+// a request Access turned away never reached the app, and recording those would
+// let anyone on the internet fill this table. Before `requireRole`, so a write
+// refused for the role is in the trail too.
 app.use('*', auditWrites('operator'))
+// What: the route table in `web/roles.ts`. Every router below is behind it;
+// anything it does not list needs an admin.
+app.use('*', requireRole)
+// The OAuth consent page and Connected apps. Behind the gate on purpose: the
+// operator approving here is the authentication for everything above. Admin
+// and up (an agent gets the console's powers).
+app.route('/', connectAdmin)
+app.route('/', teamAdmin)
 app.route('/', admin)
 // Before `audience`, whose `/subscribers/:id` would claim `/subscribers/clean-up`.
 app.route('/', cleanupAdmin)

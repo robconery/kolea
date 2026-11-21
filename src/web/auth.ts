@@ -1,5 +1,9 @@
 import type { MiddlewareHandler } from 'hono'
+import { recordAudit } from '../core/audit.ts'
+import { INVITE_DAYS, resolveMember } from '../core/team.ts'
+import { getDb } from '../db/index.ts'
 import type { Env } from '../types.ts'
+import { page } from './roles.ts'
 
 /**
  * Cloudflare Access, actually verified.
@@ -130,8 +134,17 @@ export async function verifyAccessJwt(
   return { ok: true, email: claims.email ?? null }
 }
 
+/**
+ * Verify the Access JWT, then find the person on the team (`core/team.ts`).
+ * Sets `operatorEmail` and `operatorRole`; `requireRole` (`web/roles.ts`) reads
+ * the role against the route table. Under DEV_AUTH_BYPASS the local developer
+ * is the owner, with no email.
+ */
 export const requireOperator: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
-  if (c.env.DEV_AUTH_BYPASS === 'true') return await next()
+  if (c.env.DEV_AUTH_BYPASS === 'true') {
+    c.set('operatorRole' as never, 'owner' as never)
+    return await next()
+  }
 
   const teamDomain = c.env.CF_ACCESS_TEAM_DOMAIN
   const audience = c.env.CF_ACCESS_AUD
@@ -160,6 +173,48 @@ export const requireOperator: MiddlewareHandler<{ Bindings: Env }> = async (c, n
 
   if (!result.ok) return c.text('Forbidden: invalid Access token', 403)
 
-  c.set('operatorEmail' as never, result.email as never)
+  // Access vouches for who; the team decides what. A token with no email (an
+  // Access service token) names nobody the team could hold, so it is refused
+  // rather than guessed at.
+  if (!result.email) return c.text('Forbidden: the Access token names no email address', 403)
+
+  const db = getDb(c.env)
+  const who = await resolveMember(db, result.email)
+  if (!who.ok) return c.html(notOnTheTeam(result.email, who.reason), 403)
+
+  if (who.event !== 'none') {
+    // Joining is a change to who can use the console, so it is in the trail
+    // even though it rode in on a GET.
+    await recordAudit(db, {
+      actorKind: 'operator',
+      actorId: who.member.email,
+      actorRole: who.member.role,
+      action: who.event === 'first-owner' ? 'TEAM first owner' : 'TEAM joined',
+      target: `team/${who.member.id}`,
+      outcome: 'ok',
+      status: 200,
+    })
+  }
+
+  c.set('operatorEmail' as never, who.member.email as never)
+  c.set('operatorRole' as never, who.member.role as never)
   return await next()
+}
+
+/** The 403 for somebody Access let in who is not (or no longer) on the team. */
+function notOnTheTeam(email: string, reason: 'not-member' | 'removed' | 'expired'): string {
+  const why =
+    reason === 'removed'
+      ? 'You were taken off the team for this console.'
+      : reason === 'expired'
+        ? `Your invitation ran out (they last ${INVITE_DAYS} days). Ask an owner or admin to invite you again.`
+        : 'Your address is allowed through Cloudflare Access, but nobody has invited it to the team.'
+  return page(
+    'Not on the team',
+    `<p>You are signed in as <code>${escapeHtml(email)}</code>.</p><p>${why}</p><p>An owner or admin adds people on the console's Team screen. If you signed in with the wrong address, sign out of Cloudflare Access and back in with the right one.</p>`,
+  )
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`)
 }

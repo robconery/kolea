@@ -23,6 +23,8 @@ export type AuditOutcome = 'ok' | 'denied' | 'error'
 export interface AuditInput {
   actorKind: 'operator' | 'key'
   actorId: string | null
+  /** The operator's team role at the time (`core/team.ts`). Null for keys. */
+  actorRole?: 'owner' | 'admin' | 'writer' | null
   apiKeyId?: number | null
   action: string
   target: string | null
@@ -39,6 +41,7 @@ export async function recordAudit(db: Db, input: AuditInput): Promise<void> {
       at: input.at ?? new Date(),
       actorKind: input.actorKind,
       actorId: input.actorId?.slice(0, 200) ?? null,
+      actorRole: input.actorRole ?? null,
       apiKeyId: input.apiKeyId ?? null,
       action: input.action.slice(0, 200),
       target: input.target?.slice(0, 200) ?? null,

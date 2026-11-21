@@ -15,6 +15,7 @@ import { getForm } from '../core/forms.ts'
 import { getDb } from '../db/index.ts'
 import type { Env } from '../types.ts'
 import { requireOperator } from '../web/auth.ts'
+import { requireRole } from '../web/roles.ts'
 
 export const downloadRoutes = new Hono<{ Bindings: Env }>()
 
@@ -60,7 +61,7 @@ downloadRoutes.get('/d/:token', async (c) => {
 })
 
 // The file is edited from the form's own page, so these are operator-only.
-downloadRoutes.use('/api/forms/*', requireOperator)
+downloadRoutes.use('/api/forms/*', requireOperator, requireRole)
 
 /**
  * Attach a file to a form, streaming.
