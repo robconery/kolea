@@ -10,7 +10,8 @@
 //   that always wins; any other value, or none, lets the switch decide. The var
 //   can take sending away and can never turn it on.
 // - **Agents may make sensitive changes.** `subscriber_delete`,
-//   `suppression_remove`, `subscriber_import_csv` and `apikey_create` ask
+//   `suppression_remove`, `subscriber_import_csv`, `sequence_rejoin_person`
+//   (it overrides somebody's opt-out) and `apikey_create` ask
 //   `agentSensitiveAllowed` first. Kōlea gates the first three (and webhooks,
 //   which Big Mailer does not have); minting a key is added because a key is
 //   lasting access an injected agent could carry out.
@@ -20,10 +21,10 @@
 import { beforeAll, describe, expect, it } from 'bun:test'
 import { and, count, eq } from 'drizzle-orm'
 import { createApiKey } from '../../src/core/api-keys.ts'
-import { suppressAddress } from '../../src/core/consent.ts'
-import { type McpCall, agentSettings, apiKeys, mcpCalls, subscribers, suppressions } from '../../src/db/schema.ts'
+import { leaveSequence, suppressAddress } from '../../src/core/consent.ts'
+import { type McpCall, agentSettings, apiKeys, mcpCalls, sequenceOptouts, subscribers, suppressions } from '../../src/db/schema.ts'
 import type { Env } from '../../src/types.ts'
-import { aBroadcast, aPerson } from '../support/factories.ts'
+import { aBroadcast, aPerson, aSequence } from '../support/factories.ts'
 import { MCP_SECRET, type ToolCall, callTool } from '../support/mcp.ts'
 import { createWorld, type World } from '../support/world.ts'
 
@@ -305,6 +306,52 @@ describe('Feature: the operator decides on screen what agents may do', () => {
 
     it('writes the refusal to the audit log', () => {
       expect(audit?.outcome).toBe('denied')
+    })
+  })
+
+  describe('Scenario: an agent tries to undo somebody\'s sequence opt-out', () => {
+    // ⭐ Leaving a series is the person's standing choice; only they undo it.
+    // The operator side doing it is a sensitive change, off by default.
+    let world: World
+    let refused: ToolCall
+    let optedOutAfterRefusal: boolean
+    let allowed: ToolCall
+    let optedOutAfterAllowed: boolean
+
+    beforeAll(async () => {
+      world = agentWorld()
+      const person = await aPerson(world, { triggerSubscribeSequences: false })
+      const seq = await aSequence(world)
+      await leaveSequence(world.db, person.id, seq.id)
+      const token = await anAgent(world)
+      const optedOut = async () =>
+        Boolean(await world.db.select().from(sequenceOptouts).where(eq(sequenceOptouts.subscriberId, person.id)).get())
+
+      refused = await callTool(world, token, 'sequence_rejoin_person', { sequence_id: seq.id, subscriber_id: person.id })
+      optedOutAfterRefusal = await optedOut()
+      await flip(world, 'sensitive', 'on')
+      allowed = await callTool(world, token, 'sequence_rejoin_person', { sequence_id: seq.id, subscriber_id: person.id })
+      optedOutAfterAllowed = await optedOut()
+    })
+
+    it('is refused while sensitive changes are off', () => {
+      expect(refused.result?.isError).toBe(true)
+    })
+
+    it('⭐ keeps their opt-out', () => {
+      expect(optedOutAfterRefusal).toBe(true)
+    })
+
+    it('works once the operator allows sensitive changes', () => {
+      expect(allowed.result?.isError).toBeFalsy()
+    })
+
+    it('says it overrode their choice', () => {
+      expect(allowed.text).toContain('overrode their choice')
+    })
+
+    it('removes the opt-out then', () => {
+      expect(optedOutAfterAllowed).toBe(false)
     })
   })
 
