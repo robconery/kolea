@@ -118,6 +118,21 @@ function previewSourceId(target: PreviewTarget): number {
 /** D1 caps bound parameters at 100 per query. */
 const PARAM_CHUNK = 100
 
+/**
+ * Whether the configured provider can send, without building it. The same
+ * branches as `providerFor` below, kept beside it so a new adapter cannot be
+ * added to one and forgotten in the other. `live` is false for the console
+ * provider: it is the kill switch, and mail lands in the Outbox.
+ */
+export function providerReadiness(env: Env): { name: string; live: boolean; problem: string | null } {
+  if (env.EMAIL_PROVIDER === 'resend') {
+    return env.RESEND_API_KEY
+      ? { name: 'resend', live: true, problem: null }
+      : { name: 'resend', live: false, problem: 'EMAIL_PROVIDER=resend but RESEND_API_KEY is unset — every send fails' }
+  }
+  return { name: 'console', live: false, problem: null }
+}
+
 function providerFor(env: Env, db: Db): EmailProvider {
   if (env.EMAIL_PROVIDER === 'resend') {
     if (!env.RESEND_API_KEY) throw new Error('EMAIL_PROVIDER=resend but RESEND_API_KEY is unset')

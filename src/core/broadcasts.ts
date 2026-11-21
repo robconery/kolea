@@ -5,7 +5,7 @@ import { broadcasts, events, messages } from '../db/schema.ts'
 import type { Env } from '../types.ts'
 import { canReceiveBroadcastIn, loadConsentSnapshot } from './consent.ts'
 import { publishPost } from './posts.ts'
-import { resolveSegment } from './segments.ts'
+import { countSegment, resolveSegment } from './segments.ts'
 import { dispatch } from './sending.ts'
 
 // ─────────────────────────────────────────────────── authoring
@@ -258,6 +258,30 @@ export async function resumeBroadcast(
   await dispatch(env, db, ids)
   const materialized = await sendBroadcastNow(env, db, id)
   return { ok: true, requeued: ids.length, materialized }
+}
+
+/**
+ * What resuming would do, as of now: who already has it and roughly who is
+ * left. The confirmation screen and `broadcast_resume` both read this, so the
+ * number a person agrees to and the number an agent is told are one number.
+ *
+ * `remaining` is an estimate — the audience as it stands minus everyone who
+ * already has a terminal message — because the real walk resolves people page
+ * by page. At zero there is nobody to resume for, and neither surface offers it.
+ */
+export async function resumeOutlook(
+  db: Db,
+  id: number,
+): Promise<{ audience: number; alreadySent: number; remaining: number } | null> {
+  const b = await getBroadcast(db, id)
+  if (!b) return null
+  const audience = await countSegment(db, b.segment ?? {})
+  const stats = await broadcastStats(db, id)
+  return {
+    audience,
+    alreadySent: stats.sent,
+    remaining: Math.max(0, audience - (stats.sent + stats.suppressed)),
+  }
 }
 
 /**

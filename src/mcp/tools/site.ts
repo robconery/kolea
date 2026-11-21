@@ -2,7 +2,8 @@ import type { McpServer } from '@modelcontextprotocol/server'
 import * as z from 'zod/v4'
 import { PROFILE_ICONS, ProfileLink, SOCIAL, WhatIDoItem, readProfile, validateProfile } from '../../core/site-profile.ts'
 import { getSiteSettings, saveSiteSettings, type SiteSettingsPatch } from '../../core/site-settings.ts'
-import { type Ctx, defineTool, fail, ok } from '../kit.ts'
+import { switchTheme, themeSummaries } from '../../core/theme/store.ts'
+import { type Ctx, defineTool, fail, failed, ok } from '../kit.ts'
 
 /**
  * Who the site is and who writes it — the same data as the admin's Site
@@ -90,6 +91,36 @@ export function registerSite(server: McpServer, ctx: Ctx): void {
       }
       const saved = await saveSiteSettings(ctx.db, patch)
       return ok({ saved: true, profile: readProfile(saved.profile) })
+    },
+  )
+
+  defineTool(
+    server,
+    ctx,
+    'theme_list',
+    {
+      description:
+        "The public site's themes, built-ins first, and which one readers see now (`live`). With no theme switched on, the default built-in is live.",
+      inputSchema: z.object({}),
+      annotations: { readOnlyHint: true },
+    },
+    async () => ok(await themeSummaries(ctx.db)),
+  )
+
+  defineTool(
+    server,
+    ctx,
+    'theme_activate',
+    {
+      description:
+        'Make one theme live on the public site, and every other not. Instant and reversible: switch back the same way. Sends nothing. Ids come from theme_list.',
+      inputSchema: z.object({ id: z.number().int() }),
+      annotations: { idempotentHint: true },
+    },
+    async ({ id }) => {
+      const r = await switchTheme(ctx.db, id)
+      if (!r.ok) return failed(r, 'List them with theme_list.')
+      return ok({ live: r.name, themes: await themeSummaries(ctx.db) })
     },
   )
 }

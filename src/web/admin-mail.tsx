@@ -6,6 +6,7 @@ import {
   createBroadcast,
   reviseSentBroadcast,
   resumeBroadcast,
+  resumeOutlook,
   startBroadcast,
 } from '../core/broadcasts.ts'
 import { listCampaigns } from '../core/campaigns.ts'
@@ -1321,10 +1322,8 @@ mail.get('/broadcasts/:id/resume', async (c) => {
     return c.redirect(`/broadcasts/${id}?flash=${encodeURIComponent(`This broadcast is ${b.status}; only a cancelled send can be resumed.`)}&kind=warn`)
   }
   const choices = await audienceChoices(db)
-  const audienceSize = await countSegment(db, b.segment ?? {})
-  const stats = await broadcastStats(db, id)
-  const already = stats.sent + stats.suppressed
-  const remaining = Math.max(0, audienceSize - already)
+  const outlook = (await resumeOutlook(db, id))!
+  const { audience: audienceSize, alreadySent, remaining } = outlook
   const n = (x: number) => x.toLocaleString('en-US')
 
   return c.html(
@@ -1349,7 +1348,7 @@ mail.get('/broadcasts/:id/resume', async (c) => {
           </p>
           <ul style="margin:0 0 22px;padding-left:18px;line-height:1.7">
             <li>
-              <strong>{n(stats.sent)}</strong> already got it. They will not get it again: every person has one message
+              <strong>{n(alreadySent)}</strong> already got it. They will not get it again: every person has one message
               per broadcast, and sent ones are never re-sent.
             </li>
             <li>It picks up after the last person reached, and anyone who joined since is included.</li>

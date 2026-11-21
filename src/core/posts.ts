@@ -188,7 +188,13 @@ export async function updatePostMeta(db: Db, id: number, meta: PostMeta): Promis
   const patch: Partial<typeof broadcasts.$inferInsert> = {}
   if (meta.slug !== undefined) patch.slug = await uniqueSlug(db, id, meta.slug ?? b.subject)
   if (meta.excerpt !== undefined) patch.excerpt = meta.excerpt || null
-  if (meta.featureImage !== undefined) patch.featureImage = meta.featureImage || null
+  if (meta.featureImage !== undefined && (meta.featureImage || null) !== b.featureImage) {
+    // A different picture is not the photographer's any more: the credit goes
+    // with the image it was given for.
+    patch.featureImage = meta.featureImage || null
+    patch.featureImageCredit = null
+    patch.featureImageCreditUrl = null
+  }
   if (Object.keys(patch).length === 0) return
 
   await db.update(broadcasts).set(patch).where(eq(broadcasts.id, id))

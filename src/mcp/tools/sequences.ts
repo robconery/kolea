@@ -175,6 +175,44 @@ export function registerSequences(server: McpServer, ctx: Ctx): void {
   defineTool(
     server,
     ctx,
+    'sequence_exit_set',
+    {
+      description:
+        'Add an exit to a sequence, or change where an existing one leads: when tag_id lands on someone enrolled here, their enrollment is cancelled (reason exit_tag) and, if then_sequence_id is set and live, they join that sequence. It also keeps holders of that tag from being enrolled at all. An exit is automation, NOT an opt-out: it writes no consent record, and the person can be enrolled again later by other means. The tag that triggers a tag_added sequence cannot also be its exit.',
+      inputSchema: z.object({
+        id: z.number().int().describe('The sequence'),
+        tag_id: z.number().int(),
+        then_sequence_id: z.number().int().nullable().optional(),
+      }),
+      annotations: { idempotentHint: true },
+    },
+    async ({ id, tag_id, then_sequence_id }) => {
+      const result = await setExit(ctx.db, id, tag_id, then_sequence_id ?? null)
+      if (!result.ok) return failed(result, 'Find tags with tag_list and sequences with sequence_list.')
+      return ok({ saved: true, flow: await sequenceFlow(ctx.db, id) })
+    },
+  )
+
+  defineTool(
+    server,
+    ctx,
+    'sequence_exit_remove',
+    {
+      description:
+        'Remove an exit from a sequence. People already pulled out by it stay out; nobody is re-enrolled.',
+      inputSchema: z.object({ id: z.number().int().describe('The sequence'), tag_id: z.number().int() }),
+      annotations: { idempotentHint: true },
+    },
+    async ({ id, tag_id }) => {
+      if (!(await getSequence(ctx.db, id))) return fail('No such sequence.')
+      await removeExit(ctx.db, id, tag_id)
+      return ok({ removed: true, flow: await sequenceFlow(ctx.db, id) })
+    },
+  )
+
+  defineTool(
+    server,
+    ctx,
     'sequence_delete',
     {
       description:

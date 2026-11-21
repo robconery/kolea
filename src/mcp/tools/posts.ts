@@ -1,7 +1,16 @@
 import type { McpServer } from '@modelcontextprotocol/server'
 import * as z from 'zod/v4'
 import { setPostTags, tagsForPost, tagsForPosts } from '../../core/post-tags.ts'
-import { getPostBySlug, listPosts, postPath, postStatus, publishPost, setPostFeatured, unpublishPost } from '../../core/posts.ts'
+import {
+  getPostBySlug,
+  listPosts,
+  postPath,
+  postStatus,
+  publishPost,
+  setPostFeatured,
+  unpublishPost,
+  updatePostMeta,
+} from '../../core/posts.ts'
 import { renderPostHtml } from '../../core/render-web.ts'
 import { type Ctx, defineTool, fail, ok } from '../kit.ts'
 
@@ -112,6 +121,42 @@ export function registerPosts(server: McpServer, ctx: Ctx): void {
         slug: post.slug,
         excerpt: post.excerpt,
         publishedAt: post.publishedAt,
+      })
+    },
+  )
+
+  defineTool(
+    server,
+    ctx,
+    'post_update',
+    {
+      description:
+        "Change a post's publishing fields WITHOUT changing whether it is live: slug, excerpt, featureImage, tags (post topics, never subscriber tags; the first is the primary topic and the first URL segment) and featured. Works on a published post or on a broadcast that is not up yet. Only the fields you pass change; pass \"\" to clear excerpt or featureImage, [] to clear tags. A changed slug or primary topic changes the URL, and the old one keeps redirecting. Sends nothing. To put a post on the site, use post_publish.",
+      inputSchema: z.object({
+        broadcastId: z.number().int(),
+        slug: z.string().min(1).optional(),
+        excerpt: z.string().optional(),
+        featureImage: z.string().optional(),
+        tags: z.array(z.string()).optional(),
+        featured: z.boolean().optional(),
+      }),
+      annotations: { idempotentHint: true },
+    },
+    async ({ broadcastId, slug, excerpt, featureImage, tags, featured }) => {
+      const before = await postStatus(ctx.db, broadcastId)
+      if (!before) return fail('No such broadcast.')
+
+      await updatePostMeta(ctx.db, broadcastId, { slug, excerpt, featureImage })
+      const topics = tags ? await setPostTags(ctx.db, broadcastId, tags) : await tagsForPost(ctx.db, broadcastId)
+      if (featured !== undefined) await setPostFeatured(ctx.db, broadcastId, featured)
+
+      const after = (await postStatus(ctx.db, broadcastId))!
+      return ok({
+        updated: true,
+        published: Boolean(after.publishedAt),
+        slug: after.slug,
+        tags: topics.map((t) => t.name),
+        url: after.publishedAt && after.slug ? `${origin()}${postPath(after.slug, topics[0]?.slug)}` : null,
       })
     },
   )

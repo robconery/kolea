@@ -27,12 +27,14 @@ Consequences worth holding onto:
 - Leaving a sequence is a *standing preference*. \`sequence_enroll\` refuses anyone who left,
   and no operator action overrides that — only the subscriber can rejoin, from the
   preference center.
-- An *exit* is not an opt-out. \`sequence_update\` can set exit tags ("got this tag → leave
+- An *exit* is not an opt-out. \`sequence_exit_set\` (or \`sequence_update\`) sets exit tags ("got this tag → leave
   this series, optionally join that one") and a next sequence for finishers. Both are
   automation: they cancel or enroll, record why, and never write a consent record. To pull
   people out by rule, set an exit. \`sequence_remove_person\` records that the *person chose*
   to leave, permanently — never use it for automation.
 - Receipts and password resets are not marketing. An unsubscribe never blocks one.
+- Somebody who asks you (by reply, by ticket) to stop the newsletter: \`subscriber_unsubscribe\`.
+  Broadcast scope only — their sequences and receipts continue, and no suppression is written.
 - To stop mailing somebody, use \`suppression_add\`. \`subscriber_delete\` is for erasure
   requests and destroys their history, their messages and their purchases.
 

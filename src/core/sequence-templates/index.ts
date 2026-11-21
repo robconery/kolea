@@ -1,6 +1,6 @@
 import { asc, eq } from 'drizzle-orm'
 import type { Db } from '../../db/index.ts'
-import { type SequenceTemplateRow, sequenceTemplates, sequences } from '../../db/schema.ts'
+import { type SequenceTemplateRow, sequenceTemplates, sequences, tags } from '../../db/schema.ts'
 import { slugify } from '../ids.ts'
 import { mdToDoc } from '../md-to-doc.ts'
 import { type SequenceInput, addStep, createSequence, normalizeDelayDays } from '../sequences.ts'
@@ -224,6 +224,14 @@ export async function createSequenceFromTemplate(
 
   const name = (input.name ?? '').trim() || t.defaultName || t.name
   const trigger = input.trigger ?? t.suggestedTrigger
+
+  // A tag_added sequence with no tag can never start, and a tag id that names
+  // nothing would surface as a foreign-key 500. Both are a message instead.
+  if (trigger === 'tag_added') {
+    if (!input.triggerTagId) return { ok: false, reason: 'a tag_added sequence needs a trigger tag' }
+    const tag = await db.select({ id: tags.id }).from(tags).where(eq(tags.id, input.triggerTagId)).get()
+    if (!tag) return { ok: false, reason: 'no such trigger tag' }
+  }
 
   // `sequences.slug` is unique and derived from the name. Checked here so a
   // second "Welcome" is a message on the form rather than a constraint error.

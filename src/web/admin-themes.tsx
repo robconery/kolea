@@ -19,6 +19,7 @@ import {
   loadThemeById,
   readThemeAsset,
   saveThemeSettings,
+  switchTheme,
 } from '../core/theme/store.ts'
 import { listPosts } from '../core/posts.ts'
 import { tagsForPost } from '../core/post-tags.ts'
@@ -245,10 +246,9 @@ themesAdmin.post('/themes/builtin/activate', async (c) => {
 themesAdmin.post('/themes/:id/activate', async (c) => {
   const db = getDb(c.env)
   const id = Number(c.req.param('id'))
-  const row = await db.select().from(themes).where(eq(themes.id, id)).get()
-  if (!row) return back(c, 'No such theme.', 'warn')
-  await activateTheme(db, id)
-  return back(c, `${row.name} is live.`)
+  const r = await switchTheme(db, id)
+  if (!r.ok) return back(c, 'No such theme.', 'warn')
+  return back(c, `${r.name} is live.`)
 })
 
 themesAdmin.post('/themes/:id/delete', async (c) => {

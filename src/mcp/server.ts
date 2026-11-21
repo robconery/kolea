@@ -15,6 +15,7 @@ import { registerPosts } from './tools/posts.ts'
 import { registerSite } from './tools/site.ts'
 import { registerSales } from './tools/sales.ts'
 import { registerSegments } from './tools/segments.ts'
+import { registerSequenceTemplates } from './tools/sequence-templates.ts'
 import { registerSequences } from './tools/sequences.ts'
 import { registerStripe } from './tools/stripe.ts'
 import { registerTags } from './tools/tags.ts'
@@ -79,6 +80,7 @@ export async function handleMcp(
     registerSegments(server, ctx)
     registerBroadcasts(server, ctx)
     registerSequences(server, ctx)
+    registerSequenceTemplates(server, ctx)
     registerCampaigns(server, ctx)
     registerForms(server, ctx)
     registerPosts(server, ctx)
