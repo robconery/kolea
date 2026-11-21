@@ -10,6 +10,7 @@ import {
 } from '../../core/activity.ts'
 import { campaignsForSubscriber, touchesFor } from '../../core/campaigns.ts'
 import { preferencesFor } from '../../core/consent.ts'
+import { castFieldValues, fieldTypes, fieldsOf, setFieldValues } from '../../core/fields.ts'
 import { normalizeEmail } from '../../core/ids.ts'
 import { salesForSubscriber } from '../../core/sales.ts'
 import { addTags, importCsv, removeTag, upsertSubscriber } from '../../core/subscribers.ts'
@@ -134,7 +135,8 @@ export function registerAudience(server: McpServer, ctx: Ctx): void {
     ctx,
     'subscriber_get',
     {
-      description: 'One subscriber with their tags, consent state, and sequence enrollments.',
+      description:
+        'One subscriber with their tags, custom field values (`fields`, every defined field, null where they have none), consent state, and sequence enrollments.',
       inputSchema: z.object({
         id: z.number().int().optional(),
         email: z.string().optional(),
@@ -160,6 +162,7 @@ export function registerAudience(server: McpServer, ctx: Ctx): void {
       return ok({
         ...sub,
         tags: await tagsOf(ctx, sub.id),
+        fields: await fieldsOf(ctx.db, sub.attributes),
         enrollments,
         preferences: await preferencesFor(ctx.db, sub.id),
       })
@@ -263,19 +266,33 @@ export function registerAudience(server: McpServer, ctx: Ctx): void {
     'subscriber_upsert',
     {
       description:
-        'Create or update a subscriber by email. Never resurrects someone who unsubscribed. Creating a person fires subscribe-triggered sequences unless you turn that off.',
+        'Create or update a subscriber by email. Never resurrects someone who unsubscribed. Creating a person fires subscribe-triggered sequences unless you turn that off. `fields` sets custom field values by key (see kolea://merge-tags for the keys and types); null or "" clears one. An unknown key or a value of the wrong type fails the whole call before anything is written.',
       inputSchema: z.object({
         email: z.string(),
         name: z.string().nullable().optional(),
         source: z.string().nullable().optional(),
         tag_ids: z.array(z.number().int()).optional(),
+        fields: z
+          .record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))
+          .optional()
+          .describe('Custom field values by key, e.g. { "plan": "pro", "seats": 5, "renews_on": "2027-01-31" }'),
         trigger_sequences: z
           .boolean()
           .optional()
           .describe('Default true. False for receipts and other non-signups.'),
       }),
     },
-    async ({ email, name, source, tag_ids, trigger_sequences }) => {
+    async ({ email, name, source, tag_ids, fields, trigger_sequences }) => {
+      // Checked before the upsert, so a bad value never leaves a half-written person.
+      const cast = fields ? castFieldValues(await fieldTypes(ctx.db), fields) : null
+      if (cast && Object.keys(cast.errors).length) {
+        return fail(
+          `Field values rejected: ${Object.entries(cast.errors)
+            .map(([k, e]) => `${k} ${e}`)
+            .join('; ')}.`,
+          'Read kolea://merge-tags for the defined keys and their types.',
+        )
+      }
       const result = await upsertSubscriber(ctx.db, {
         email,
         name: name ?? null,
@@ -284,7 +301,8 @@ export function registerAudience(server: McpServer, ctx: Ctx): void {
         triggerSubscribeSequences: trigger_sequences,
       })
       if (result.outcome === 'invalid') return fail(`"${email}" is not a valid address.`)
-      return ok(result)
+      const written = cast && result.id ? await setFieldValues(ctx.db, result.id, cast.changes) : 0
+      return ok({ ...result, ...(cast ? { fieldsWritten: written } : {}) })
     },
   )
 
@@ -294,7 +312,7 @@ export function registerAudience(server: McpServer, ctx: Ctx): void {
     'subscriber_import_csv',
     {
       description:
-        'Bulk import from CSV text with an `email` column (optional `name`, `tags`). Returns a per-row report.',
+        'Bulk import from CSV text with an `email` column (optional `name`, `tags`, and any column whose header is a custom field key). Returns a per-row report; a field value that does not fit its type is left out and listed in `fieldErrors`, and the person is still imported.',
       inputSchema: z.object({
         csv: z.string().describe('Raw CSV including the header row'),
       }),

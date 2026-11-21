@@ -14,6 +14,7 @@ import {
   loadConsentSnapshot,
 } from './consent.ts'
 import { downloadUrl, grantDownload, grantsForMessages } from './downloads.ts'
+import { fieldKeys } from './fields.ts'
 import { normalizeEmail } from './ids.ts'
 import { authoredLead, postUrl } from './posts.ts'
 import { BROADCAST_SCOPE_LABEL, type EmailBody, renderEmail } from './render.ts'
@@ -281,6 +282,9 @@ export async function sendMessages(
     ),
   )
 
+  // Which `{{tags}}` are custom fields. One query for the batch, not per person.
+  const declaredFields = await fieldKeys(db)
+
   const snapshot = await loadConsentSnapshot(
     db,
     queued.map((m) => m.toEmail),
@@ -343,7 +347,12 @@ export async function sendMessages(
       postUrl: resolved.postUrl,
       title: resolved.title,
       lead: resolved.lead,
-      subscriber: { email: sub.email, name: sub.name },
+      subscriber: {
+        email: sub.email,
+        name: sub.name,
+        attributes: sub.attributes,
+        fieldKeys: declaredFields,
+      },
       trackOpens: isMarketing,
       trackClicks: isMarketing,
       showFooter: isMarketing,

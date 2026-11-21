@@ -44,8 +44,17 @@ const HEADING: Record<number, string> = {
 export interface DocRenderOptions {
   /** Rewrites hrefs for click tracking. Identity when tracking is off. */
   trackLink: (url: string) => string
-  /** Resolves merge tags like {{first_name}} at render time. */
-  mergeValue: (field: string) => string
+  /**
+   * Resolves merge tags like {{first_name}} at render time. `fallback` is the
+   * node's own `attrs.fallback`, when the writer gave one.
+   */
+  mergeValue: (field: string, fallback?: string) => string
+}
+
+/** A merge-tag node's written fallback, if it has a non-empty one. */
+function fallbackOf(node: DocNode): string | undefined {
+  const f = node.attrs?.fallback
+  return typeof f === 'string' && f.trim() ? f.trim() : undefined
 }
 
 export function renderDocToEmailHtml(doc: DocNode, opts: DocRenderOptions): string {
@@ -136,7 +145,7 @@ function renderNode(node: DocNode, o: DocRenderOptions): string {
     case 'mergeTag': {
       // Resolved at send time, per recipient.
       const field = String(node.attrs?.field ?? '')
-      return escapeHtml(o.mergeValue(field))
+      return escapeHtml(o.mergeValue(field, fallbackOf(node)))
     }
 
     case 'table':
@@ -234,7 +243,7 @@ function walkText(node: DocNode, o: DocRenderOptions, out: string[]): void {
       return
     }
     case 'mergeTag':
-      append(out, o.mergeValue(String(node.attrs?.field ?? '')))
+      append(out, o.mergeValue(String(node.attrs?.field ?? ''), fallbackOf(node)))
       return
     case 'hardBreak':
       out.push('')
@@ -297,7 +306,7 @@ function collect(node: DocNode, o: DocRenderOptions, buf: string[]): void {
     return
   }
   if (node.type === 'mergeTag') {
-    buf.push(o.mergeValue(String(node.attrs?.field ?? '')))
+    buf.push(o.mergeValue(String(node.attrs?.field ?? ''), fallbackOf(node)))
     return
   }
   for (const c of node.content ?? []) collect(c, o, buf)

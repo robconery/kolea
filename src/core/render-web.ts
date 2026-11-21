@@ -25,15 +25,17 @@ import { escapeHtml, mergeFields } from './text.ts'
  */
 
 /** What a merge tag renders as with no recipient behind it. */
-function neutral(field: string): string {
+function neutral(field: string, fallback?: unknown): string {
+  const written = typeof fallback === 'string' && fallback.trim() ? fallback.trim() : undefined
   switch (field) {
     case 'name':
     case 'first_name':
-      return 'there'
+      return written ?? 'there'
     // `email`, `link` and anything else are per-person by definition. Rendering
-    // a placeholder would be worse than rendering nothing.
+    // a placeholder would be worse than rendering nothing. A fallback the
+    // writer chose is not a placeholder, though — it is the copy for "nobody".
     default:
-      return ''
+      return written ?? ''
   }
 }
 
@@ -126,7 +128,7 @@ function renderNode(node: DocNode): string {
     }
 
     case 'mergeTag':
-      return escapeHtml(neutral(String(node.attrs?.field ?? '')))
+      return escapeHtml(neutral(String(node.attrs?.field ?? ''), node.attrs?.fallback))
 
     case 'table':
       // The wrapper is what keeps a wide table from pushing the whole page
@@ -239,7 +241,7 @@ export function postPlainText(body: PostBody): string {
 
 function docText(node: DocNode): string {
   if (node.type === 'text') return node.text ?? ''
-  if (node.type === 'mergeTag') return neutral(String(node.attrs?.field ?? ''))
+  if (node.type === 'mergeTag') return neutral(String(node.attrs?.field ?? ''), node.attrs?.fallback)
   if (node.type === 'hardBreak') return ' '
   const inner = (node.content ?? []).map(docText).join('')
   return BLOCKS.has(node.type ?? '') ? `${inner} ` : inner

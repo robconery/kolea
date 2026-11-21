@@ -11,6 +11,7 @@ import {
   resolveSegment,
   updateSegment,
 } from '../../core/segments.ts'
+import { FIELD_OPS, checkConditions, listFields } from '../../core/fields.ts'
 import type { SegmentRule } from '../../db/schema.ts'
 import { subscribers, tags } from '../../db/schema.ts'
 import { type Ctx, clampLimit, defineTool, fail, ok } from '../kit.ts'
@@ -28,11 +29,31 @@ const RULE = z.object({
   exclude_tag_ids: z.array(z.number().int()).optional(),
   joined_after: z.string().optional().describe('ISO date — subscribers created after this'),
   joined_before: z.string().optional().describe('ISO date'),
+  fields: z
+    .array(
+      z.object({
+        key: z.string().describe('A custom field key — see kolea://merge-tags'),
+        op: z
+          .enum(FIELD_OPS)
+          .describe(
+            'text: equals, not_equals, contains, is_set, is_not_set. number/date: equals, not_equals, greater_than (over / after), less_than (under / before), is_set, is_not_set. boolean: equals, is_set, is_not_set.',
+          ),
+        value: z
+          .union([z.string(), z.number(), z.boolean()])
+          .optional()
+          .describe('Omit for is_set / is_not_set. Dates as YYYY-MM-DD.'),
+      }),
+    )
+    .optional()
+    .describe('Custom field conditions. All must hold. not_equals includes people with no value.'),
 })
 
 type RuleInput = z.output<typeof RULE>
 
-function toRule(input: RuleInput): { ok: true; rule: SegmentRule } | { ok: false; reason: string } {
+async function toRule(
+  ctx: Ctx,
+  input: RuleInput,
+): Promise<{ ok: true; rule: SegmentRule } | { ok: false; reason: string }> {
   const rule: SegmentRule = {}
   if (input.match) rule.match = input.match
   if (input.include_tag_ids?.length) rule.includeTagIds = input.include_tag_ids
@@ -48,12 +69,22 @@ function toRule(input: RuleInput): { ok: true; rule: SegmentRule } | { ok: false
     rule[key] = ms
   }
 
+  if (input.fields?.length) {
+    // Typed against the live definitions: the type comes from the field, never the call.
+    const checked = await checkConditions(ctx.db, input.fields)
+    if (!checked.ok) return { ok: false, reason: checked.errors.join('; ') }
+    rule.conditions = checked.conditions
+  }
+
   return { ok: true, rule }
 }
 
 export function registerSegments(server: McpServer, ctx: Ctx): void {
   /** Rules store tag ids; a plain-English description needs the names. */
   const allTags = () => ctx.db.select().from(tags).orderBy(asc(tags.name)).all()
+  /** Plain-English needs the field labels too. */
+  const describe = async (rule: SegmentRule) =>
+    describeRule(rule, await allTags(), [], await listFields(ctx.db))
 
   defineTool(
     server,
@@ -67,6 +98,7 @@ export function registerSegments(server: McpServer, ctx: Ctx): void {
     async () => {
       const segs = await listSegments(ctx.db)
       const names = await allTags()
+      const defs = await listFields(ctx.db)
       const out = []
       for (const s of segs) {
         out.push({
@@ -74,7 +106,7 @@ export function registerSegments(server: McpServer, ctx: Ctx): void {
           slug: s.slug,
           name: s.name,
           rule: s.rule,
-          describes: describeRule(s.rule ?? {}, names),
+          describes: describeRule(s.rule ?? {}, names, [], defs),
           size: await countSegment(ctx.db, s.rule ?? {}),
         })
       }
@@ -96,7 +128,7 @@ export function registerSegments(server: McpServer, ctx: Ctx): void {
       if (!seg) return fail('No such segment.')
       return ok({
         ...seg,
-        describes: describeRule(seg.rule ?? {}, await allTags()),
+        describes: await describe(seg.rule ?? {}),
         size: await countSegment(ctx.db, seg.rule ?? {}),
       })
     },
@@ -116,7 +148,7 @@ export function registerSegments(server: McpServer, ctx: Ctx): void {
       annotations: { readOnlyHint: true },
     },
     async (args) => {
-      const parsed = toRule(args.rule)
+      const parsed = await toRule(ctx, args.rule)
       if (!parsed.ok) return fail(parsed.reason)
 
       // `countSegment` is one query over the whole rule; `resolveSegment` is
@@ -139,7 +171,7 @@ export function registerSegments(server: McpServer, ctx: Ctx): void {
 
       return ok({
         size,
-        describes: describeRule(parsed.rule, await allTags()),
+        describes: await describe(parsed.rule),
         rule: parsed.rule,
         sample,
       })
@@ -155,7 +187,7 @@ export function registerSegments(server: McpServer, ctx: Ctx): void {
       inputSchema: z.object({ name: z.string().min(1), rule: RULE }),
     },
     async ({ name, rule }) => {
-      const parsed = toRule(rule)
+      const parsed = await toRule(ctx, rule)
       if (!parsed.ok) return fail(parsed.reason)
       return ok({ id: await createSegment(ctx.db, name, parsed.rule) })
     },
@@ -180,7 +212,7 @@ export function registerSegments(server: McpServer, ctx: Ctx): void {
 
       let next = seg.rule ?? {}
       if (rule) {
-        const parsed = toRule(rule)
+        const parsed = await toRule(ctx, rule)
         if (!parsed.ok) return fail(parsed.reason)
         next = parsed.rule
       }

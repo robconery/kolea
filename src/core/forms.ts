@@ -9,6 +9,7 @@ import { normalizeEmail, slugify } from './ids.ts'
 import { docIsEmpty } from './render-doc.ts'
 import { dispatch } from './sending.ts'
 import { enroll } from './sequences.ts'
+import { updateFieldValues } from './fields.ts'
 import { upsertSubscriber } from './subscribers.ts'
 
 // ───────────────────────────────────────────────── reading
@@ -287,6 +288,13 @@ export interface SubmitInput {
   name?: string | null
   /** Honeypot. Any value at all means a bot filled a field a human can't see. */
   trap?: string | null
+  /**
+   * Everything else the form posted. Only keys that name a custom field are
+   * kept (allowlisted by definition); unknown keys are ignored, values that
+   * don't fit their type are dropped, and a blank never clears a stored value —
+   * a signup should not fail, or erase anything, over an optional extra.
+   */
+  fields?: Record<string, unknown>
 }
 
 export type SubmitStatus =
@@ -431,6 +439,10 @@ export async function submitForm(
   })
   if (outcome === 'invalid' || !id) {
     return { status: 'invalid_email', message: 'That email address looks wrong.' }
+  }
+
+  if (input.fields && Object.keys(input.fields).length) {
+    await updateFieldValues(db, id, input.fields, { unknown: 'ignore', blank: 'ignore' })
   }
 
   // ⭐ "How they got in", recorded against the form itself rather than inferred

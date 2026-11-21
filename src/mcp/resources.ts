@@ -1,4 +1,5 @@
 import type { McpServer } from '@modelcontextprotocol/server'
+import { listFields } from '../core/fields.ts'
 import type { Ctx } from './kit.ts'
 
 /**
@@ -81,13 +82,18 @@ not a log line: \`mcp_calls\`, \`sync_runs\`, \`events\`, \`messages.suppressed_
 
 const MERGE_TAGS = `# Merge tags
 
-Supported in both a subject line and a body:
+Supported in a body (and in the subject of purchase mail):
 
 | Tag | Renders |
 |---|---|
 | \`{{name}}\` | The subscriber's name, or "there" when unknown |
 | \`{{first_name}}\` | First word of their name, or "there" |
 | \`{{email}}\` | Their address |
+
+Plus every **custom field**, by its key — listed below. A field the reader has no value for
+renders its fallback, else nothing.
+
+A fallback follows a bar: \`{{first_name|friend}}\`, \`{{plan|the free plan}}\`.
 
 Anything else is **not substituted**. An unknown \`{{plan_name}}\` is delivered to the reader
 verbatim, braces and all — it does not error, and it does not blank out.
@@ -96,6 +102,14 @@ verbatim, braces and all — it does not error, and it does not blank out.
 thing between a typo and a subscriber reading "Your {{plan_name}} plan". Check the preflight
 output before sending, every time.
 `
+
+/** The fixed text plus this list's custom fields, read live. */
+function mergeTagsDoc(fields: { key: string; label: string; type: string }[]): string {
+  const rows = fields.length
+    ? fields.map((f) => `| \`{{${f.key}}}\` | ${f.label} (${f.type}) |`).join('\n')
+    : '_No custom fields yet. Create them on the Custom fields screen._'
+  return `${MERGE_TAGS}\n## Custom fields\n\n${fields.length ? '| Tag | Field |\n|---|---|\n' : ''}${rows}\n\nThe same keys are what a segment rule's \`fields\` conditions and subscriber_upsert's \`fields\` take.\n`
+}
 
 export function registerResources(server: McpServer, ctx: Ctx): void {
   server.registerResource(
@@ -115,10 +129,14 @@ export function registerResources(server: McpServer, ctx: Ctx): void {
     'kolea://merge-tags',
     {
       title: 'Merge tags',
-      description: 'Which {{tags}} the email renderer understands.',
+      description: 'Which {{tags}} the email renderer understands, including this list’s custom fields and their types.',
       mimeType: 'text/markdown',
     },
-    async (uri) => ({ contents: [{ uri: uri.href, mimeType: 'text/markdown', text: MERGE_TAGS }] }),
+    async (uri) => ({
+      contents: [
+        { uri: uri.href, mimeType: 'text/markdown', text: mergeTagsDoc(await listFields(ctx.db)) },
+      ],
+    }),
   )
 
   server.registerResource(

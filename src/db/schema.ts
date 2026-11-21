@@ -57,6 +57,8 @@ export const subscribers = sqliteTable(
     })
       .notNull()
       .default('active'),
+    // Custom field values, keyed by `custom_fields.key` and typed by it. Only
+    // `core/fields.ts` writes here, and only keys a definition names.
     attributes: text('attributes', { mode: 'json' })
       .notNull()
       .$type<Record<string, unknown>>()
@@ -103,6 +105,81 @@ export const subscriberTags = sqliteTable(
   // Pure junction: compound PK, no surrogate id.
   (t) => [primaryKey({ columns: [t.subscriberId, t.tagId] })],
 )
+
+// ─────────────────────────────────────────────────────────── custom fields
+
+/**
+ * The types a custom field can hold. Each decides how a value is stored inside
+ * `subscribers.attributes` and how a segment compares it: text as trimmed text,
+ * numbers as JSON numbers, dates as `YYYY-MM-DD` text (which sorts correctly as
+ * text, so `>` means "after"), booleans as JSON `true`/`false`. See
+ * `core/fields.ts`, the one place that casts.
+ */
+export const FIELD_TYPES = ['text', 'number', 'date', 'boolean'] as const
+export type FieldType = (typeof FIELD_TYPES)[number]
+
+/**
+ * A named, typed field a subscriber can carry (Kōlea SPEC 7.2).
+ *
+ * ⚠️ This table holds the *definitions* only. Values stay where they always
+ * were, in `subscribers.attributes`, keyed by `key`. A values table was the
+ * other choice, and it would cost a join per condition in every segment count
+ * and a row per person per field on import — against D1's 1,000-query cap and
+ * single-threaded writes, for no rule it makes enforceable that this doesn't.
+ * The definition is what makes the blob trustworthy: nothing writes a key into
+ * `attributes` unless a row here names it (`castFieldValues` refuses unknown
+ * keys), and a segment's json path is only ever built from a key that passed
+ * `FIELD_KEY` — see `core/segments.ts`.
+ *
+ * `key` never changes after creation. Segment rules and merge tags (`{{plan}}`)
+ * refer to it, and a rename that rewrote it would silently turn a stored rule
+ * into one that matches nobody — or, for `is not set`, everybody. Renaming
+ * changes `label`. Deleting is refused while a saved segment or an unsent
+ * broadcast still asks about the key, for the same reason.
+ */
+export const customFields = sqliteTable(
+  'custom_fields',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    /** `^[a-z][a-z0-9_]{0,62}$`. Doubles as the merge tag and the CSV header. */
+    key: text('key').notNull(),
+    label: text('label').notNull(),
+    type: text('type', { enum: FIELD_TYPES }).notNull().default('text'),
+    createdAt: ts('created_at').notNull(),
+  },
+  (t) => [uniqueIndex('custom_fields_key_key').on(t.key)],
+)
+
+export type CustomField = typeof customFields.$inferSelect
+
+/** Comparisons a segment can make against a custom field (Kōlea SPEC 7.5). */
+export const FIELD_OPS = [
+  'equals',
+  'not_equals',
+  'contains',
+  'greater_than',
+  'less_than',
+  'is_set',
+  'is_not_set',
+] as const
+export type FieldOp = (typeof FIELD_OPS)[number]
+
+/**
+ * One custom-field test inside a segment rule.
+ *
+ * `type` is copied in from the definition when the rule is saved, never taken
+ * from input, so a stored rule is self-contained: a broadcast's frozen copy
+ * still compiles the same way even if the field is later deleted. `value` is
+ * already cast — a number for number fields, `YYYY-MM-DD` for dates, a boolean
+ * for booleans, text for text and for every `contains`. Absent for `is_set` /
+ * `is_not_set`.
+ */
+export interface FieldCondition {
+  key: string
+  type: FieldType
+  op: FieldOp
+  value?: string | number | boolean
+}
 
 // ─────────────────────────────────────────────────────────── segments
 
@@ -153,6 +230,14 @@ export interface SegmentRule {
    * be true.
    */
   confidentPurchasesOnly?: boolean
+
+  /**
+   * Custom-field tests, all of which must hold (AND). Validated against
+   * `custom_fields` on save by `checkConditions`; compiled into the same WHERE
+   * as everything above by `ruleFilters`, which fails closed (matches nobody)
+   * on anything it cannot compile safely.
+   */
+  conditions?: FieldCondition[]
 }
 
 export const segments = sqliteTable(
