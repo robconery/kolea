@@ -28,6 +28,7 @@ import { help } from './web/admin-help.tsx'
 import { mail } from './web/admin-mail.tsx'
 import { sequenceTemplatesAdmin } from './web/admin-sequence-templates.tsx'
 import { aiAdmin } from './web/admin-ai.ts'
+import { agentsAdmin } from './web/admin-agents.tsx'
 import { store } from './web/admin-store.tsx'
 import { tagging } from './web/admin-tags.tsx'
 import { siteAdmin } from './web/admin-site.tsx'
@@ -130,6 +131,8 @@ app.route('/', purchaseMailAdmin)
 app.route('/', campaignsAdmin)
 app.route('/', conversionsAdmin)
 app.route('/', goalsAdmin)
+// API keys and the agent switches. `/settings/agents`, beside `admin`'s `/settings`.
+app.route('/', agentsAdmin)
 app.route('/', help)
 app.route('/', seed)
 

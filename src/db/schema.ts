@@ -1230,8 +1230,14 @@ export const apiKeys = sqliteTable(
      * reaches MCP, which can rewrite the whole mailer — so it defaults to the
      * weaker one. A key minted before this column existed stays `send`, which is
      * the safe reading of "we don't know what this was for".
+     *
+     * `read` is for the REST API to come (Kōlea SPEC 20.1): it reads, and it can
+     * neither send nor reach MCP. MCP stays `admin`-only rather than filtering
+     * its tools by scope, because one gate at the door is a gate that cannot be
+     * forgotten on the 104th tool. Widening the enum is not a migration: SQLite
+     * stores it as text and the app is the only writer.
      */
-    scope: text('scope', { enum: ['send', 'admin'] })
+    scope: text('scope', { enum: ['send', 'read', 'admin'] })
       .notNull()
       .default('send'),
     createdAt: ts('created_at').notNull(),

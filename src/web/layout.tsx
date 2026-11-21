@@ -942,6 +942,8 @@ const ICONS: Record<string, string> = {
   /* A pulse. The list either has one or it doesn't. */
   anhl: 'M3.8 12.4h3.1l2-4.6 2.7 9 2.5-6.3 1.6 1.9h4.5',
   set: 'M4.4 8h9.2M17.6 8h2M4.4 16h2.2M10.6 16h9M15.4 5.6v4.8M8.2 13.6v4.8',
+  /* A key: what an agent or another app holds instead of a login. */
+  agents: 'M8.4 15.6a3.6 3.6 0 1 0 0-7.2 3.6 3.6 0 0 0 0 7.2ZM12 12h8.2M17.4 12v2.6M20.2 12v2',
   help: 'M12 3.8a8.2 8.2 0 1 0 0 16.4 8.2 8.2 0 0 0 0-16.4Zm-2.4 5.5a2.5 2.5 0 1 1 3.3 2.4c-.6.2-.9.8-.9 1.4v.6m0 2.5v.1',
 }
 
@@ -1016,6 +1018,8 @@ const NAV: ({ grp: string } | { href: string; key: string; label: string })[] = 
   { href: '/themes', key: 'theme', label: 'Themes' },
   { href: '/consent', key: 'cons', label: 'Consent' },
   { href: '/settings', key: 'set', label: 'Settings' },
+  // Who may reach the mailer without a browser, and what agents may do.
+  { href: '/settings/agents', key: 'agents', label: 'Agents & keys' },
   { href: '/help', key: 'help', label: 'Help' },
 ]
 

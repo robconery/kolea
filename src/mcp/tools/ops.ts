@@ -1,7 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/server'
 import { and, count, desc, eq, gte, lt } from 'drizzle-orm'
 import * as z from 'zod/v4'
-import { createApiKey, listApiKeys, revokeApiKey } from '../../core/api-keys.ts'
+import { KEY_SCOPES, listApiKeys, mintApiKey, revokeApiKey } from '../../core/api-keys.ts'
 import { revenueTotals } from '../../core/sales.ts'
 import {
   broadcasts,
@@ -238,19 +238,20 @@ export function registerOps(server: McpServer, ctx: Ctx): void {
     'apikey_create',
     {
       description:
-        "Mint an API key. The token is shown exactly once and never stored — only its hash is. Scope 'send' reaches the transactional endpoint only; 'admin' also reaches this MCP server, so it can do everything you can.",
+        "Mint an API key. The token is shown exactly once and never stored — only its hash is. Scope 'send' reaches the transactional endpoint only; 'read' is for reading and can neither send nor reach this server; 'admin' also reaches this MCP server, so it can do everything you can.",
       inputSchema: z.object({
         name: z.string().min(1),
-        scope: z.enum(['send', 'admin']).optional().describe("Defaults to 'send'"),
+        scope: z.enum(KEY_SCOPES).optional().describe("Defaults to 'send'"),
       }),
       annotations: { destructiveHint: true },
     },
     async ({ name, scope }) => {
-      const { id, token } = await createApiKey(ctx.db, name, scope ?? 'send')
+      const minted = await mintApiKey(ctx.db, { name, scope })
+      if (!minted.ok) return failed(minted)
       return ok({
-        id,
-        scope: scope ?? 'send',
-        token,
+        id: minted.id,
+        scope: minted.scope,
+        token: minted.token,
         warning: 'This token is shown once. It cannot be recovered — only revoked.',
       })
     },

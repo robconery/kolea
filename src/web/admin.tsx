@@ -648,8 +648,7 @@ admin.get('/settings', async (c) => {
        "idempotency_key":"order-1234"}'`}
           </pre>
           <p class="faint">
-            Create a key with <span class="mono">bun run seed</span> output, or via the API keys
-            table. ⚠️ TODO: key management UI.
+            Make a <span class="mono">send</span> key on <a href="/settings/agents">Agents &amp; keys</a>.
           </p>
         </div>
       </div>
