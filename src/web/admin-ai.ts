@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { cleanUp } from '../core/ai/cleanup.ts'
-import { aiConfigured, spend } from '../core/ai/openrouter.ts'
+import { aiReady, spend } from '../core/ai/openrouter.ts'
 import { suggestSubjects } from '../core/ai/subjects.ts'
 import { getDb } from '../db/index.ts'
 import type { DocNode } from '../db/schema.ts'
@@ -20,7 +20,9 @@ import type { Env } from '../types.ts'
 export const aiAdmin = new Hono<{ Bindings: Env }>()
 
 aiAdmin.use('/ai/*', async (c, next) => {
-  if (!aiConfigured(c.env)) return c.json({ ok: false, reason: 'AI is not set up. Add OPENROUTER_KEY.' }, 404)
+  if (!(await aiReady(c.env, getDb(c.env)))) {
+    return c.json({ ok: false, reason: 'AI is not set up. Choose a key on Settings, AI.' }, 404)
+  }
   if (!(c.req.header('content-type') ?? '').includes('application/json')) {
     return c.json({ ok: false, reason: 'Expected JSON.' }, 415)
   }

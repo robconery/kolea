@@ -14,7 +14,8 @@ import { setPostTags, tagSlug, tagsForPost } from '../core/post-tags.ts'
 import { clearFeatureImage, postPath, publishPost, setFeatureImage, setPostFeatured, unpublishPost } from '../core/posts.ts'
 import { postPlainText } from '../core/render-web.ts'
 import { type Photo, searchPhotos, triggerDownload, unsplashConfigured } from '../core/unsplash.ts'
-import { aiConfigured, modelFor, modelLabel } from '../core/ai/openrouter.ts'
+import { modelLabel } from '../core/ai/openrouter.ts'
+import { resolveAi } from '../core/ai/settings.ts'
 import { countSegment, describeRule, listSegments } from '../core/segments.ts'
 import {
   type SequenceTrigger,
@@ -66,12 +67,13 @@ import {
 
 export const mail = new Hono<{ Bindings: Env }>()
 
-/** The composer's AI buttons, or null to hide them when OpenRouter isn't set up. */
-function composeAi(env: Env, context: string): ComposeAi | null {
-  if (!aiConfigured(env)) return null
+/** The composer's AI buttons, or null to hide them when no key is set up to pay. */
+async function composeAi(env: Env, db: Db, context: string): Promise<ComposeAi | null> {
+  const ai = await resolveAi(env, db)
+  if (!ai.ready) return null
   return {
-    subjectModel: modelLabel(modelFor(env, 'subject')),
-    cleanupModel: modelLabel(modelFor(env, 'cleanup')),
+    subjectModel: modelLabel(ai.models.subject),
+    cleanupModel: modelLabel(ai.models.cleanup),
     context,
   }
 }
@@ -239,7 +241,7 @@ mail.get('/broadcasts/new', async (c) => {
       action="/broadcasts"
       autosave="/broadcasts/autosave"
       slop
-      ai={composeAi(c.env, 'a newsletter broadcast to the list')}
+      ai={await composeAi(c.env, db, 'a newsletter broadcast to the list')}
       preview="/broadcasts/preview"
       back="/broadcasts"
       backLabel="Back to broadcasts"
@@ -466,7 +468,7 @@ mail.get('/broadcasts/:id', async (c) => {
         action={`/broadcasts/${id}/edit`}
         autosave="/broadcasts/autosave"
         slop
-        ai={composeAi(c.env, 'a newsletter broadcast to the list')}
+        ai={await composeAi(c.env, db, 'a newsletter broadcast to the list')}
         preview="/broadcasts/preview"
         recordId={id}
         back="/broadcasts"
@@ -588,7 +590,7 @@ mail.get('/broadcasts/:id', async (c) => {
       nav="bc"
       action={revising ? `/broadcasts/${id}/revise` : `/broadcasts/${id}`}
       slop
-      ai={revising ? composeAi(c.env, 'a newsletter broadcast that has already been sent') : null}
+      ai={revising ? await composeAi(c.env, db, 'a newsletter broadcast that has already been sent') : null}
       recordId={id}
       back="/broadcasts"
       backLabel="Back to broadcasts"
@@ -2144,7 +2146,7 @@ mail.get('/sequences/:id/steps/new', async (c) => {
       action={`/sequences/${id}/steps`}
       autosave={`/sequences/${id}/steps/autosave`}
       slop
-      ai={composeAi(c.env, `step ${count.length + 1} of the automated sequence "${seq.name}"`)}
+      ai={await composeAi(c.env, db, `step ${count.length + 1} of the automated sequence "${seq.name}"`)}
       preview={`/sequences/${id}/steps/preview`}
       back={`/sequences/${id}`}
       backLabel="Back to sequence"
@@ -2278,7 +2280,7 @@ mail.get('/sequences/:id/steps/:stepId', async (c) => {
       action={`/sequences/${id}/steps/${stepId}`}
       autosave={`/sequences/${id}/steps/autosave`}
       slop
-      ai={composeAi(c.env, `step ${step.position} of the automated sequence "${seq?.name ?? ''}"`)}
+      ai={await composeAi(c.env, db, `step ${step.position} of the automated sequence "${seq?.name ?? ''}"`)}
       preview={`/sequences/${id}/steps/preview`}
       recordId={stepId}
       back={`/sequences/${id}`}

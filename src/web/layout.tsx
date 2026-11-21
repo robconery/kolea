@@ -1027,6 +1027,8 @@ const NAV: ({ grp: string } | { href: string; key: string; label: string })[] = 
   { href: '/themes', key: 'theme', label: 'Themes' },
   { href: '/consent', key: 'cons', label: 'Consent' },
   { href: '/settings', key: 'set', label: 'Settings' },
+  // Which key pays for the writing helpers and which model each uses.
+  { href: '/settings/ai', key: 'aiset', label: 'AI' },
   { href: '/help', key: 'help', label: 'Help' },
 ]
 
