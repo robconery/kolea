@@ -1,3 +1,4 @@
+import { ResendDomains } from './resend-domains.ts'
 import type { EmailProvider, OutgoingEmail, ProviderEvent, SendResult } from './types.ts'
 
 const ENDPOINT = 'https://api.resend.com/emails'
@@ -17,8 +18,11 @@ const EVENT_MAP: Record<string, ProviderEvent['type']> = {
 
 export class ResendProvider implements EmailProvider {
   readonly name = 'resend'
+  readonly domains: ResendDomains
 
-  constructor(private readonly apiKey: string) {}
+  constructor(private readonly apiKey: string) {
+    this.domains = new ResendDomains(apiKey)
+  }
 
   private headers(): Record<string, string> {
     return {

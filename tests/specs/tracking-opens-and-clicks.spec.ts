@@ -13,11 +13,24 @@ import { events, messages } from '../../src/db/schema.ts'
 import { aBroadcast, aPerson } from '../support/factories.ts'
 import { createWorld, type World } from '../support/world.ts'
 
-/** One person, one sent broadcast, one message to point events at. */
+/**
+ * How a person's mail client fetches the pixel: a real agent, a while after the
+ * mail went out. Without both, the hit reads as a machine
+ * (`machine-opens.spec.ts`) and is left out of the counts this file is about.
+ */
+const READER: RequestInit = {
+  headers: {
+    'user-agent':
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)',
+  },
+}
+
+/** One person, one sent broadcast, one message to point events at — sent an hour ago. */
 async function oneSentMessage(world: World) {
   await aPerson(world, { email: 'reader@example.test' })
   const broadcastId = await aBroadcast(world, { subject: 'This week' })
   await startBroadcast(world.env, world.db, broadcastId)
+  await world.db.update(messages).set({ sentAt: new Date(Date.now() - 60 * 60 * 1000) })
   const message = (await world.db.select().from(messages).get())!
   return { broadcastId, message }
 }
@@ -35,7 +48,7 @@ describe('Feature: tracking what a mailing did', () => {
       world = createWorld()
       const sent = await oneSentMessage(world)
       message = sent.message
-      response = await world.fetch(`/t/open/${message.id}.gif`)
+      response = await world.fetch(`/t/open/${message.id}.gif`, READER)
     })
 
     it('answers the mail client', () => {
@@ -95,7 +108,7 @@ describe('Feature: tracking what a mailing did', () => {
     beforeAll(async () => {
       world = createWorld()
       const sent = await oneSentMessage(world)
-      await world.fetch(`/t/open/${sent.message.id}.gif`)
+      await world.fetch(`/t/open/${sent.message.id}.gif`, READER)
       await world.fetch(
         `/t/click/${sent.message.id}?u=${encodeURIComponent('https://example.com')}`,
         { redirect: 'manual' },
@@ -127,8 +140,8 @@ describe('Feature: tracking what a mailing did', () => {
     beforeAll(async () => {
       world = createWorld()
       const sent = await oneSentMessage(world)
-      await world.fetch(`/t/open/${sent.message.id}.gif`)
-      await world.fetch(`/t/open/${sent.message.id}.gif`)
+      await world.fetch(`/t/open/${sent.message.id}.gif`, READER)
+      await world.fetch(`/t/open/${sent.message.id}.gif`, READER)
       stats = await broadcastStats(world.db, sent.broadcastId)
     })
 

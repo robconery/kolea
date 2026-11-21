@@ -228,8 +228,7 @@ Then set the matching vars in the same block:
   "FROM_EMAIL": "you@example.com",
   "FROM_NAME": "Your Name",
   "PUBLIC_URL": "https://list.example.com",   // ⚠️ must match the route exactly
-  "DEV_AUTH_BYPASS": "false",
-  "MCP_ALLOW_SEND": "false"
+  "DEV_AUTH_BYPASS": "false"
 }
 ```
 
@@ -470,9 +469,12 @@ nothing is there), then an `admin`-scoped bearer key (transactional `send` keys
 cannot reach it), then per-tool guards. Every call lands in `mcp_calls`,
 including the refusals.
 
-**`MCP_ALLOW_SEND` is `"false"` in production.** MCP can read and draft
-everything but cannot put mail on the wire until you deliberately flip that var
-and redeploy. Flipping it back is the instant off-switch. On top of that,
+**Agent sending is off until you turn it on** on System > Agents & keys. MCP
+can read and draft everything but cannot put mail on the wire until you flip
+that switch; flipping it back is the instant off-switch, no redeploy. A second
+switch there gates sensitive changes (deleting people, lifting suppressions,
+imports, minting keys), also off. Setting the var `MCP_ALLOW_SEND` to
+`"false"` forces sending off whatever the switch says. On top of that,
 irreversible sends need a preflight token: single-use, 10-minute expiry, and
 invalidated by any edit to the content or the audience.
 
@@ -558,7 +560,7 @@ later.
 | Admin console loads with no login prompt | You deployed without `--env production`, so `DEV_AUTH_BYPASS` is still `true`. **Redeploy immediately.** |
 | MCP endpoint returns 404 | `MCP_PATH_SECRET` unset, or the path segment doesn't match. A 404 on a wrong secret is intentional. |
 | MCP returns 401 | The key is missing, revoked, or `send`-scoped. MCP needs `admin`. |
-| An MCP send tool refuses | Expected. Either `MCP_ALLOW_SEND` is `"false"`, or you need a fresh preflight token — any edit to content or audience invalidates the old one. |
+| An MCP send tool refuses | Expected. Either agent sending is off on Agents & keys (or forced off by `MCP_ALLOW_SEND="false"`), or you need a fresh preflight token — any edit to content or audience invalidates the old one. |
 | Broadcast stuck in `sending` | Normal for a large list. It materializes across cron ticks under D1's 1,000-query cap, resuming from `cursor_subscriber_id`. Check `messages` count is rising. |
 | `bun run dev` stops with "isn't there yet" | A fresh clone has no `wrangler.jsonc` and no local database. Run `bun run setup` once. |
 | `bun run setup` complains about Node or Bun | Wrangler needs Node 22 or newer, and Kōlea's scripts need Bun 1.2 or newer. Update, then run it again. |

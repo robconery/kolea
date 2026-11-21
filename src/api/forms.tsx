@@ -1,5 +1,12 @@
 import { Hono } from 'hono'
-import { getFormBySlug, recordFormView, submitForm } from '../core/forms.ts'
+import {
+  confirmPath,
+  confirmSignup,
+  getFormBySlug,
+  lookupConfirmation,
+  recordFormView,
+  submitForm,
+} from '../core/forms.ts'
 import { getDb } from '../db/index.ts'
 import type { Env } from '../types.ts'
 import { PublicLayout } from '../web/layout.tsx'
@@ -101,6 +108,10 @@ formsApi.post('/f/:slug', async (c) => {
   let email = ''
   let name: string | null = null
   let trap: string | null = null
+  // Everything else posted, handed to core, which keeps only defined custom
+  // field keys. A nested `fields` object (JSON) is read the same as top-level keys.
+  const fields: Record<string, unknown> = Object.create(null)
+  const RESERVED = new Set(['email', 'name', TRAP_FIELD])
 
   if (contentType.includes('application/json')) {
     try {
@@ -108,6 +119,10 @@ formsApi.post('/f/:slug', async (c) => {
       email = String(body.email ?? '')
       name = body.name ? String(body.name) : null
       trap = body[TRAP_FIELD] ? String(body[TRAP_FIELD]) : null
+      for (const [k, v] of Object.entries(body)) if (!RESERVED.has(k) && k !== 'fields') fields[k] = v
+      if (body.fields && typeof body.fields === 'object' && !Array.isArray(body.fields)) {
+        Object.assign(fields, body.fields)
+      }
     } catch {
       return c.json({ error: 'body must be JSON' }, 400, CORS)
     }
@@ -116,9 +131,15 @@ formsApi.post('/f/:slug', async (c) => {
     email = String(form.get('email') ?? '')
     name = String(form.get('name') ?? '') || null
     trap = String(form.get(TRAP_FIELD) ?? '') || null
+    for (const [k, v] of form.entries()) {
+      if (RESERVED.has(k) || typeof v !== 'string') continue
+      // `fields[plan]` and plain `plan` both work, so a hand-written form can use either.
+      const m = /^fields\[(.+)\]$/.exec(k)
+      fields[m ? m[1]! : k] = v
+    }
   }
 
-  const result = await submitForm(c.env, db, slug, { email, name, trap })
+  const result = await submitForm(c.env, db, slug, { email, name, trap, fields })
 
   if (result.status === 'unknown_form') {
     return wantsJson ? c.json({ error: 'unknown form' }, 404, CORS) : c.notFound()
@@ -133,6 +154,9 @@ formsApi.post('/f/:slug', async (c) => {
           {
             ok: true,
             message: result.message,
+            // A double opt-in form: only the confirmation went out. Everything
+            // else waits for the click.
+            pending: result.pending ?? false,
             enrolled: result.enrolled ?? false,
             // The link itself is never in this response — it travels by email
             // only, so the address has to be real and working to get the file.
@@ -167,3 +191,85 @@ formsApi.post('/f/:slug', async (c) => {
     </PublicLayout>,
   )
 })
+
+// ───────────────────────────────────────────────── double opt-in
+
+/**
+ * The link in a confirmation mail. Public and unauthenticated: the token in the
+ * path is the whole credential. It lives under `/f`, so the Access Bypass app
+ * that already covers form posts covers it too.
+ *
+ * ⚠️ The GET changes nothing. Corporate mail scanners and link previewers fetch
+ * every URL in a message, so a GET that confirmed would let a stranger's typed
+ * address confirm itself. The page shows one button, and only its POST confirms.
+ */
+formsApi.get('/f/:slug/confirm/:token', async (c) => {
+  const slug = c.req.param('slug')
+  const token = c.req.param('token')
+  const found = await lookupConfirmation(getDb(c.env), slug, token)
+
+  if (found.state === 'unknown') return c.html(<UnknownLink />, 404)
+  if (found.state === 'expired') return c.html(<ExpiredLink slug={slug} />, 410)
+  if (found.state === 'confirmed') {
+    return c.html(
+      <PublicLayout title="Confirmed">
+        <h1>You're already confirmed</h1>
+        <p>Nothing more to do. Thanks!</p>
+      </PublicLayout>,
+    )
+  }
+
+  return c.html(
+    <PublicLayout title="Confirm your subscription">
+      <h1>One click to confirm</h1>
+      <p>You asked to subscribe through “{found.formName}”. Confirm and you're in.</p>
+      <form method="post" action={confirmPath(slug, token)}>
+        <button class="btn primary">Yes, subscribe me</button>
+      </form>
+    </PublicLayout>,
+  )
+})
+
+formsApi.post('/f/:slug/confirm/:token', async (c) => {
+  const slug = c.req.param('slug')
+  const result = await confirmSignup(c.env, getDb(c.env), slug, c.req.param('token'))
+
+  if (result.status === 'unknown') return c.html(<UnknownLink />, 404)
+  if (result.status === 'expired') return c.html(<ExpiredLink slug={slug} />, 410)
+
+  // Somebody who left the newsletter and confirms is asking for this form's
+  // file and series, not to be put back on the newsletter. Only they can do
+  // that, from their preferences, so say so and hand them the way there.
+  const offList = result.subscriberStatus === 'unsubscribed' && result.unsubToken
+  if (!offList && result.redirectUrl) return c.redirect(result.redirectUrl, 303)
+
+  return c.html(
+    <PublicLayout title="Confirmed">
+      <h1>{result.status === 'already' ? "You're already confirmed" : "You're confirmed"}</h1>
+      <p>{result.message}</p>
+      {offList ? (
+        <p>
+          You're still off the newsletter, as you asked earlier. To get it again,{' '}
+          <a href={`/p/${result.unsubToken}?scope=broadcast`}>change your preferences</a>.
+        </p>
+      ) : null}
+    </PublicLayout>,
+  )
+})
+
+const UnknownLink = () => (
+  <PublicLayout title="Link not found">
+    <h1>That link doesn't work</h1>
+    <p>It may have been mistyped. Nothing has changed.</p>
+  </PublicLayout>
+)
+
+const ExpiredLink = ({ slug }: { slug: string }) => (
+  <PublicLayout title="Link expired">
+    <h1>That link has expired</h1>
+    <p>
+      Confirmation links last seven days. <a href={`/f/${slug}`}>Sign up again</a> and we'll send a
+      fresh one.
+    </p>
+  </PublicLayout>
+)

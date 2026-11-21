@@ -199,7 +199,9 @@ export const helpers: Record<string, Helper> = {
     }
     if (h.slug !== undefined) checks.push(str(ctx.slug) === str(h.slug))
     if (h.id !== undefined) checks.push(str(ctx.id) === str(h.id))
-    if (h.visibility !== undefined) checks.push(list(h.visibility).includes('public'))
+    if (h.visibility !== undefined) {
+      checks.push(list(h.visibility).includes(str((ctx as { visibility?: string }).visibility) || 'public'))
+    }
     if (h.any !== undefined) checks.push(list(h.any).some((f) => !isEmpty(fieldPath(c.context, f))))
     if (h.all !== undefined) checks.push(list(h.all).every((f) => !isEmpty(fieldPath(c.context, f))))
     const position = h.number ?? h.index

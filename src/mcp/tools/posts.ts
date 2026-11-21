@@ -1,9 +1,20 @@
 import type { McpServer } from '@modelcontextprotocol/server'
 import * as z from 'zod/v4'
-import { setPostTags, tagsForPost, tagsForPosts } from '../../core/post-tags.ts'
-import { getPostBySlug, listPosts, postPath, postStatus, publishPost, setPostFeatured, unpublishPost } from '../../core/posts.ts'
+import { getPostTagBySlug, listTopics, setPostTags, tagsForPost, tagsForPosts, updateTopic } from '../../core/post-tags.ts'
+import {
+  getPostBySlug,
+  listPosts,
+  postPath,
+  postStatus,
+  publishPost,
+  setPostFeatured,
+  unpublishPost,
+  updatePostMeta,
+} from '../../core/posts.ts'
+import { listMembers } from '../../core/members.ts'
+import { ACCESS_LEVELS } from '../../core/member-access.ts'
 import { renderPostHtml } from '../../core/render-web.ts'
-import { type Ctx, defineTool, fail, ok } from '../kit.ts'
+import { type Ctx, defineTool, fail, failed, ok } from '../kit.ts'
 
 /**
  * The public site's tools.
@@ -48,6 +59,7 @@ export function registerPosts(server: McpServer, ctx: Ctx): void {
           excerpt: p.excerpt,
           featureImage: p.featureImage,
           publishedAt: p.publishedAt,
+          accessLevel: p.accessLevel,
         })),
       })
     },
@@ -75,6 +87,7 @@ export function registerPosts(server: McpServer, ctx: Ctx): void {
         excerpt: post.excerpt,
         featureImage: post.featureImage,
         publishedAt: post.publishedAt,
+        accessLevel: post.accessLevel,
         html: renderPostHtml({ json: post.bodyJson, md: post.bodyMd }),
       })
     },
@@ -86,7 +99,7 @@ export function registerPosts(server: McpServer, ctx: Ctx): void {
     'post_publish',
     {
       description:
-        'Put one broadcast on the public site. Sends nothing and changes nothing about the send — it sets a publish date, a slug and the card metadata. Re-running on a live post updates the metadata and keeps the original publish date. Omit slug/excerpt/featureImage to derive them from the subject and body. `tags` are post topics (never subscriber tags): the first is the primary topic and the first URL segment, so ["AI"] publishes at /ai/<slug>. Omit to leave the current topics alone; pass [] to clear them. `featured: true` puts it in the front page\'s "Start here" (newest first).',
+        'Put one broadcast on the public site. Sends nothing and changes nothing about the send — it sets a publish date, a slug and the card metadata. Re-running on a live post updates the metadata and keeps the original publish date. Omit slug/excerpt/featureImage to derive them from the subject and body. `tags` are post topics (never subscriber tags): the first is the primary topic and the first URL segment, so ["AI"] publishes at /ai/<slug>. Omit to leave the current topics alone; pass [] to clear them. `featured: true` puts it in the front page\'s "Start here" (newest first). `accessLevel` sets who can read it on the web: "public" (anyone), "members" (signed-in readers) or "premium" (paying members); omit to keep the current level. Gated posts show everyone else a teaser built from the hand-written excerpt only, and the level never changes who the mail goes to.',
       inputSchema: z.object({
         broadcastId: z.number().int(),
         slug: z.string().optional(),
@@ -94,14 +107,15 @@ export function registerPosts(server: McpServer, ctx: Ctx): void {
         featureImage: z.string().optional(),
         tags: z.array(z.string()).optional(),
         featured: z.boolean().optional(),
+        accessLevel: z.enum(ACCESS_LEVELS).optional(),
       }),
     },
-    async ({ broadcastId, slug, excerpt, featureImage, tags, featured }) => {
+    async ({ broadcastId, slug, excerpt, featureImage, tags, featured, accessLevel }) => {
       if (!ctx.env.SITE_URL) return offline()
       const before = await postStatus(ctx.db, broadcastId)
       if (!before) return fail('No such broadcast.')
 
-      const post = await publishPost(ctx.db, broadcastId, { slug, excerpt, featureImage })
+      const post = await publishPost(ctx.db, broadcastId, { slug, excerpt, featureImage, accessLevel })
       const topics = tags ? await setPostTags(ctx.db, broadcastId, tags) : await tagsForPost(ctx.db, broadcastId)
       if (featured !== undefined) await setPostFeatured(ctx.db, broadcastId, featured)
       return ok({
@@ -112,7 +126,60 @@ export function registerPosts(server: McpServer, ctx: Ctx): void {
         slug: post.slug,
         excerpt: post.excerpt,
         publishedAt: post.publishedAt,
+        accessLevel: post.accessLevel,
       })
+    },
+  )
+
+  defineTool(
+    server,
+    ctx,
+    'post_update',
+    {
+      description:
+        "Change a post's publishing fields WITHOUT changing whether it is live: slug, excerpt, featureImage, tags (post topics, never subscriber tags; the first is the primary topic and the first URL segment) and featured. Works on a published post or on a broadcast that is not up yet. Only the fields you pass change; pass \"\" to clear excerpt or featureImage, [] to clear tags. A changed slug or primary topic changes the URL, and the old one keeps redirecting. Sends nothing. To put a post on the site, use post_publish.",
+      inputSchema: z.object({
+        broadcastId: z.number().int(),
+        slug: z.string().min(1).optional(),
+        excerpt: z.string().optional(),
+        featureImage: z.string().optional(),
+        tags: z.array(z.string()).optional(),
+        featured: z.boolean().optional(),
+      }),
+      annotations: { idempotentHint: true },
+    },
+    async ({ broadcastId, slug, excerpt, featureImage, tags, featured }) => {
+      const before = await postStatus(ctx.db, broadcastId)
+      if (!before) return fail('No such broadcast.')
+
+      await updatePostMeta(ctx.db, broadcastId, { slug, excerpt, featureImage })
+      const topics = tags ? await setPostTags(ctx.db, broadcastId, tags) : await tagsForPost(ctx.db, broadcastId)
+      if (featured !== undefined) await setPostFeatured(ctx.db, broadcastId, featured)
+
+      const after = (await postStatus(ctx.db, broadcastId))!
+      return ok({
+        updated: true,
+        published: Boolean(after.publishedAt),
+        slug: after.slug,
+        tags: topics.map((t) => t.name),
+        url: after.publishedAt && after.slug ? `${origin()}${postPath(after.slug, topics[0]?.slug)}` : null,
+      })
+    },
+  )
+
+  defineTool(
+    server,
+    ctx,
+    'member_list',
+    {
+      description:
+        'Readers who have signed in on the public site or paid for Premium, newest first: their newsletter status (a separate fact from membership), Premium status (active, past_due, canceled) with price and interval, and the post whose call to action converted them. Read-only; Premium state is written only by the Stripe webhook.',
+      inputSchema: z.object({ limit: z.number().int().min(1).max(200).optional() }),
+      annotations: { readOnlyHint: true },
+    },
+    async ({ limit }) => {
+      const members = await listMembers(ctx.db, limit ?? 50)
+      return ok({ members })
     },
   )
 
@@ -132,6 +199,62 @@ export function registerPosts(server: McpServer, ctx: Ctx): void {
 
       await unpublishPost(ctx.db, broadcastId)
       return ok({ published: false, slug: before.slug, subject: before.subject })
+    },
+  )
+
+  defineTool(
+    server,
+    ctx,
+    'topic_list',
+    {
+      description:
+        "The public site's topics (post tags — never subscriber tags), by name: slug (the URL segment, which never changes), description, whether it has a shelf on the front page, and how many posts carry it (`published` live, `tagged` in all). A topic shows on the site only once it has a published post.",
+      inputSchema: z.object({}),
+      annotations: { readOnlyHint: true },
+    },
+    async () =>
+      ok(
+        (await listTopics(ctx.db)).map((t) => ({
+          id: t.id,
+          slug: t.slug,
+          name: t.name,
+          description: t.description,
+          showOnHome: t.showOnHome,
+          published: t.published,
+          tagged: t.tagged,
+          url: t.published ? `${origin()}/${t.slug}` : null,
+        })),
+      ),
+  )
+
+  defineTool(
+    server,
+    ctx,
+    'topic_update',
+    {
+      description:
+        "Edit a topic, found by slug (or id): its display name, its description (shown on the topic's archive page and as its meta description; \"\" clears it), and show_on_home (a shelf of its newest posts on the front page). The slug never changes, so no URL breaks. Topics are created by tagging posts (post_publish / post_update). Sends nothing.",
+      inputSchema: z.object({
+        slug: z.string().optional(),
+        id: z.number().int().optional(),
+        name: z.string().min(1).max(80).optional(),
+        description: z.string().max(500).optional(),
+        show_on_home: z.boolean().optional(),
+      }),
+      annotations: { idempotentHint: true },
+    },
+    async ({ slug, id, name, description, show_on_home }) => {
+      const topicId = id ?? (slug ? (await getPostTagBySlug(ctx.db, slug))?.id : undefined)
+      if (!topicId) return fail('No such topic.', 'List them with topic_list.')
+      const r = await updateTopic(ctx.db, topicId, { name, description, showOnHome: show_on_home })
+      if (!r.ok) return failed(r)
+      return ok({
+        id: r.topic.id,
+        slug: r.topic.slug,
+        name: r.topic.name,
+        description: r.topic.description,
+        showOnHome: r.topic.showOnHome,
+      })
     },
   )
 }

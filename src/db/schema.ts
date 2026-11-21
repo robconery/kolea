@@ -57,6 +57,8 @@ export const subscribers = sqliteTable(
     })
       .notNull()
       .default('active'),
+    // Custom field values, keyed by `custom_fields.key` and typed by it. Only
+    // `core/fields.ts` writes here, and only keys a definition names.
     attributes: text('attributes', { mode: 'json' })
       .notNull()
       .$type<Record<string, unknown>>()
@@ -103,6 +105,81 @@ export const subscriberTags = sqliteTable(
   // Pure junction: compound PK, no surrogate id.
   (t) => [primaryKey({ columns: [t.subscriberId, t.tagId] })],
 )
+
+// ─────────────────────────────────────────────────────────── custom fields
+
+/**
+ * The types a custom field can hold. Each decides how a value is stored inside
+ * `subscribers.attributes` and how a segment compares it: text as trimmed text,
+ * numbers as JSON numbers, dates as `YYYY-MM-DD` text (which sorts correctly as
+ * text, so `>` means "after"), booleans as JSON `true`/`false`. See
+ * `core/fields.ts`, the one place that casts.
+ */
+export const FIELD_TYPES = ['text', 'number', 'date', 'boolean'] as const
+export type FieldType = (typeof FIELD_TYPES)[number]
+
+/**
+ * A named, typed field a subscriber can carry.
+ *
+ * ⚠️ This table holds the *definitions* only. Values stay where they always
+ * were, in `subscribers.attributes`, keyed by `key`. A values table was the
+ * other choice, and it would cost a join per condition in every segment count
+ * and a row per person per field on import — against D1's 1,000-query cap and
+ * single-threaded writes, for no rule it makes enforceable that this doesn't.
+ * The definition is what makes the blob trustworthy: nothing writes a key into
+ * `attributes` unless a row here names it (`castFieldValues` refuses unknown
+ * keys), and a segment's json path is only ever built from a key that passed
+ * `FIELD_KEY` — see `core/segments.ts`.
+ *
+ * `key` never changes after creation. Segment rules and merge tags (`{{plan}}`)
+ * refer to it, and a rename that rewrote it would silently turn a stored rule
+ * into one that matches nobody — or, for `is not set`, everybody. Renaming
+ * changes `label`. Deleting is refused while a saved segment or an unsent
+ * broadcast still asks about the key, for the same reason.
+ */
+export const customFields = sqliteTable(
+  'custom_fields',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    /** `^[a-z][a-z0-9_]{0,62}$`. Doubles as the merge tag and the CSV header. */
+    key: text('key').notNull(),
+    label: text('label').notNull(),
+    type: text('type', { enum: FIELD_TYPES }).notNull().default('text'),
+    createdAt: ts('created_at').notNull(),
+  },
+  (t) => [uniqueIndex('custom_fields_key_key').on(t.key)],
+)
+
+export type CustomField = typeof customFields.$inferSelect
+
+/** Comparisons a segment can make against a custom field. */
+export const FIELD_OPS = [
+  'equals',
+  'not_equals',
+  'contains',
+  'greater_than',
+  'less_than',
+  'is_set',
+  'is_not_set',
+] as const
+export type FieldOp = (typeof FIELD_OPS)[number]
+
+/**
+ * One custom-field test inside a segment rule.
+ *
+ * `type` is copied in from the definition when the rule is saved, never taken
+ * from input, so a stored rule is self-contained: a broadcast's frozen copy
+ * still compiles the same way even if the field is later deleted. `value` is
+ * already cast — a number for number fields, `YYYY-MM-DD` for dates, a boolean
+ * for booleans, text for text and for every `contains`. Absent for `is_set` /
+ * `is_not_set`.
+ */
+export interface FieldCondition {
+  key: string
+  type: FieldType
+  op: FieldOp
+  value?: string | number | boolean
+}
 
 // ─────────────────────────────────────────────────────────── segments
 
@@ -153,6 +230,14 @@ export interface SegmentRule {
    * be true.
    */
   confidentPurchasesOnly?: boolean
+
+  /**
+   * Custom-field tests, all of which must hold (AND). Validated against
+   * `custom_fields` on save by `checkConditions`; compiled into the same WHERE
+   * as everything above by `ruleFilters`, which fails closed (matches nobody)
+   * on anything it cannot compile safely.
+   */
+  conditions?: FieldCondition[]
 }
 
 export const segments = sqliteTable(
@@ -231,6 +316,26 @@ export const broadcasts = sqliteTable(
     // large broadcast writes its `messages` rows across several cron ticks, resuming
     // from the last subscriber id it reached.
     cursorSubscriberId: integer('cursor_subscriber_id').notNull().default(0),
+    /**
+     * ⭐ The audience, frozen at dispatch (SPEC 3.5). The highest subscriber id
+     * the segment matched at the `scheduled → sending` transition; every later
+     * page of the cursored walk stops at it. Without it, the cursor walks into
+     * people who joined *during* the send, and a broadcast keeps finding new
+     * readers for as long as it takes to finish.
+     *
+     * An id bound is enough on its own because `subscribers.id` is
+     * AUTOINCREMENT — SQLite never reuses one, so nobody created after the
+     * freeze can land at or below it. Only *who existed* is frozen: the rule is
+     * still evaluated live on each page, under the bound, so a person tagged into the segment mid-send who already
+     * existed below the bound is reached, and anyone who left (status, tag,
+     * suppression) is not. Consent is re-checked again at the provider call.
+     *
+     * Null means not yet frozen: a draft, a scheduled send, an imported
+     * archive row, or a send that was already in flight when this column
+     * arrived (frozen at its next page — the closest thing to "at dispatch"
+     * left for it). 0 means the audience was empty.
+     */
+    audienceUpperId: integer('audience_upper_id'),
     createdAt: ts('created_at').notNull(),
 
     // ── Imported engagement totals (Kit history).
@@ -255,6 +360,12 @@ export const broadcasts = sqliteTable(
     importedUnsubscribed: integer('imported_unsubscribed'),
     /** Provenance, so an imported figure can always be labelled as one in the UI. */
     importedFrom: text('imported_from'),
+    /** The other tool's own id for this mail (a Kit broadcast id, a Ghost post id).
+        Set by the background importers (`core/importers/`) so a second run of the
+        same import finds it and copies nothing twice. Null for everything written
+        here, and for the one-off Kit archive, which predates it — the importer
+        also matches on subject + sent_at for exactly that reason. */
+    importedSourceId: text('imported_source_id'),
 
     // ── Published to the web (the public site at `SITE_URL`).
     //
@@ -286,6 +397,21 @@ export const broadcasts = sqliteTable(
     publishOnSend: integer('publish_on_send', { mode: 'boolean' }).notNull().default(true),
     /** Shown in the front page's "Start here", newest first. Web only; mail never reads it. */
     featured: integer('featured', { mode: 'boolean' }).notNull().default(false),
+    /**
+     * Who may read this post on the web: `public` (anyone),
+     * `members` (a reader signed in on the site) or `premium` (a member with a
+     * live `member_subscriptions` row). Web only — the send path never reads it:
+     * a broadcast still goes to its segment, in full, whatever this says.
+     *
+     * A gated level changes what publishing derives (`core/posts.ts`): the
+     * excerpt and the featured image are never taken from a gated body, and
+     * `search_text` holds the subject and hand-written excerpt only, so no list,
+     * feed, search hit or og tag can carry the body out. What a reader actually
+     * sees is one pure decision in `core/member-access.ts`.
+     */
+    accessLevel: text('access_level', { enum: ['public', 'members', 'premium'] })
+      .notNull()
+      .default('public'),
     /** URL identity. Unique across published and unpublished alike, so taking a
         post down never frees its slug for something else to claim. */
     slug: text('slug'),
@@ -329,6 +455,9 @@ export const broadcasts = sqliteTable(
     // SQLite treats NULLs as distinct in a unique index, so every unpublished
     // broadcast keeps a null slug without colliding with the others.
     uniqueIndex('broadcasts_slug_key').on(t.slug),
+    // One local row per mail in the other tool. NULLs are distinct, so every
+    // broadcast written here (source id null) is untouched by this.
+    uniqueIndex('broadcasts_imported_source_key').on(t.importedFrom, t.importedSourceId),
     // The public index page's only query: newest published first.
     index('broadcasts_published_at_idx').on(t.publishedAt),
   ],
@@ -361,6 +490,21 @@ export const sequences = sqliteTable(
     nextSequenceId: integer('next_sequence_id').references((): AnySQLiteColumn => sequences.id, {
       onDelete: 'set null',
     }),
+    /**
+     * The send-time window: minutes after local midnight in
+     * the operator's time zone (`site_settings.time_zone`), start inclusive, end
+     * exclusive. A start after the end wraps past midnight (22:00–06:00).
+     *
+     * Both null means no window — a due step goes at the next minutely tick,
+     * which is how every sequence behaved before this existed. Both set or both
+     * null, never one, and never equal: `core/send-window.ts` checks that on
+     * every write, since SQLite cannot be told after the fact.
+     *
+     * A due step outside the window is not skipped: the tick moves the
+     * enrollment's `next_run_at` to the window's next opening and sends it then.
+     */
+    sendWindowStart: integer('send_window_start'),
+    sendWindowEnd: integer('send_window_end'),
     createdAt: ts('created_at').notNull(),
 
     // ── Imported engagement totals (Kit history). Same contract as
@@ -385,8 +529,14 @@ export const sequences = sqliteTable(
     importedUnsubscribed: integer('imported_unsubscribed'),
     /** Provenance, so an imported figure can always be labelled as one. */
     importedFrom: text('imported_from'),
+    /** The other tool's id for this sequence. Same contract as
+        `broadcasts.importedSourceId`. */
+    importedSourceId: text('imported_source_id'),
   },
-  (t) => [uniqueIndex('sequences_slug_key').on(t.slug)],
+  (t) => [
+    uniqueIndex('sequences_slug_key').on(t.slug),
+    uniqueIndex('sequences_imported_source_key').on(t.importedFrom, t.importedSourceId),
+  ],
 )
 
 export const sequenceSteps = sqliteTable(
@@ -672,6 +822,19 @@ export const forms = sqliteTable(
     deliveryBodyMd: text('delivery_body_md'),
     successMessage: text('success_message').notNull().default("You're subscribed. Thanks!"),
     isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
+    /**
+     * ⭐ Double opt-in. On, a submit creates (or leaves) the person as they are,
+     * sends one confirmation mail, and does NOTHING else that can start mail: no
+     * tags, no sequence, no reply, no campaign touch. All of that waits for the
+     * click on the link in `form_confirmations`, so a stranger typing somebody
+     * else's address into a public form can cause one throttled confirmation
+     * and nothing more.
+     *
+     * The column defaults to 0 so every form that existed before this shipped
+     * keeps behaving exactly as it did on the sites it is already embedded in.
+     * `createForm` defaults new forms to on.
+     */
+    doubleOptIn: integer('double_opt_in', { mode: 'boolean' }).notNull().default(false),
     // Observable in D1, because Workers logs are gone in a week.
     submitCount: integer('submit_count').notNull().default(0),
     lastSubmittedAt: ts('last_submitted_at'),
@@ -746,6 +909,52 @@ export const downloadGrants = sqliteTable(
     uniqueIndex('download_grants_token_key').on(t.token),
     uniqueIndex('download_grants_person_key').on(t.formId, t.subscriberId),
     index('download_grants_subscriber_idx').on(t.subscriberId),
+  ],
+)
+
+/**
+ * ⭐ One open request to confirm a double opt-in signup: the link in the
+ * confirmation mail is `/f/<slug>/confirm/<token>`.
+ *
+ * A row rather than an HMAC of (form, person), for the same reasons as
+ * `subscribers.unsub_token`: it needs no key in the Worker, it can expire, and
+ * it is the record of *when* somebody asked and *when* they confirmed — the
+ * consent provenance a signup is worth keeping.
+ *
+ * A re-submit while one is still open reuses it (same token, so every copy of
+ * the mail works) rather than minting another. Once confirmed or expired it is
+ * history, and a later submit opens a new row, so the old `confirmed_at` is
+ * never rewritten. How many mails a row may cause is not stored here: it is
+ * counted from `messages` (kind `confirmation`), which already records every one.
+ *
+ * Cascade on both sides: a confirmation for a deleted form or person answers
+ * no question, and the mail it caused is kept in `messages` anyway.
+ */
+export const formConfirmations = sqliteTable(
+  'form_confirmations',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    formId: integer('form_id')
+      .notNull()
+      .references(() => forms.id, { onDelete: 'cascade' }),
+    subscriberId: integer('subscriber_id')
+      .notNull()
+      .references(() => subscribers.id, { onDelete: 'cascade' }),
+    /** The unguessable half of the URL. Nothing else authenticates the click. */
+    token: text('token').notNull(),
+    status: text('status', { enum: ['pending', 'confirmed'] })
+      .notNull()
+      .default('pending'),
+    createdAt: ts('created_at').notNull(),
+    /** Seven days. After it the link shows "expired" and changes nothing. */
+    expiresAt: ts('expires_at').notNull(),
+    confirmedAt: ts('confirmed_at'),
+  },
+  (t) => [
+    uniqueIndex('form_confirmations_token_key').on(t.token),
+    // "Is there already an open one for this person on this form?" — every submit.
+    index('form_confirmations_person_idx').on(t.formId, t.subscriberId),
+    index('form_confirmations_subscriber_idx').on(t.subscriberId),
   ],
 )
 
@@ -984,6 +1193,50 @@ export const purchaseTemplates = sqliteTable(
   (t) => [uniqueIndex('purchase_templates_offer_slug_key').on(t.offerSlug)],
 )
 
+/**
+ * ⭐ A stored transactional mail: the receipt, the password reset, the "your
+ * export is ready" note another app sends through `POST /api/send` by naming
+ * `template: "<slug>"` and filling `{{variables}}`, instead of shipping the whole
+ * subject and body on every call.
+ *
+ * Not a purchase template and not a sequence template. Purchase mail is keyed by
+ * offer sku and sent by the operator on a sale; a sequence template is a recipe
+ * for building a sequence. This one is keyed by a slug a *caller* hard-codes.
+ *
+ * `slug` is set once, from the name (or given at create), and never follows a
+ * rename: another application's code has it baked in, and a rename that moved it
+ * would break that app's mail without either side noticing until a customer
+ * asked where their receipt went.
+ *
+ * The body is the composer's json/markdown pair, read the way every other body
+ * is (json wins). It is **copied onto the message, variables already filled,
+ * when a request is accepted** — so editing or deleting a template never
+ * rewrites what already went out (invariant 9). Deleting one is therefore
+ * allowed; the messages it produced keep their snapshot and `template_slug`.
+ *
+ * `is_active` is the off switch: a request naming an inactive template is
+ * refused (422) rather than sent, and the caller is told so. Never silently
+ * dropped — the refusal is the caller's to see and retry.
+ */
+export const transactionalTemplates = sqliteTable(
+  'transactional_templates',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    /** What `POST /api/send` names. Lowercase, dashes; set once, never renamed. */
+    slug: text('slug').notNull(),
+    /** What the operator calls it. Never shown to a recipient. */
+    name: text('name').notNull(),
+    /** May carry `{{variables}}`; filled as plain text at accept time. */
+    subject: text('subject').notNull(),
+    bodyJson: text('body_json', { mode: 'json' }).$type<DocNode | null>(),
+    bodyMd: text('body_md'),
+    isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
+    createdAt: ts('created_at').notNull(),
+    updatedAt: ts('updated_at'),
+  },
+  (t) => [uniqueIndex('transactional_templates_slug_key').on(t.slug)],
+)
+
 export const messages = sqliteTable(
   'messages',
   {
@@ -991,7 +1244,13 @@ export const messages = sqliteTable(
     subscriberId: integer('subscriber_id')
       .notNull()
       .references(() => subscribers.id, { onDelete: 'cascade' }),
-    kind: text('kind', { enum: ['broadcast', 'sequence', 'transactional', 'form'] }).notNull(),
+    // `confirmation` is a double opt-in confirmation (see `form_confirmations`):
+    // system mail with no footer and no tracking, like `transactional`, but
+    // blocked by ANY suppression rather than only a bounce or complaint. Nobody
+    // who asked for nothing at all gets mail because a stranger typed their address.
+    kind: text('kind', {
+      enum: ['broadcast', 'sequence', 'transactional', 'form', 'confirmation'],
+    }).notNull(),
     // nullable-fk: exactly one source per `kind`; transactional has none.
     broadcastId: integer('broadcast_id').references(() => broadcasts.id, { onDelete: 'cascade' }),
     /**
@@ -1003,8 +1262,8 @@ export const messages = sqliteTable(
      * `broadcast_id` (analytics, signal, pulse, campaigns, conversions…), and a
      * Kit-era broadcast only shows its imported totals while it has *no* message
      * rows at all. So a preview that set `broadcast_id` would add the operator to
-     * the audience, and previewing an imported broadcast would replace 13,000
-     * recipients with 1. Kept off `broadcast_id`, a preview can't touch a number.
+     * the audience, and previewing an imported broadcast would replace thousands
+     * of recipients with 1. Kept off `broadcast_id`, a preview can't touch a number.
      * It also keeps a cancelled broadcast from swallowing its own preview.
      *
      * No foreign key, deliberately: SQLite can only add one by ALTER without
@@ -1048,6 +1307,13 @@ export const messages = sqliteTable(
      * against `download_grants` because that token never expires.
      */
     extras: text('extras', { mode: 'json' }).$type<MergeExtras | null>(),
+    /**
+     * The transactional template a `POST /api/send` named, when it named one.
+     * A slug, not a foreign key, on purpose: deleting the template must leave
+     * the record of which template produced this mail (invariant 7), and the
+     * body itself is already snapshotted above, so nothing here is read back.
+     */
+    templateSlug: text('template_slug'),
     status: text('status', { enum: ['queued', 'sent', 'failed', 'suppressed'] })
       .notNull()
       .default('queued'),
@@ -1057,6 +1323,16 @@ export const messages = sqliteTable(
     providerMessageId: text('provider_message_id'),
     idempotencyKey: text('idempotency_key'),
     error: text('error'),
+    /**
+     * ⭐ The send claim: set by `sendMessages` in ONE conditional update
+     * (`status = 'queued'` and no live claim) before the provider is called,
+     * cleared again when a retryable failure puts the row back in line. Two
+     * consumers holding the same queued row (a queue redelivery, or a stranded
+     * broadcast row handed over again) can therefore never both send it: only
+     * the one whose update matched goes on. A claim older than
+     * `CLAIM_LEASE_MS` belongs to a consumer that died, and is free again.
+     */
+    claimedAt: ts('claimed_at'),
     createdAt: ts('created_at').notNull(),
     sentAt: ts('sent_at'),
   },
@@ -1066,6 +1342,15 @@ export const messages = sqliteTable(
     // "Has this sale already been thanked?" — asked before every purchase send.
     index('messages_sale_idx').on(t.saleId),
     index('messages_status_idx').on(t.status),
+    // "How much mail went out from this template?" — asked before a delete.
+    // Partial, because all but a sliver of messages name no template.
+    index('messages_template_slug_idx')
+      .on(t.templateSlug)
+      .where(sql`template_slug is not null`),
+    // The event log (`core/event-log.ts`) walks recent mail newest-first to find
+    // failures, holds and single sends, and stops at a page. Without this every
+    // Logs page would scan the whole table, which is every mail ever sent.
+    index('messages_created_idx').on(t.createdAt),
     uniqueIndex('messages_idempotency_key')
       .on(t.idempotencyKey)
       .where(sql`idempotency_key is not null`),
@@ -1090,6 +1375,22 @@ export const events = sqliteTable(
     meta: text('meta', { mode: 'json' }).notNull().$type<Record<string, unknown>>().default({}),
     // Idempotency for replayed provider webhooks (SPEC 5.3).
     dedupeKey: text('dedupe_key'),
+    /**
+     * ⭐ A machine fetched this, not a reader: Apple Mail Privacy Protection,
+     * an image prefetcher, a corporate link scanner. Decided once, at the pixel,
+     * by `core/machine-opens.ts`; the reason and the user agent ride in `meta`.
+     *
+     * A column, not a meta key, because every reader count in the app filters on
+     * it — `json_extract` in twenty WHERE clauses is twenty chances to forget one.
+     * The row is still written: "how much of my open rate is Apple?" is a fair
+     * question, and dropping the hit would make it unanswerable.
+     *
+     * Only ever true for `open`. A click is a person deciding to go somewhere and
+     * stays untouched; provider events (webhooks) carry no request to judge, and
+     * history imported before this column existed defaults to false — it is what
+     * the counts always said.
+     */
+    machine: integer('machine', { mode: 'boolean' }).notNull().default(false),
   },
   (t) => [
     index('events_message_type_idx').on(t.messageId, t.type),
@@ -1206,18 +1507,78 @@ export const activities = sqliteTable(
 
 // Global kill switch. Keyed by ADDRESS, not subscriber: bounced and transactional
 // addresses may have no subscriber row at all.
+//
+// `pruned` is what a list clean-up leaves behind for a deleted person who had
+// left the newsletter (`subscribers.status = 'unsubscribed'`). Their row is
+// gone, so without this a re-import would bring them back `active` and the next
+// broadcast would reach somebody who said no. A deleted bounced or complained
+// person keeps `hard_bounce` / `complaint` instead, so transactional mail stays
+// blocked for them too. Text enum, no CHECK: adding a value needs no migration.
 export const suppressions = sqliteTable(
   'suppressions',
   {
     id: integer('id').primaryKey({ autoIncrement: true }),
     email: text('email').notNull(),
     reason: text('reason', {
-      enum: ['unsubscribed_all', 'hard_bounce', 'complaint', 'manual'],
+      enum: ['unsubscribed_all', 'hard_bounce', 'complaint', 'manual', 'pruned'],
     }).notNull(),
     createdAt: ts('created_at').notNull(),
   },
   (t) => [uniqueIndex('suppressions_email_key').on(t.email)],
 )
+
+/**
+ * ⭐ A list clean-up: groups of people picked for deletion, the exact people
+ * they held when the operator planned it, and how far the delete has got.
+ *
+ * The record of a destructive act, so it is a row and not a log line: the
+ * people are gone afterwards and this is the only trace of how many, from
+ * which groups, and when.
+ *
+ * `subscriber_ids` is a snapshot taken at plan time, so the backup CSV and the
+ * delete cover exactly the same people. The delete still re-checks every id
+ * against the group rules as it goes (a person who opened a mail, bought
+ * something or has mail queued since the plan is skipped, never deleted), and
+ * `skipped` counts them. It pages through the snapshot with `position` because
+ * D1 allows 1,000 queries per invocation; a big clean-up finishes over several
+ * presses of Continue, and `status` stays `running` until it does.
+ *
+ * Ids rather than addresses: the snapshot should not outlive the people as a
+ * list of email addresses. Once the run is done the ids point at nothing.
+ */
+export const listPrunes = sqliteTable(
+  'list_prunes',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    groups: text('groups', { mode: 'json' }).notNull().$type<string[]>(),
+    /** The "no open or click in N days" window for `never_engaged`. */
+    inactiveDays: integer('inactive_days').notNull(),
+    subscriberIds: text('subscriber_ids', { mode: 'json' }).notNull().$type<number[]>(),
+    /** People per group at plan time: what the confirm step names. */
+    planned: text('planned', { mode: 'json' }).notNull().$type<Record<string, number>>(),
+    total: integer('total').notNull(),
+    /** Index into `subscriber_ids` the next page starts at. */
+    position: integer('position').notNull().default(0),
+    deleted: integer('deleted').notNull().default(0),
+    /** People per group actually deleted. */
+    deletedByGroup: text('deleted_by_group', { mode: 'json' })
+      .notNull()
+      .$type<Record<string, number>>()
+      .default({}),
+    /** In the snapshot but no longer prunable when their page came round. */
+    skipped: integer('skipped').notNull().default(0),
+    status: text('status', { enum: ['planned', 'running', 'done', 'cancelled'] })
+      .notNull()
+      .default('planned'),
+    backedUpAt: ts('backed_up_at'),
+    createdAt: ts('created_at').notNull(),
+    confirmedAt: ts('confirmed_at'),
+    finishedAt: ts('finished_at'),
+  },
+  (t) => [index('list_prunes_created_idx').on(t.createdAt)],
+)
+
+export type ListPrune = typeof listPrunes.$inferSelect
 
 export const apiKeys = sqliteTable(
   'api_keys',
@@ -1230,8 +1591,14 @@ export const apiKeys = sqliteTable(
      * reaches MCP, which can rewrite the whole mailer — so it defaults to the
      * weaker one. A key minted before this column existed stays `send`, which is
      * the safe reading of "we don't know what this was for".
+     *
+     * `read` is for the REST API (`/api/v1`): its GETs, and nothing else — it
+     * can neither write, send, nor reach MCP. MCP stays `admin`-only rather than
+     * filtering its tools by scope, because one gate at the door is a gate that cannot be
+     * forgotten on the 104th tool. Widening the enum is not a migration: SQLite
+     * stores it as text and the app is the only writer.
      */
-    scope: text('scope', { enum: ['send', 'admin'] })
+    scope: text('scope', { enum: ['send', 'read', 'admin'] })
       .notNull()
       .default('send'),
     createdAt: ts('created_at').notNull(),
@@ -1239,6 +1606,29 @@ export const apiKeys = sqliteTable(
     revokedAt: ts('revoked_at'),
   },
   (t) => [uniqueIndex('api_keys_token_hash_key').on(t.tokenHash)],
+)
+
+/**
+ * Requests per key per clock minute, for the REST API's rate limit (120 a
+ * minute per key). One row per key per minute, bumped with an upsert, so a
+ * check costs one write and never a scan of the audit trail.
+ *
+ * `minute` is epoch-ms / 60,000 — an integer bucket, not a timestamp, because
+ * the only question asked of it is "this minute or not". A key's older buckets
+ * are deleted the first time it is used in a new minute, so the table holds at
+ * most one row per key that was used recently. Cascades with the key: a deleted
+ * key has nothing left to count.
+ */
+export const apiRateWindows = sqliteTable(
+  'api_rate_windows',
+  {
+    apiKeyId: integer('api_key_id')
+      .notNull()
+      .references(() => apiKeys.id, { onDelete: 'cascade' }),
+    minute: integer('minute').notNull(),
+    count: integer('count').notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.apiKeyId, t.minute] })],
 )
 
 // ─────────────────────────────────────────────────────────── MCP
@@ -1256,6 +1646,12 @@ export const mcpCalls = sqliteTable(
     tool: text('tool').notNull(),
     // nullable-fk: a call rejected before the key resolved has no key to point at.
     apiKeyId: integer('api_key_id').references(() => apiKeys.id, { onDelete: 'set null' }),
+    // nullable-fk: set instead of `api_key_id` when the caller came in by OAuth
+    // (`/mcp`, an app the operator approved). A call carries one or the other,
+    // never both — they are two doors into the same tools.
+    oauthGrantId: integer('oauth_grant_id').references((): AnySQLiteColumn => oauthGrants.id, {
+      onDelete: 'set null',
+    }),
     args: text('args', { mode: 'json' }).notNull().$type<Record<string, unknown>>().default({}),
     outcome: text('outcome', { enum: ['ok', 'error', 'denied'] }).notNull(),
     /** First line of the failure, when there was one. Not the whole stack. */
@@ -1265,6 +1661,134 @@ export const mcpCalls = sqliteTable(
   },
   (t) => [index('mcp_calls_created_idx').on(t.createdAt), index('mcp_calls_tool_idx').on(t.tool)],
 )
+
+/**
+ * ⭐ What an agent may do that cannot be taken back. One row (`id = 1`), the
+ * same single-row shape as `site_settings`; no row reads as both switches off.
+ *
+ * - `allowSend`: MCP tools may put mail on the wire. Replaces flipping
+ *   `MCP_ALLOW_SEND` and redeploying; the var survives only as a hard override
+ *   that can force sending off (`core/agents.ts`).
+ * - `allowSensitive`: MCP tools may make changes that carry data out or put
+ *   mail in front of someone who left (delete, suppression removal, import,
+ *   minting keys). An agent reads text strangers wrote, and that text can
+ *   steer it.
+ *
+ * Both default off. No MCP tool writes this table: the switch exists to stop
+ * the agent that holds a key, so only the operator's screen flips it.
+ */
+export const agentSettings = sqliteTable('agent_settings', {
+  id: integer('id').primaryKey(),
+  allowSend: integer('allow_send', { mode: 'boolean' }).notNull().default(false),
+  allowSensitive: integer('allow_sensitive', { mode: 'boolean' }).notNull().default(false),
+  updatedAt: ts('updated_at').notNull(),
+})
+
+export type AgentSettings = typeof agentSettings.$inferSelect
+
+/**
+ * ⭐ The audit trail for people and keys: every write to the admin console and
+ * every call to the key-authenticated API (`/api/send`, `/api/sales`), refusals
+ * included. Agents are already recorded, call by call, in `mcp_calls` above; the
+ * Logs page reads both, so an agent's change is not written twice.
+ *
+ * Written by ONE middleware (`web/audit.ts`) around the mutating routes, not by
+ * each handler: a trail that depends on every new handler remembering to call
+ * it is a trail with holes in it. The outcome is read off the response (2xx/3xx
+ * ok, 4xx or a `kind=warn` redirect denied, 5xx error), and a route can mark a
+ * refusal explicitly where its response does not show one.
+ *
+ * Request bodies stay out. `summary` holds a few allowlisted fields (name,
+ * subject, status…) so "what did they change" is answerable; tokens, keys and
+ * passwords never reach it (see `summarize` in `core/audit.ts`).
+ *
+ * Not pruned: this is the record of who changed what, and "who sent that?" has
+ * to be answerable next quarter. One row per operator click is small.
+ */
+export const auditEntries = sqliteTable(
+  'audit_entries',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    at: ts('at').notNull(),
+    /** `agent` is never written here — agents live in `mcp_calls`. */
+    actorKind: text('actor_kind', { enum: ['operator', 'key'] }).notNull(),
+    /**
+     * The Cloudflare Access email for an operator (null if Access passed no
+     * email; `dev-bypass` under DEV_AUTH_BYPASS), or the key id as text. Text
+     * rather than an FK because an operator is not a row in this database.
+     */
+    actorId: text('actor_id'),
+    /** nullable-fk: set for key actors; a revoked or deleted key keeps its history. */
+    apiKeyId: integer('api_key_id').references(() => apiKeys.id, { onDelete: 'set null' }),
+    /** Method and route pattern, ids replaced: `POST /broadcasts/:id/send`. */
+    action: text('action').notNull(),
+    /** What it was done to, from the path: `broadcasts/12`. Null for collections. */
+    target: text('target'),
+    outcome: text('outcome', { enum: ['ok', 'denied', 'error'] }).notNull(),
+    /** Why it was refused or failed, one line. Never a stack. */
+    detail: text('detail'),
+    /** The HTTP status the caller got. 0 when the handler threw. */
+    status: integer('status').notNull().default(0),
+    summary: text('summary', { mode: 'json' }).notNull().$type<Record<string, string>>().default({}),
+    /**
+     * The operator's team role at the moment of the request (`team_members`),
+     * copied rather than joined: a role changes, and "an admin did this" has to
+     * stay true of the row after they are made a writer. `owner` under
+     * DEV_AUTH_BYPASS. Null for key actors, and for rows written before roles.
+     */
+    actorRole: text('actor_role', { enum: ['owner', 'admin', 'writer'] }),
+  },
+  (t) => [
+    index('audit_entries_at_idx').on(t.at),
+    index('audit_entries_outcome_idx').on(t.outcome, t.at),
+  ],
+)
+
+/**
+ * ⭐ The people who may use the console, and in which role. One install is one
+ * team.
+ *
+ * Identity is NOT here. Cloudflare Access signs people in (one-time codes,
+ * GitHub, Google, passkeys: whatever identity providers the Access app has) and
+ * `web/auth.ts` verifies its JWT. This table only says what a verified address
+ * may do once it is in. No passwords, codes or sessions live in this database.
+ *
+ * One row per address, ever (unique `email`, stored lowercased). The row's
+ * state is read from the stamps, not a status column, so it can't disagree with
+ * them:
+ *   invited  — `joined_at` null, `removed_at` null, `invited_at` within 7 days
+ *   expired  — the same, older than 7 days (the invitation lifetime)
+ *   member   — `joined_at` set, `removed_at` null
+ *   removed  — `removed_at` set. Kept, not deleted, so the audit trail's emails
+ *              still name somebody; inviting the address again revives the row.
+ *
+ * The first verified person to reach a console whose table is EMPTY becomes the
+ * owner (the upgrade path from single-operator installs: the operator Access
+ * already lets in is seeded on their next request). Once any row exists that
+ * door is shut for good, and the last owner can never be removed or demoted
+ * (`core/team.ts`), so an install always has someone who can manage it.
+ */
+export const teamMembers = sqliteTable(
+  'team_members',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    /** The Access-verified address, lowercased. The join key to the JWT. */
+    email: text('email').notNull(),
+    /** owner: everything · admin: all but managing owners · writer: drafts, posts, sequence steps. */
+    role: text('role', { enum: ['owner', 'admin', 'writer'] }).notNull(),
+    /** When the address was invited (or seeded, for the first owner). Re-inviting resets it. */
+    invitedAt: ts('invited_at').notNull(),
+    /** First request that came in under this address after the invitation. Null while invited. */
+    joinedAt: ts('joined_at'),
+    /** Taken off the team. They keep their history; Access may still let them reach a 403. */
+    removedAt: ts('removed_at'),
+    /** Who invited them, by Access email. Null for the seeded first owner. Text, like `audit_entries.actor_id`. */
+    invitedBy: text('invited_by'),
+  },
+  (t) => [uniqueIndex('team_members_email_idx').on(t.email)],
+)
+
+export type TeamMember = typeof teamMembers.$inferSelect
 
 /**
  * ⭐ The thing standing between a hallucinated tool call and eight thousand
@@ -1280,7 +1804,10 @@ export const preflightTokens = sqliteTable(
   {
     id: integer('id').primaryKey({ autoIncrement: true }),
     tokenHash: text('token_hash').notNull(),
-    kind: text('kind', { enum: ['broadcast_send', 'sequence_activate'] }).notNull(),
+    // TS-level enum only (no CHECK), so a new kind needs no migration.
+    kind: text('kind', {
+      enum: ['broadcast_send', 'broadcast_resume', 'sequence_activate', 'undelivered_send_again', 'form_resend_replies'],
+    }).notNull(),
     targetId: integer('target_id').notNull(),
     /** Hash of the previewed subject + body + audience rule. */
     digest: text('digest').notNull(),
@@ -1292,16 +1819,151 @@ export const preflightTokens = sqliteTable(
   (t) => [uniqueIndex('preflight_tokens_hash_key').on(t.tokenHash)],
 )
 
+// ─────────────────────────────────────────────────────────── MCP by OAuth
+
+/**
+ * Adding the mailer to Claude by pasting a URL (MCP authorization spec, OAuth
+ * 2.1). The Worker is both the resource server (`/mcp`) and its own
+ * authorization server; the operator approving on the consent page — behind
+ * Cloudflare Access — *is* the authentication. Rules: `core/oauth.ts`.
+ *
+ * A client that registered itself (RFC 7591). Public, no secret: anyone on the
+ * internet can register one, which is why a client is worth nothing until the
+ * operator approves it, and why the consent page shows `redirect_uris` — that
+ * is where the code goes.
+ */
+export const oauthClients = sqliteTable(
+  'oauth_clients',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    /** The opaque public id handed back by registration. Not a secret. */
+    clientId: text('client_id').notNull(),
+    /** Self-declared, so it is a claim, not an identity. Shown escaped, capped at 100. */
+    clientName: text('client_name').notNull(),
+    /**
+     * The exact URIs a code may be sent to: https, or http to loopback (RFC
+     * 8252), never a fragment. Matched exactly — no prefix, no wildcard — since
+     * a loose match is how codes get redirected to an attacker.
+     */
+    redirectUris: text('redirect_uris', { mode: 'json' }).notNull().$type<string[]>(),
+    createdAt: ts('created_at').notNull(),
+  },
+  (t) => [uniqueIndex('oauth_clients_client_id_key').on(t.clientId)],
+)
+
+/**
+ * ⭐ One approval: "this app may use the mailer". The row the operator sees on
+ * Connected apps and revokes; every token hangs off it, so revoking here kills
+ * the access token in hand *and* the refresh token that would mint the next.
+ *
+ * `access` defaults to `read`. An agent reads text strangers wrote (names, form
+ * answers), and that text can steer it, so changing anything is something the
+ * operator ticks on the consent page, never something a client asks its way into.
+ * `write` gets exactly what an admin key gets — the send switch, preflight and
+ * confirm guards still apply on top.
+ *
+ * Revoke, don't delete: `mcp_calls.oauth_grant_id` points here, and "what did
+ * that app do before I cut it off" has to resolve.
+ */
+export const oauthGrants = sqliteTable(
+  'oauth_grants',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    clientId: integer('client_id')
+      .notNull()
+      .references(() => oauthClients.id, { onDelete: 'cascade' }),
+    access: text('access', { enum: ['read', 'write'] })
+      .notNull()
+      .default('read'),
+    /** The redirect URI the approval was for — what the operator saw. */
+    redirectUri: text('redirect_uri').notNull(),
+    /** The Access identity that approved, when Access supplied one. Null under DEV bypass. */
+    approvedBy: text('approved_by'),
+    createdAt: ts('created_at').notNull(),
+    /** Bumped on every MCP call and every refresh. */
+    lastUsedAt: ts('last_used_at'),
+    revokedAt: ts('revoked_at'),
+  },
+  (t) => [index('oauth_grants_client_idx').on(t.clientId)],
+)
+
+/**
+ * A one-time authorization code. Hash only, two minutes, single use, bound to
+ * the client, the exact redirect URI and a PKCE S256 challenge. Redeeming one
+ * sets `used_at` (a conditional update, so two racing exchanges cannot both
+ * win) and `grant_id`; presenting it again revokes that grant (OAuth 2.1
+ * §4.1.3) — a replayed code means somebody else has it too.
+ *
+ * The grant does not exist until the code is redeemed: an approval nobody
+ * exchanged is not a connected app.
+ */
+export const oauthCodes = sqliteTable(
+  'oauth_codes',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    codeHash: text('code_hash').notNull(),
+    clientId: integer('client_id')
+      .notNull()
+      .references(() => oauthClients.id, { onDelete: 'cascade' }),
+    redirectUri: text('redirect_uri').notNull(),
+    /** base64url(SHA-256(verifier)), 43 chars. `plain` is never accepted. */
+    codeChallenge: text('code_challenge').notNull(),
+    access: text('access', { enum: ['read', 'write'] }).notNull(),
+    approvedBy: text('approved_by'),
+    expiresAt: ts('expires_at').notNull(),
+    usedAt: ts('used_at'),
+    // nullable-fk: null until the code is redeemed and the grant exists.
+    grantId: integer('grant_id').references(() => oauthGrants.id, { onDelete: 'cascade' }),
+    createdAt: ts('created_at').notNull(),
+  },
+  (t) => [uniqueIndex('oauth_codes_hash_key').on(t.codeHash)],
+)
+
+/**
+ * Bearer tokens, hash only. `access` lives an hour and is what `/mcp` accepts;
+ * `refresh` lives thirty days and is what the token endpoint accepts. Rotation:
+ * a refresh token is good once — using it sets `used_at` and issues a new pair.
+ * Presenting a used one again revokes the whole grant (OAuth 2.1 §4.3.1),
+ * because only a thief and the rightful client both hold the old one.
+ */
+export const oauthTokens = sqliteTable(
+  'oauth_tokens',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    grantId: integer('grant_id')
+      .notNull()
+      .references(() => oauthGrants.id, { onDelete: 'cascade' }),
+    kind: text('kind', { enum: ['access', 'refresh'] }).notNull(),
+    tokenHash: text('token_hash').notNull(),
+    expiresAt: ts('expires_at').notNull(),
+    /** Refresh tokens only: when it was rotated away. */
+    usedAt: ts('used_at'),
+    revokedAt: ts('revoked_at'),
+    createdAt: ts('created_at').notNull(),
+  },
+  (t) => [
+    uniqueIndex('oauth_tokens_hash_key').on(t.tokenHash),
+    index('oauth_tokens_grant_idx').on(t.grantId),
+  ],
+)
+
 /**
  * One row per external-data pull (currently Stripe). The cursor makes the next
  * run incremental; the counts make a silent no-op distinguishable from a silent
  * failure, which a nightly job otherwise never is.
+ *
+ * `sequence_tick` rows are the exception: a FAILED minutely sequence tick, and
+ * only a failed one (a row a minute on success would be 1,440 a day of noise).
+ * The tick is caught so it cannot stop the broadcast behind it, and a caught
+ * failure needs a row, or the drip could stall for days with nothing to show.
+ * The counts stay 0 and `notes` holds the error. Health and the Stripe screens
+ * read the Stripe kinds only.
  */
 export const syncRuns = sqliteTable(
   'sync_runs',
   {
     id: integer('id').primaryKey({ autoIncrement: true }),
-    kind: text('kind', { enum: ['stripe', 'stripe_catalog'] }).notNull(),
+    kind: text('kind', { enum: ['stripe', 'stripe_catalog', 'sequence_tick'] }).notNull(),
     trigger: text('trigger', { enum: ['cron', 'mcp', 'preview', 'webhook'] }).notNull(),
     status: text('status', { enum: ['running', 'ok', 'partial', 'failed'] })
       .notNull()
@@ -1320,6 +1982,88 @@ export const syncRuns = sqliteTable(
   },
   (t) => [index('sync_runs_kind_started_idx').on(t.kind, t.startedAt)],
 )
+
+// ─────────────────────────────────────────────────────────── importers
+
+/** The tools the background importers read from. One adapter each, in `providers/importers/`. */
+export const IMPORT_SOURCES = ['kit', 'ghost', 'mailchimp', 'drip'] as const
+export type ImportSourceId = (typeof IMPORT_SOURCES)[number]
+
+/** The run's lifecycle. Only `core/importers/runs.ts` `nextImportStatus()` moves it. */
+export const IMPORT_STATUSES = ['queued', 'running', 'completed', 'failed', 'cancelled'] as const
+export type ImportStatus = (typeof IMPORT_STATUSES)[number]
+
+/** A line for the report: something the run left behind or did on purpose, counted. */
+export interface ImportNote {
+  key: string
+  count: number
+  message: string
+}
+
+/**
+ * One run of an importer from another tool (Kit, Ghost, Mailchimp, Drip).
+ *
+ * ⭐ The run holds no state in memory. The minutely cron reads this row, asks the
+ * source for exactly one page at `(phase, cursor)`, writes that page, and writes
+ * the next `(phase, cursor)` back here — so a run survives a deploy, a crash or a
+ * week of nobody looking, and resumes on the exact page. A page re-read after a
+ * crash between "write rows" and "write cursor" is harmless: every write it
+ * makes is idempotent (unique email, `ON CONFLICT DO NOTHING` on tags and
+ * suppressions, `imported_source_id` on content).
+ *
+ * The page is deliberately small. D1 allows 1,000 queries per invocation and the
+ * same tick also drives sequences; the cron skips the import step altogether in
+ * a minute that has a broadcast to push, because mail outranks migration.
+ *
+ * `credentials` is the operator's API key for the other tool, as JSON. It is
+ * never selected by a screen (see `importRunColumns`), never echoed back, and
+ * set to NULL the moment the run reaches any terminal status — a finished
+ * import keeps no key to a system we are leaving.
+ */
+export const importRuns = sqliteTable(
+  'import_runs',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    source: text('source', { enum: IMPORT_SOURCES }).notNull(),
+    status: text('status', { enum: IMPORT_STATUSES }).notNull().default('queued'),
+    /** What the operator typed that is safe to show: a Ghost URL, a Mailchimp list id, a Drip account id. */
+    settings: text('settings', { mode: 'json' }).notNull().$type<Record<string, string>>().default({}),
+    /** Secret. NULL once the run ends. Never selected for display. */
+    credentials: text('credentials'),
+    /** The phase being read (`subscribers`, `broadcasts`, …). Null once done. */
+    phase: text('phase'),
+    /** The source's own cursor within `phase` — Kit's `end_cursor`, a page number,
+        an offset. Opaque to everything but that source's adapter. Null = first page. */
+    cursor: text('cursor'),
+    phasesDone: integer('phases_done').notNull().default(0),
+    phasesTotal: integer('phases_total').notNull().default(0),
+    pages: integer('pages').notNull().default(0),
+    /** New rows: people, broadcasts, sequences. */
+    created: integer('created').notNull().default(0),
+    /** People already here who matched — gained tags, a name, or a narrower status. */
+    updated: integer('updated').notNull().default(0),
+    /** Read and deliberately not written: unknown status, suppressed here, drafts, already imported. */
+    skipped: integer('skipped').notNull().default(0),
+    /** Addresses that cannot be stored. */
+    invalid: integer('invalid').notNull().default(0),
+    /** The same numbers by entity — tags, taggings, suppressions, sequence_steps… */
+    detail: text('detail', { mode: 'json' }).notNull().$type<Record<string, number>>().default({}),
+    notes: text('notes', { mode: 'json' }).notNull().$type<ImportNote[]>().default([]),
+    /** The most recent failure, readable by a person. Kept after a later page succeeds. */
+    lastError: text('last_error'),
+    /** Consecutive failed pages. Three in a row and the run fails for good. */
+    failures: integer('failures').notNull().default(0),
+    /** A lease, so two overlapping cron invocations never read the same page twice. */
+    lockedUntil: ts('locked_until'),
+    createdAt: ts('created_at').notNull(),
+    startedAt: ts('started_at'),
+    finishedAt: ts('finished_at'),
+    updatedAt: ts('updated_at').notNull(),
+  },
+  (t) => [index('import_runs_status_idx').on(t.status, t.createdAt)],
+)
+
+export type ImportRun = typeof importRuns.$inferSelect
 
 // Local-development only: the `console` provider writes fully rendered mail here
 // instead of sending it, so the Outbox screen can show exactly what would have gone
@@ -1360,6 +2104,7 @@ export const media = sqliteTable(
 
 export type Media = typeof media.$inferSelect
 export type Subscriber = typeof subscribers.$inferSelect
+export type TransactionalTemplate = typeof transactionalTemplates.$inferSelect
 export type Tag = typeof tags.$inferSelect
 export type Segment = typeof segments.$inferSelect
 export type TagRule = typeof tagRules.$inferSelect
@@ -1380,6 +2125,7 @@ export type DownloadGrant = typeof downloadGrants.$inferSelect
 export type Sale = typeof sales.$inferSelect
 export type ApiKey = typeof apiKeys.$inferSelect
 export type McpCall = typeof mcpCalls.$inferSelect
+export type AuditEntry = typeof auditEntries.$inferSelect
 export type PreflightToken = typeof preflightTokens.$inferSelect
 export type SyncRun = typeof syncRuns.$inferSelect
 export type Offer = typeof offers.$inferSelect
@@ -1537,6 +2283,112 @@ export const saleItems = sqliteTable(
     index('sale_items_product_idx').on(t.stripeProductId),
   ],
 )
+
+// ──────────────────────────────────────────── store: offers & checkouts
+
+/**
+ * What the public site sells. One row per product the operator put on sale.
+ *
+ * ⚠️ A separate table, not a `for_sale` column on `stripe_products`: the
+ * catalog is a mirror Stripe owns and the sync overwrites, and "the operator
+ * wants this on the site" is not Stripe's fact to overwrite. Taking a product off sale
+ * deletes this row and nothing else — checkouts already started keep their own
+ * copy of the price, and sales never point here.
+ *
+ * The page is `/offers/<slug>`. The slug defaults to the product's
+ * `metadata.sku` (the key purchase mail and conversions already agree on) and
+ * is the operator's to change. A price that goes inactive in Stripe takes the
+ * page down by itself (checked on every view and every Buy), so this row can
+ * outlive a price without the site selling something Stripe would refuse.
+ */
+export const storeOffers = sqliteTable(
+  'store_offers',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    /** One listing per product. Cascades: a product gone from the mirror is not
+        for sale, and a dangling listing would be a page that cannot sell. */
+    productId: text('product_id')
+      .notNull()
+      .references(() => stripeProducts.id, { onDelete: 'cascade' }),
+    /** The one price Buy opens. One-time only: Checkout runs in payment mode,
+        and a recurring price is Members/Premium, not the store. */
+    priceId: text('price_id')
+      .notNull()
+      .references(() => stripePrices.id, { onDelete: 'cascade' }),
+    /** `/offers/<slug>`. `[a-z0-9-]`, never `return` or `cancel`. */
+    slug: text('slug').notNull(),
+    createdAt: ts('created_at').notNull(),
+    updatedAt: ts('updated_at').notNull(),
+  },
+  (t) => [
+    uniqueIndex('store_offers_product_key').on(t.productId),
+    uniqueIndex('store_offers_slug_key').on(t.slug),
+  ],
+)
+
+/**
+ * ⭐ Every Checkout a reader starts, written BEFORE Stripe is asked.
+ *
+ * The row is what the webhook trusts. Its `token` rides to Stripe as
+ * `metadata.kolea_checkout` and `client_reference_id`, and `checkout.session.
+ * completed` is matched back to it only when the session id is the one this
+ * row opened — a session naming somebody else's token completes nothing.
+ *
+ * It holds the converting post (the broadcast whose link brought the reader to
+ * Buy), because that is a fact only the click knows: by the time the webhook
+ * lands, the reader is a charge and an email address. No email is kept here;
+ * Stripe collects it, and the sale has it. `ip` exists for the hourly cap.
+ */
+export const storeCheckouts = sqliteTable(
+  'store_checkouts',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    /** 40 random characters. In the return URL and in Stripe's metadata. */
+    token: text('token').notNull(),
+    /** Frozen at Buy. Not an FK to `store_offers`: taking a product off sale
+        must not erase the record of a checkout already paid for. */
+    stripePriceId: text('stripe_price_id').notNull(),
+    stripeProductId: text('stripe_product_id').notNull(),
+    offerSlug: text('offer_slug').notNull(),
+    /** What Stripe was asked to charge, so the row reads without the catalog. */
+    amountCents: integer('amount_cents').notNull(),
+    currency: text('currency').notNull(),
+    // nullable-fk: the post the reader came from, validated at Buy against the
+    // published posts. Null for a reader who arrived any other way. `set null`
+    // so unpublishing or deleting a post never touches money.
+    convertedFromBroadcastId: integer('converted_from_broadcast_id').references(
+      () => broadcasts.id,
+      { onDelete: 'set null' },
+    ),
+    // nullable-fk: the buyer, once the sale says who that is. The site has no
+    // reader sign-in, so this is never known at Buy.
+    subscriberId: integer('subscriber_id').references(() => subscribers.id, {
+      onDelete: 'set null',
+    }),
+    // nullable-fk: set when the webhook books the money.
+    saleId: integer('sale_id').references(() => sales.id, { onDelete: 'set null' }),
+    /** started → open (Stripe answered) → completed (webhook booked it), or
+        failed (Stripe refused to open one; `lastError` says why). */
+    status: text('status', { enum: ['started', 'open', 'completed', 'failed'] })
+      .notNull()
+      .default('started'),
+    stripeSessionId: text('stripe_session_id'),
+    lastError: text('last_error'),
+    ip: text('ip'),
+    userAgent: text('user_agent'),
+    createdAt: ts('created_at').notNull(),
+    completedAt: ts('completed_at'),
+  },
+  (t) => [
+    uniqueIndex('store_checkouts_token_key').on(t.token),
+    index('store_checkouts_ip_idx').on(t.ip, t.createdAt),
+    index('store_checkouts_broadcast_idx').on(t.convertedFromBroadcastId),
+    index('store_checkouts_sale_idx').on(t.saleId),
+  ],
+)
+
+export type StoreOffer = typeof storeOffers.$inferSelect
+export type StoreCheckout = typeof storeCheckouts.$inferSelect
 
 export type StripeEvent = typeof stripeEvents.$inferSelect
 export type StripeProduct = typeof stripeProducts.$inferSelect
@@ -1730,7 +2582,91 @@ export type ConversionKind = typeof conversionKinds.$inferSelect
 export type Goal = typeof goals.$inferSelect
 
 /**
- * One row per call to a language model (OpenRouter), successful or not.
+ * ⭐ Launch Studio: one push to sell one thing, walked
+ * through seven screens, from describing the offer to reading how it went.
+ *
+ * The row is the studio's memory and nothing else. Everything a launch makes is
+ * an ordinary row somewhere else — the campaign in `campaigns`, the series in
+ * `sequences` (always created PAUSED), the trigger tag in `tags` — so a launch
+ * deleted tomorrow leaves a campaign and a sequence that work exactly as if the
+ * operator had made them by hand. Nothing here sends, activates, schedules or
+ * publishes; the studio hands the operator to the screens that do.
+ *
+ * `step` is the furthest screen reached, and `status` where the launch is in its
+ * life. Both move only through `core/launches/steps.ts`'s `transition`, a pure
+ * function, so "a sequence before a campaign" or "editing a closed launch" is a
+ * refusal there and not a state this table can be talked into.
+ *
+ * Every FK is nullable and `set null` on purpose: each is filled in by a later
+ * step, and deleting the campaign or the sequence by hand must not take the
+ * launch's brief with it. The review screen says what is missing instead.
+ */
+export const launches = sqliteTable(
+  'launches',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    /** Unique; the campaign and sequence names start from it. */
+    slug: text('slug').notNull(),
+    name: text('name').notNull(),
+    step: text('step', {
+      enum: ['offer', 'plan', 'campaign', 'sequence', 'copy', 'handoff', 'review'],
+    })
+      .notNull()
+      .default('offer'),
+    /** `draft` while being built; `handed_off` once the operator has been sent
+        to the existing screens to take it live; `closed` after the review. A
+        closed launch is read-only. */
+    status: text('status', { enum: ['draft', 'handed_off', 'closed'] })
+      .notNull()
+      .default('draft'),
+
+    // The brief, in the operator's words (step 1). Every later step reads it,
+    // and it is what the AI helpers are given, verbatim, as the only facts.
+    /** What is being sold, in a sentence or two. */
+    offer: text('offer'),
+    audience: text('audience'),
+    problem: text('problem'),
+    promise: text('promise'),
+    /** Why the operator cares: the story behind it. */
+    story: text('story'),
+    objections: text('objections'),
+    /** Free text ("$149", "pay what you want"): the brief is prose, not a
+        price list. The price that charges is the store offer's, in cents. */
+    priceNote: text('price_note'),
+    // nullable-fk: optional; set when the thing is sold through the store.
+    storeOfferId: integer('store_offer_id').references(() => storeOffers.id, {
+      onDelete: 'set null',
+    }),
+
+    /** The launch template chosen at step 2. A slug, not an FK: templates are
+        the operator's to delete, and the sequence already copied it. */
+    templateSlug: text('template_slug'),
+    /** The day the operator means to open; a note for the plan, never a schedule. */
+    startsOn: ts('starts_on'),
+
+    // nullable-fk: made or chosen at step 3.
+    campaignId: integer('campaign_id').references(() => campaigns.id, { onDelete: 'set null' }),
+    // nullable-fk: built at step 4, paused, by `createSequenceFromTemplate`.
+    sequenceId: integer('sequence_id').references(() => sequences.id, { onDelete: 'set null' }),
+    // nullable-fk: the `launch-<slug>` tag a tag_added template starts on.
+    triggerTagId: integer('trigger_tag_id').references(() => tags.id, { onDelete: 'set null' }),
+
+    /** The sales angle (step 5): the points to make, in markdown. The operator's
+        to edit; the `launch` helper can write a first pass from the brief. */
+    outline: text('outline'),
+
+    createdAt: ts('created_at').notNull(),
+    updatedAt: ts('updated_at').notNull(),
+    handedOffAt: ts('handed_off_at'),
+    closedAt: ts('closed_at'),
+  },
+  (t) => [uniqueIndex('launches_slug_key').on(t.slug), index('launches_status_idx').on(t.status)],
+)
+
+export type Launch = typeof launches.$inferSelect
+
+/**
+ * One row per call to a language model, whoever answered it, successful or not.
  *
  * This is the budget. `core/ai/openrouter.ts` sums `cost_usd` for the current
  * calendar month before every call and refuses once it reaches
@@ -1745,14 +2681,15 @@ export const aiCalls = sqliteTable(
   'ai_calls',
   {
     id: integer('id').primaryKey({ autoIncrement: true }),
-    /** What it was for: `subject`, `cleanup`, `sequence-plan`, `sequence-mail`. */
+    /** What it was for: an `AiTask` (`subject`, `cleanup`, `sequence-plan`, `sequence-mail`, …). */
     task: text('task').notNull(),
     /** The OpenRouter model id that answered, e.g. `anthropic/claude-sonnet-5`. */
     model: text('model').notNull(),
     promptTokens: integer('prompt_tokens').notNull().default(0),
     completionTokens: integer('completion_tokens').notNull().default(0),
     /**
-     * What OpenRouter charged, in US dollars, as it reported it. A real, not
+     * What the call cost, in US dollars: as OpenRouter reported it, or our
+     * estimate when the provider reports no cost (`cost_estimated`). A real, not
      * integer cents: a subject line costs a fraction of a cent, and rounding
      * every call to zero would make the budget a budget for nothing.
      */
@@ -1761,12 +2698,76 @@ export const aiCalls = sqliteTable(
     /** Why it failed, when it did. */
     error: text('error'),
     durationMs: integer('duration_ms').notNull().default(0),
+    /**
+     * Whose endpoint answered: `openrouter` (the install's key or the
+     * operator's own), `anthropic`, `openai`, or `fake` locally. The budget sums
+     * every row whatever the provider; this is for the settings screen.
+     */
+    provider: text('provider', { enum: ['openrouter', 'anthropic', 'openai', 'fake'] })
+      .notNull()
+      .default('openrouter'),
+    /**
+     * True when `cost_usd` is our estimate (tokens × `core/ai/catalogue.ts`'s
+     * list price) rather than a figure the provider reported. Anthropic and
+     * OpenAI report tokens, not money. A model with no list price is recorded
+     * at 0 with this set, and the settings screen says so.
+     */
+    costEstimated: integer('cost_estimated', { mode: 'boolean' }).notNull().default(false),
     createdAt: ts('created_at').notNull(),
   },
   (t) => [index('ai_calls_created_idx').on(t.createdAt)],
 )
 
 export type AiCall = typeof aiCalls.$inferSelect
+
+/**
+ * Which key pays for the writing helpers, and which model each one uses.
+ * Exactly one row (`id = 1`), created on first save. No row means the old
+ * behaviour exactly: the install's `OPENROUTER_KEY` pays and every helper uses
+ * its default (or its `AI_MODEL_*` variable), so an install that never opens
+ * Settings → AI is unchanged.
+ *
+ * Its own table rather than a column on some general settings row: nothing
+ * else reads it, and the agent settings live elsewhere.
+ */
+export const aiSettings = sqliteTable('ai_settings', {
+  id: integer('id').primaryKey(),
+  /**
+   * `env` is the install's `OPENROUTER_KEY`. The others name a row in
+   * `ai_keys`. A payer whose key is missing or unreadable turns the helpers
+   * off with a sentence on the settings screen; it never quietly falls back to
+   * a different key, because which key pays is the operator's decision.
+   */
+  payer: text('payer', { enum: ['env', 'openrouter', 'anthropic', 'openai'] }).notNull().default('env'),
+  /**
+   * Helper task (`subject`, `cleanup`, `sequence-plan`, …) → model id, only
+   * for the helpers the operator changed. Checked against the catalogue on
+   * write and again on read: a choice the paying key cannot serve falls back
+   * to that key's default rather than being sent unchecked.
+   */
+  models: text('models', { mode: 'json' }).notNull().$type<Record<string, string>>().default({}),
+  updatedAt: ts('updated_at').notNull(),
+})
+
+export type AiSettings = typeof aiSettings.$inferSelect
+
+/**
+ * The operator's own model API keys, one per provider, encrypted at rest.
+ *
+ * `ciphertext` is AES-GCM under a key derived from `AI_KEY_ENCRYPTION_SECRET`
+ * (`core/ai/keys.ts`), with the provider name as associated data so a row
+ * cannot be moved to another provider. Without that secret nothing is stored.
+ * The key is never shown again: `last4` is all any screen reads.
+ */
+export const aiKeys = sqliteTable('ai_keys', {
+  provider: text('provider', { enum: ['openrouter', 'anthropic', 'openai'] }).primaryKey(),
+  /** `v1:<iv base64>:<ciphertext base64>`. */
+  ciphertext: text('ciphertext').notNull(),
+  last4: text('last4').notNull(),
+  createdAt: ts('created_at').notNull(),
+})
+
+export type AiKey = typeof aiKeys.$inferSelect
 
 // ─────────────────────────────────────────────────────────── post tags
 //
@@ -1912,6 +2913,13 @@ export const siteSettings = sqliteTable('site_settings', {
    * MCP without anyone touching a template.
    */
   profile: text('profile', { mode: 'json' }).notNull().$type<Record<string, unknown>>().default({}),
+  /**
+   * The operator's IANA time zone (`America/Chicago`). One for the install:
+   * every sequence's send window is read in it. Null means UTC. Validated
+   * against the runtime's own zone list on write, so the tick never meets a
+   * name `Intl` cannot read.
+   */
+  timeZone: text('time_zone'),
   updatedAt: ts('updated_at').notNull(),
 })
 
@@ -1977,3 +2985,748 @@ export const pageViews = sqliteTable(
 )
 
 export type PageView = typeof pageViews.$inferSelect
+
+// ─────────────────────────────────────────────────────────── sending domains
+
+/**
+ * One DNS record the email provider asks for, as the provider said it when the
+ * domain was registered. Stored, not recomputed: the DKIM key is the provider's
+ * and only the provider can say what it is.
+ *
+ * `return_path` is the bounce domain (Resend's `send.<domain>` MX + TXT, the
+ * envelope MAIL FROM): mail whose MAIL FROM is not on the sender's domain fails
+ * DMARC's SPF alignment. A provider's *receiving* MX and its own tracking CNAME
+ * are never stored: the first would take over the domain's incoming mail, the
+ * second would track on the provider's host instead of ours.
+ */
+export interface ProviderDomainRecord {
+  purpose: 'dkim' | 'spf' | 'return_path'
+  type: 'TXT' | 'CNAME' | 'MX'
+  /** Fully qualified. */
+  name: string
+  value: string
+  /** MX only. */
+  priority?: number
+}
+
+/**
+ * What the last check saw at each record's name, keyed by record id (`dkim1`,
+ * `spf`, `return_path1`, `dmarc`, `tracking`). `existing` is a DMARC record of
+ * the operator's own, which is left alone and counts as fine.
+ */
+export type DomainRecordStatus = 'unchecked' | 'found' | 'missing' | 'mismatch' | 'existing'
+
+/**
+ * ⭐ A domain mail is sent from. There is no ownership TXT record and no
+ * provider sub-account: one install has one operator.
+ *
+ * `status` moves only through `core/domains.ts` `transition()`:
+ * `pending → verified | failed`, `verified → failed`, `failed → verified`.
+ * Verified means every required record answers in DNS **and** the provider says
+ * it will sign for the domain. A check that cannot reach the provider or DNS
+ * changes nothing: an outage is not the operator's fault (6.1.5).
+ *
+ * `name` is unique and lowercased: one row per domain, single operator. There
+ * is no `removed` status — removing a domain deletes the row, because nothing
+ * references it (the From address lives in `FROM_EMAIL`, not on a row).
+ *
+ * `provider` is the `EMAIL_PROVIDER` the records came from. Switching provider
+ * makes the stored records stale; the next check re-registers when it differs.
+ * `provider_domain_id` is the provider's handle (Resend's domain id), null until
+ * registration succeeds — a provider outage at add time still adds the domain,
+ * and the next check registers it.
+ *
+ * `next_check_at` drives the minutely cron: quick backoff while pending, daily
+ * once settled, null when automatic polling has given up (the screen's "Check
+ * now" still works). `check_attempt` counts the pending polls for that backoff.
+ */
+export const sendingDomains = sqliteTable(
+  'sending_domains',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    name: text('name').notNull(),
+    status: text('status', { enum: ['pending', 'verified', 'failed'] })
+      .notNull()
+      .default('pending'),
+    provider: text('provider').notNull(),
+    providerDomainId: text('provider_domain_id'),
+    /** The provider's own verdict at the last check. Null until it has been asked. */
+    providerState: text('provider_state', { enum: ['unverified', 'active', 'failed'] }),
+    providerRecords: text('provider_records', { mode: 'json' })
+      .notNull()
+      .$type<ProviderDomainRecord[]>()
+      .default([]),
+    recordStatuses: text('record_statuses', { mode: 'json' })
+      .notNull()
+      .$type<Record<string, DomainRecordStatus>>()
+      .default({}),
+    /** Why the last check or registration could not finish. Cleared on success. */
+    lastError: text('last_error'),
+    checkAttempt: integer('check_attempt').notNull().default(0),
+    lastCheckedAt: ts('last_checked_at'),
+    nextCheckAt: ts('next_check_at'),
+    verifiedAt: ts('verified_at'),
+    failedAt: ts('failed_at'),
+    createdAt: ts('created_at').notNull(),
+    updatedAt: ts('updated_at').notNull(),
+  },
+  (t) => [
+    uniqueIndex('sending_domains_name_key').on(t.name),
+    index('sending_domains_next_check_idx').on(t.nextCheckAt),
+  ],
+)
+
+export type SendingDomain = typeof sendingDomains.$inferSelect
+// ─────────────────────────────────────────────────────────── testimonials
+
+/**
+ * What a reader said about the writing, in their own words.
+ *
+ * Written only by a **known subscriber**, through the personal link a
+ * `{{testimonial_link}}` merge tag puts in a marketing mail. The link carries the
+ * subscriber's own token, so opening it *is* the proof of address — there is no
+ * email field on the form and no confirmation mail (the token confirms).
+ * `subscriber_id` is NOT NULL and cascades: forgetting a person forgets what
+ * they wrote.
+ *
+ * Two owners, two decisions, two columns:
+ *   * `may_publish` is the **person's** permission, ticked on the form. Never
+ *     editable by the operator — the operator cannot approve what the person
+ *     did not allow (enforced in `core/testimonials.ts`).
+ *   * `status` is the **operator's** moderation: `pending` until decided,
+ *     `approved` to show it, `hidden` to take it down without deleting it.
+ *
+ * The wall shows `status = 'approved' AND may_publish = 1`, and nothing else.
+ * `display_name` is what the wall prints; the subscriber's email never leaves
+ * the admin.
+ */
+export const testimonials = sqliteTable(
+  'testimonials',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    subscriberId: integer('subscriber_id')
+      .notNull()
+      .references(() => subscribers.id, { onDelete: 'cascade' }),
+    displayName: text('display_name').notNull(),
+    /** Plain text as typed. Escaped on every render, never stored as HTML. */
+    body: text('body').notNull(),
+    mayPublish: integer('may_publish', { mode: 'boolean' }).notNull().default(false),
+    status: text('status', { enum: ['pending', 'approved', 'hidden'] })
+      .notNull()
+      .default('pending'),
+    createdAt: ts('created_at').notNull(),
+    decidedAt: ts('decided_at'),
+  },
+  (t) => [
+    index('testimonials_status_idx').on(t.status, t.createdAt),
+    // The per-subscriber rate limit counts recent rows on this.
+    index('testimonials_subscriber_idx').on(t.subscriberId, t.createdAt),
+  ],
+)
+
+export type Testimonial = typeof testimonials.$inferSelect
+// ─────────────────────────────────────────────────────────── outbound webhooks
+
+/**
+ * The events an endpoint can subscribe to. `complained` is separate from
+ * `bounced`: a spam complaint is its own status and its own consent fact,
+ * distinct from a hard bounce, and a receiver mirroring the list needs to hear
+ * about both.
+ */
+export const WEBHOOK_EVENTS = [
+  'subscribed',
+  'unsubscribed',
+  'bounced',
+  'complained',
+  'purchased',
+  'published',
+] as const
+export type WebhookEvent = (typeof WEBHOOK_EVENTS)[number]
+
+/**
+ * Where the operator wants facts POSTed. See `core/webhooks.ts`.
+ *
+ * `secret` is stored in the clear, unlike `api_keys.token_hash`: a key is
+ * something we *check*, so a hash is enough, but a signing secret is something
+ * we must *use* on every delivery, so it has to be readable. It is shown to the
+ * operator exactly once, at creation; every screen and tool after that shows
+ * `secret_prefix` only, which is not enough to sign with.
+ *
+ * `events` is a JSON array rather than a junction table: six possible values,
+ * read whole on every emit, never queried by element. Emit loads every active
+ * endpoint (there are a handful) and filters in the Worker.
+ */
+export const webhookEndpoints = sqliteTable(
+  'webhook_endpoints',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    /** https only, public host. `checkWebhookUrl` runs on save AND before every POST. */
+    url: text('url').notNull(),
+    description: text('description').notNull().default(''),
+    events: text('events', { mode: 'json' }).notNull().$type<WebhookEvent[]>(),
+    secret: text('secret').notNull(),
+    secretPrefix: text('secret_prefix').notNull(),
+    isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
+    /**
+     * Why it is off, in words — "switched off" by hand, or switched off after N
+     * failed deliveries in a row. An endpoint that went quiet with no reason on
+     * it is a mystery; with one, it is a to-do.
+     */
+    disabledReason: text('disabled_reason'),
+    disabledAt: ts('disabled_at'),
+    /** Deliveries that used every attempt, in a row. A success resets it. */
+    consecutiveFailures: integer('consecutive_failures').notNull().default(0),
+    lastDeliveredAt: ts('last_delivered_at'),
+    createdAt: ts('created_at').notNull(),
+    updatedAt: ts('updated_at').notNull(),
+  },
+)
+
+/**
+ * One fact to one endpoint, and the whole delivery log.
+ *
+ * ⭐ Emitting writes this row and nothing else — no HTTP on the consent or send
+ * path. The minutely cron claims due rows and POSTs them, so the row IS the
+ * queue: it survives a restart, it is visible, and a `failed` one carries a
+ * "Redeliver" button rather than vanishing (CLAUDE.md: anything observable is
+ * a row).
+ *
+ * `payload` is frozen at emit time so every attempt — and a redelivery a week
+ * later — sends the same bytes about the same moment, not today's version of
+ * the person. `event_id` is shared by every endpoint's copy of one fact, so a
+ * receiver can dedupe on it.
+ *
+ * `dedupe_key` + the partial unique index make a replayed provider webhook or
+ * a re-run of the same fact land once per endpoint. Null means "each call is
+ * its own fact" (unsubscribing twice is two things a person did).
+ */
+export const webhookDeliveries = sqliteTable(
+  'webhook_deliveries',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    endpointId: integer('endpoint_id')
+      .notNull()
+      .references(() => webhookEndpoints.id, { onDelete: 'cascade' }),
+    event: text('event', { enum: WEBHOOK_EVENTS }).notNull(),
+    eventId: text('event_id').notNull(),
+    payload: text('payload', { mode: 'json' }).notNull().$type<Record<string, unknown>>(),
+    occurredAt: ts('occurred_at').notNull(),
+    dedupeKey: text('dedupe_key'),
+    status: text('status', { enum: ['pending', 'delivered', 'failed'] })
+      .notNull()
+      .default('pending'),
+    /** Tries in the current round. Redeliver starts a new round at 0. */
+    attempts: integer('attempts').notNull().default(0),
+    /**
+     * When the cron may next try it. Null once delivered or failed. Also the
+     * claim: a pass pushes it forward before POSTing, so two overlapping ticks
+     * cannot both send the same row.
+     */
+    nextAttemptAt: ts('next_attempt_at'),
+    lastAttemptAt: ts('last_attempt_at'),
+    lastStatusCode: integer('last_status_code'),
+    lastError: text('last_error'),
+    /** First 1,000 characters of what the receiver said. Enough to debug, not a store. */
+    lastResponse: text('last_response'),
+    deliveredAt: ts('delivered_at'),
+    createdAt: ts('created_at').notNull(),
+  },
+  (t) => [
+    // The cron's claim: "pending and due, oldest first".
+    index('webhook_deliveries_due_idx').on(t.status, t.nextAttemptAt),
+    // The delivery log, per endpoint, newest first.
+    index('webhook_deliveries_endpoint_idx').on(t.endpointId, t.createdAt),
+    uniqueIndex('webhook_deliveries_dedupe_key')
+      .on(t.endpointId, t.dedupeKey)
+      .where(sql`dedupe_key is not null`),
+  ],
+)
+
+export type WebhookEndpoint = typeof webhookEndpoints.$inferSelect
+export type WebhookDelivery = typeof webhookDeliveries.$inferSelect
+
+// ─────────────────────────────────────────────────────────── members & premium
+
+/**
+ * ⭐ Members and Premium. A **member** is a subscriber who has signed in on the
+ * public site. There is no second person record: the member IS the
+ * `subscribers` row, so one person has one consent state however they arrived.
+ * Nothing in this cluster writes `subscribers.status`, a suppression or an
+ * opt-out — signing in, signing out and paying are not consent. An unsubscribed
+ * reader can still sign in and read what they are entitled to; the newsletter
+ * and their access are separate facts.
+ */
+
+/**
+ * One request for a sign-in link, kept as history (a request, a link and a
+ * session are rows). Only requests for an address that IS a subscriber get a
+ * row — the sign-in page never creates a subscriber and answers the same
+ * whether or not the address is known.
+ *
+ * `token_hash` is the SHA-256 of the token in the mailed link; the token itself
+ * is never stored, not here and not on the `messages` row (whose body carries a
+ * `{{sign_in_link}}` merge tag resolved only in memory at send time). It is set
+ * only while the link is live: a link whose mail was blocked, throttled or
+ * failed carries none, so it can never be used. Nullable + UNIQUE is fine:
+ * SQLite treats NULLs as distinct.
+ *
+ * Status: `sent` (the link is out, valid until `expires_at`, single use),
+ * `used`, `blocked` (the transactional consent check refused: hard bounce or
+ * complaint; `blocked_reason` says which), `throttled` (five links an hour per
+ * address — recorded, never mailed), `failed` (the provider refused; the reader
+ * asks again). `requested` exists only between the insert and the send.
+ */
+export const memberSignInLinks = sqliteTable(
+  'member_sign_in_links',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    subscriberId: integer('subscriber_id')
+      .notNull()
+      .references(() => subscribers.id, { onDelete: 'cascade' }),
+    status: text('status', { enum: ['requested', 'sent', 'used', 'blocked', 'throttled', 'failed'] })
+      .notNull()
+      .default('requested'),
+    tokenHash: text('token_hash'),
+    expiresAt: ts('expires_at'),
+    // nullable-fk: the system mail that carried it. `set null` so pruning old
+    // messages never erases who asked to sign in.
+    messageId: integer('message_id').references(() => messages.id, { onDelete: 'set null' }),
+    // nullable-fk: the post the reader was on, so the link lands them back on it.
+    returnPostId: integer('return_post_id').references(() => broadcasts.id, { onDelete: 'set null' }),
+    blockedReason: text('blocked_reason'),
+    requestedIp: text('requested_ip'),
+    requestedUserAgent: text('requested_user_agent'),
+    createdAt: ts('created_at').notNull(),
+    usedAt: ts('used_at'),
+  },
+  (t) => [
+    uniqueIndex('member_sign_in_links_token_key').on(t.tokenHash),
+    // "How many links has this address had this hour?" before every send.
+    index('member_sign_in_links_subscriber_idx').on(t.subscriberId, t.createdAt),
+    // The per-IP limit, counted with premium checkouts.
+    index('member_sign_in_links_ip_idx').on(t.requestedIp, t.createdAt),
+  ],
+)
+
+/**
+ * A signed-in reader. The cookie holds an opaque token plus an HMAC of it under
+ * `MEMBER_SESSION_SECRET`; this row holds only the token's SHA-256, so a leaked
+ * database signs nobody in and a session is revocable by stamping `revoked_at`.
+ * Sixty days, no sliding renewal. `last_seen_at` is refreshed at most daily —
+ * a write per page view would be a write per reader per click.
+ */
+export const memberSessions = sqliteTable(
+  'member_sessions',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    subscriberId: integer('subscriber_id')
+      .notNull()
+      .references(() => subscribers.id, { onDelete: 'cascade' }),
+    tokenHash: text('token_hash').notNull(),
+    // nullable-fk: the link it was opened with.
+    signInLinkId: integer('sign_in_link_id').references(() => memberSignInLinks.id, {
+      onDelete: 'set null',
+    }),
+    ip: text('ip'),
+    userAgent: text('user_agent'),
+    createdAt: ts('created_at').notNull(),
+    expiresAt: ts('expires_at').notNull(),
+    lastSeenAt: ts('last_seen_at').notNull(),
+    revokedAt: ts('revoked_at'),
+  },
+  (t) => [
+    uniqueIndex('member_sessions_token_key').on(t.tokenHash),
+    index('member_sessions_subscriber_idx').on(t.subscriberId),
+  ],
+)
+
+/**
+ * The one Premium level's two prices, as Stripe price ids picked
+ * from the synced catalog on the Members screen. Exactly one row (`id = 1`),
+ * created on first save. Plain text, not FKs to `stripe_prices`, like
+ * `stripe_products.default_price_id`: a catalog resync must never be blocked by,
+ * or silently null, the price readers are paying. Validated on save instead.
+ * A null price is a plan that is not on sale.
+ */
+export const premiumSettings = sqliteTable('premium_settings', {
+  id: integer('id').primaryKey(),
+  monthlyPriceId: text('monthly_price_id'),
+  yearlyPriceId: text('yearly_price_id'),
+  updatedAt: ts('updated_at').notNull(),
+})
+
+/**
+ * Every Stripe Checkout a reader starts, written BEFORE the session is
+ * created. `token` is the session's `metadata.kolea_checkout` and
+ * `client_reference_id`; the webhook applies what this row says, so a session
+ * naming an unknown token, or a different Stripe session than the row's,
+ * grants nothing. No email is stored: Stripe collects it.
+ *
+ * `converted_from_post_id` is the post whose call to action they pressed — the
+ * "which post converted them" the Members screen answers.
+ *
+ * Status: `open` → `completed` (a subscription was recorded), `duplicate` (they
+ * already held a live one; the second Stripe subscription is kept here for the
+ * operator to cancel and refund — "Paid twice"), `expired`, `failed` (a delayed
+ * payment failed), `ignored` (the session did not match this row).
+ */
+export const premiumCheckouts = sqliteTable(
+  'premium_checkouts',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    token: text('token').notNull(),
+    interval: text('interval', { enum: ['month', 'year'] }).notNull(),
+    stripePriceId: text('stripe_price_id').notNull(),
+    // nullable-fk: the signed-in member who pressed Upgrade, if any.
+    subscriberId: integer('subscriber_id').references(() => subscribers.id, { onDelete: 'set null' }),
+    convertedFromPostId: integer('converted_from_post_id').references(() => broadcasts.id, {
+      onDelete: 'set null',
+    }),
+    stripeSessionId: text('stripe_session_id'),
+    status: text('status', { enum: ['open', 'completed', 'duplicate', 'expired', 'failed', 'ignored'] })
+      .notNull()
+      .default('open'),
+    note: text('note'),
+    stripeSubscriptionId: text('stripe_subscription_id'),
+    stripeCustomerId: text('stripe_customer_id'),
+    ip: text('ip'),
+    userAgent: text('user_agent'),
+    createdAt: ts('created_at').notNull(),
+    completedAt: ts('completed_at'),
+  },
+  (t) => [
+    uniqueIndex('premium_checkouts_token_key').on(t.token),
+    uniqueIndex('premium_checkouts_session_key').on(t.stripeSessionId),
+    index('premium_checkouts_ip_idx').on(t.ip, t.createdAt),
+    index('premium_checkouts_status_idx').on(t.status),
+  ],
+)
+
+/**
+ * A Premium subscription. A member is premium while they
+ * hold a row in status `active`. Status moves only through the transition table
+ * in `core/premium-lifecycle.ts`: `active ↔ past_due`, `active → canceled`,
+ * `past_due → canceled`; `canceled` is final, and a returning subscriber gets a
+ * new row. The partial unique index keeps at most one non-canceled row per
+ * subscriber, so two completed checkouts can never make two live subscriptions.
+ *
+ * Granted ONLY by the signature-verified `checkout.session.completed` (or its
+ * `async_payment_succeeded`), never by the return page. `stripe_event_at` is the
+ * `created` time of the newest Stripe event applied: Stripe does not promise
+ * order, and an older event must change nothing.
+ *
+ * Money (`amount_cents`, `currency`) is what the price was at signup, frozen
+ * like a sale's campaign. Each paid invoice is a `sales` row of its own, booked
+ * by the ordinary webhook path.
+ */
+export const memberSubscriptions = sqliteTable(
+  'member_subscriptions',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    subscriberId: integer('subscriber_id')
+      .notNull()
+      .references(() => subscribers.id, { onDelete: 'cascade' }),
+    // nullable-fk: the checkout that created it.
+    checkoutId: integer('checkout_id').references(() => premiumCheckouts.id, { onDelete: 'set null' }),
+    status: text('status', { enum: ['active', 'past_due', 'canceled'] }).notNull(),
+    interval: text('interval', { enum: ['month', 'year'] }).notNull(),
+    amountCents: integer('amount_cents').notNull(),
+    currency: text('currency').notNull(),
+    stripeCustomerId: text('stripe_customer_id'),
+    stripeSubscriptionId: text('stripe_subscription_id').notNull(),
+    stripePriceId: text('stripe_price_id').notNull(),
+    convertedFromPostId: integer('converted_from_post_id').references(() => broadcasts.id, {
+      onDelete: 'set null',
+    }),
+    currentPeriodEndAt: ts('current_period_end_at'),
+    cancelAtPeriodEnd: integer('cancel_at_period_end', { mode: 'boolean' }).notNull().default(false),
+    cancelReason: text('cancel_reason'),
+    statusChangedAt: ts('status_changed_at').notNull(),
+    /** Kept when they recover, so "who was ever late" stays answerable. */
+    pastDueAt: ts('past_due_at'),
+    canceledAt: ts('canceled_at'),
+    stripeEventAt: ts('stripe_event_at'),
+    createdAt: ts('created_at').notNull(),
+  },
+  (t) => [
+    uniqueIndex('member_subscriptions_stripe_key').on(t.stripeSubscriptionId),
+    uniqueIndex('member_subscriptions_live_key')
+      .on(t.subscriberId)
+      .where(sql`status <> 'canceled'`),
+    index('member_subscriptions_status_idx').on(t.status),
+  ],
+)
+
+export type MemberSubscription = typeof memberSubscriptions.$inferSelect
+export type PremiumCheckout = typeof premiumCheckouts.$inferSelect
+
+// ─────────────────────────────────────────────────────────── onboarding
+
+/**
+ * The first-run checklist's steps, in the order the checklist asks them. Kept
+ * here, beside the table that names them, so the enum on the column and the
+ * order on the screen cannot drift apart.
+ */
+export const ONBOARDING_STEPS = ['sender', 'domain', 'site', 'audience', 'welcome', 'broadcast'] as const
+export type OnboardingStepId = (typeof ONBOARDING_STEPS)[number]
+
+/**
+ * ⭐ What the operator said about an onboarding step that the data cannot say.
+ *
+ * Progress is *derived*, not stored: a step is done because a domain verified,
+ * a form exists, a subscribe sequence exists (`core/onboarding.ts`). This table
+ * only holds the two things no other row can: a "later" (`skipped`) and an
+ * explicit no (`declined`, the public site only). There
+ * is deliberately no `done` outcome: a step marked done by hand while the real
+ * state disagrees would tick a box over a domain that does not send.
+ *
+ * Facts win over this row. A domain added after its step was skipped shows as
+ * waiting, not skipped, without anyone deleting the row. One row per step (the
+ * step is the key); a later decision replaces the earlier one, and "undo" deletes it.
+ */
+export const onboardingSteps = sqliteTable('onboarding_steps', {
+  step: text('step', { enum: ONBOARDING_STEPS }).primaryKey(),
+  outcome: text('outcome', { enum: ['skipped', 'declined'] }).notNull(),
+  decidedAt: ts('decided_at').notNull(),
+})
+
+export type OnboardingStepRow = typeof onboardingSteps.$inferSelect
+
+/**
+ * The checklist itself. Exactly one row (`id = 1`), created the first time the
+ * operator dismisses it; no row means "never dismissed", so a fresh install shows
+ * the checklist without a seed step. `dismissed_at` null after a row exists means
+ * the operator brought it back. Dismissing hides it from the dashboard only: the
+ * `/onboarding` page always answers, and nothing about a step changes.
+ */
+export const onboarding = sqliteTable('onboarding', {
+  id: integer('id').primaryKey(),
+  dismissedAt: ts('dismissed_at'),
+  updatedAt: ts('updated_at').notNull(),
+})
+
+// ─────────────────────────────────────────────────────────── reader council
+//
+// Advisory only. Nothing here sends, schedules, holds or blocks mail, and
+// nothing a subscriber can see reads these tables. A review is what a model
+// said about a draft, kept so the operator can reread what they paid for.
+
+/**
+ * Who the council's three readers are: four dials, each a fixed choice
+ * (`core/council.ts` holds the choices and the sentences they become). One
+ * row (`id = 1`), created on first save; no row means the defaults.
+ *
+ * ⚠️ This is the whole of "the audience" a model ever hears about. No
+ * subscriber row, address, name, count or tag is read to build a persona:
+ * the operator describes their readers with these dials and this app's own
+ * sentences go into the prompt, so nothing typed here (or by a subscriber)
+ * can reach a model as instructions.
+ */
+export const councilAudience = sqliteTable('council_audience', {
+  id: integer('id').primaryKey(),
+  field: text('field', {
+    enum: ['developers', 'designers', 'founders', 'creators', 'marketers', 'educators', 'general'],
+  })
+    .notNull()
+    .default('general'),
+  expertise: text('expertise', { enum: ['newcomer', 'practitioner', 'expert'] })
+    .notNull()
+    .default('practitioner'),
+  purpose: text('purpose', { enum: ['learn', 'keep_up', 'perspective', 'story'] })
+    .notNull()
+    .default('perspective'),
+  attention: text('attention', { enum: ['skims', 'reads', 'devours'] }).notNull().default('reads'),
+  updatedAt: ts('updated_at').notNull(),
+})
+
+export type CouncilAudience = typeof councilAudience.$inferSelect
+
+/**
+ * One reading of one draft by the council: a broadcast or a sequence step,
+ * never both (`core/council.ts` sets exactly one). Every review is kept, newest
+ * first, so an earlier verdict can be reread after the draft has moved on.
+ *
+ * `status` is the lifecycle: `reading` is written before the model is called,
+ * then it becomes `done` (with `review`) or `failed` (with `error`). A failed
+ * or abandoned row never shows as a finished review. Readiness and budget are
+ * checked before the row exists, so "AI is off" and "budget used up" leave no
+ * row at all.
+ *
+ * `draft_subject` / `draft_text` are the snapshot the council read (the
+ * operator's own words, as plain markdown), so the notes' anchors still point
+ * at the right passage after the draft is edited. `review` is untrusted model
+ * output, cleaned on the way in and escaped on render; each note's `quote` was
+ * checked against `draft_text` and blanked if it was not there.
+ */
+export const councilReviews = sqliteTable(
+  'council_reviews',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    // nullable-fk: exactly one of these two is set. Cascade: a review of a
+    // deleted draft is about nothing.
+    broadcastId: integer('broadcast_id').references(() => broadcasts.id, { onDelete: 'cascade' }),
+    // nullable-fk: see broadcast_id.
+    sequenceStepId: integer('sequence_step_id').references(() => sequenceSteps.id, { onDelete: 'cascade' }),
+    status: text('status', { enum: ['reading', 'done', 'failed'] }).notNull(),
+    draftSubject: text('draft_subject').notNull(),
+    draftText: text('draft_text').notNull(),
+    /** The four dials as they were when the council sat: `{ field, expertise, purpose, attention }`. */
+    audience: text('audience', { mode: 'json' }).notNull().$type<Record<string, string>>(),
+    /** `CouncilReview` from `core/council.ts`; null until `done`. */
+    review: text('review', { mode: 'json' }).$type<unknown>(),
+    /** Note id → `dismissed`, for the notes the operator read and is leaving. */
+    resolved: text('resolved', { mode: 'json' }).notNull().$type<Record<string, string>>().default({}),
+    model: text('model'),
+    /** What the call cost, as `ai_calls` recorded it. The budget sums `ai_calls`, not this. */
+    costUsd: real('cost_usd').notNull().default(0),
+    error: text('error'),
+    createdAt: ts('created_at').notNull(),
+    finishedAt: ts('finished_at'),
+  },
+  (t) => [
+    index('council_reviews_broadcast_idx').on(t.broadcastId, t.createdAt),
+    index('council_reviews_step_idx').on(t.sequenceStepId, t.createdAt),
+  ],
+)
+
+export type CouncilReviewRow = typeof councilReviews.$inferSelect
+
+// ─────────────────────────────────────────────────────────── ghostwriter
+//
+// The Ghostwriter. Three tables, and none of them
+// is mail: a voice the operator tunes, and "takes" that sit BESIDE a sequence.
+// ⚠️ A take never becomes live mail by itself. Its words reach a step only
+// when the operator presses "Use this mail" on a paused sequence, and every
+// take mail opens with a `[[ AI draft … ]]` placeholder, so `setSequenceActive`
+// still refuses to go live until a person has read each step and deleted it.
+
+/**
+ * How the Ghostwriter writes: the slider values, in one row (`id = 1`), created
+ * on first save. No row means the defaults in `core/ai/ghostwriter-voice.ts`
+ * (direct storyteller 3, bare bones 2).
+ *
+ * The six influence columns are 0 (off) to 5 (strong). They name traits this app
+ * wrote, never "write like X": the model is told to borrow how they write, not
+ * what. Range and enum values are checked in core on every write (SQLite
+ * cannot add a CHECK after the fact), and re-clamped on read.
+ */
+export const ghostwriterVoices = sqliteTable('ghostwriter_voices', {
+  id: integer('id').primaryKey(),
+  king: integer('king').notNull().default(3),
+  hemingway: integer('hemingway').notNull().default(2),
+  vonnegut: integer('vonnegut').notNull().default(0),
+  didion: integer('didion').notNull().default(0),
+  bryson: integer('bryson').notNull().default(0),
+  graham: integer('graham').notNull().default(0),
+  /** Target length of a single mail: about 250, 500 or 900 words. */
+  length: text('length', { enum: ['short', 'medium', 'long'] }).notNull().default('medium'),
+  /**
+   * Read the operator's own last two SENT broadcasts as voice samples. Only
+   * sent mail: it already went to the whole list, so nothing private, and
+   * never anything a subscriber wrote.
+   */
+  useMyMail: integer('use_my_mail', { mode: 'boolean' }).notNull().default(true),
+  /** How a single mail is built (punchline, story, problem, list). */
+  structure: text('structure', { enum: ['punchline', 'story', 'problem', 'list'] })
+    .notNull()
+    .default('punchline'),
+  /** The draft dial: how finished the Ghostwriter makes it, outline → third round. */
+  draft: text('draft', { enum: ['outline', 'rough', 'first', 'second', 'third'] })
+    .notNull()
+    .default('second'),
+  /** The marketing approach a sequence take follows. `none` = the sequence's own shape alone. */
+  pitch: text('pitch', { enum: ['none', 'brunson', 'cochrane', 'godin', 'ferriss'] })
+    .notNull()
+    .default('cochrane'),
+  updatedAt: ts('updated_at').notNull(),
+})
+
+export type GhostwriterVoice = typeof ghostwriterVoices.$inferSelect
+
+/**
+ * One run of the Ghostwriter over a sequence that already exists: Take 1,
+ * Take 2, numbered per sequence and never overwritten.
+ *
+ * Written across cron ticks, never in one request: a plan call, then one call
+ * per mail (`core/ai/takes.ts` `advanceTakes`). Nothing is held in memory
+ * between ticks; this row and its mails ARE the progress. `story` null means
+ * the plan has not been written yet. `locked_until` is a lease so two
+ * overlapping ticks never pay for the same mail twice.
+ *
+ * `draft` and `pitch` are copied from the voice when the take starts, so
+ * changing the sliders mid-take does not change a take half written.
+ */
+export const sequenceTakes = sqliteTable(
+  'sequence_takes',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    sequenceId: integer('sequence_id')
+      .notNull()
+      .references(() => sequences.id, { onDelete: 'cascade' }),
+    number: integer('number').notNull(),
+    /** `writing` while ticks still owe it calls; `done` once every mail was tried; `failed` when none could be. */
+    status: text('status', { enum: ['writing', 'done', 'failed'] }).notNull().default('writing'),
+    draft: text('draft', { enum: ['outline', 'rough', 'first', 'second', 'third'] }).notNull(),
+    pitch: text('pitch', { enum: ['none', 'brunson', 'cochrane', 'godin', 'ferriss'] }).notNull(),
+    topic: text('topic').notNull(),
+    goal: text('goal').notNull().default(''),
+    notes: text('notes').notNull().default(''),
+    /** The plan pass's through-line. Null until planned. */
+    story: text('story'),
+    /** Dollars spent on this take so far, summed from its own calls (the budget reads `ai_calls`). */
+    costUsd: real('cost_usd').notNull().default(0),
+    /** Why it stopped, readable by a person. */
+    failure: text('failure'),
+    lockedUntil: ts('locked_until'),
+    createdAt: ts('created_at').notNull(),
+    updatedAt: ts('updated_at').notNull(),
+  },
+  (t) => [
+    uniqueIndex('sequence_takes_number_key').on(t.sequenceId, t.number),
+    index('sequence_takes_status_idx').on(t.status, t.createdAt),
+  ],
+)
+
+export type SequenceTake = typeof sequenceTakes.$inferSelect
+
+/**
+ * One mail of a take, for the step at `position` when the take began.
+ *
+ * Life: `waiting` → `writing` → `written` (words to read) or `failed`. A
+ * written mail is then `used` (its words were copied into the step, and the
+ * step's words before are kept in `before_*` so "Put mine back" restores them)
+ * or `kept` (the operator kept their own). Both undo back to `written`.
+ *
+ * The step cascade: delete the step and its take mails go too, so a take can
+ * never write into a step that is no longer there.
+ */
+export const sequenceTakeMails = sqliteTable(
+  'sequence_take_mails',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    takeId: integer('take_id')
+      .notNull()
+      .references(() => sequenceTakes.id, { onDelete: 'cascade' }),
+    stepId: integer('step_id')
+      .notNull()
+      .references(() => sequenceSteps.id, { onDelete: 'cascade' }),
+    position: integer('position').notNull(),
+    status: text('status', { enum: ['waiting', 'writing', 'written', 'failed', 'used', 'kept'] })
+      .notNull()
+      .default('waiting'),
+    /** This mail's job in the take's story, from the plan pass. */
+    plan: text('plan'),
+    subject: text('subject'),
+    /** Model output after `core/ai/guard.ts` cleaned it. Shown escaped, never as HTML. */
+    bodyMd: text('body_md'),
+    bodyJson: text('body_json', { mode: 'json' }).$type<DocNode | null>(),
+    /** The step's own words while this mail is `used`; null otherwise. */
+    beforeSubject: text('before_subject'),
+    beforeBodyMd: text('before_body_md'),
+    beforeBodyJson: text('before_body_json', { mode: 'json' }).$type<DocNode | null>(),
+    updatedAt: ts('updated_at').notNull(),
+  },
+  (t) => [uniqueIndex('sequence_take_mails_position_key').on(t.takeId, t.position)],
+)
+
+export type SequenceTakeMail = typeof sequenceTakeMails.$inferSelect

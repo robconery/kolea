@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import type { Context } from 'hono'
 import { getPostTagBySlug, listPublicTags, tagsForPost, tagsForPosts } from '../core/post-tags.ts'
 import { type Post, allPostSlugs, getPostBySlug, postPath, recentPosts } from '../core/posts.ts'
+import { decideAccess, isGated, teaserHtml } from '../core/member-access.ts'
 import { renderPostHtml } from '../core/render-web.ts'
 import {
   type Rendered,
@@ -15,16 +16,26 @@ import {
   renderIndex,
   renderPost,
   renderSearch,
+  renderSitePage,
   renderSubscribe,
   renderTag,
+  renderTestimonials,
   siteConfig,
 } from '../core/theme/site.ts'
+import {
+  checkoutByToken,
+  convertingPost,
+  sellableOffer,
+  sellableOffers,
+  startCheckout,
+} from '../core/store.ts'
 import { loadActiveTheme, readThemeAsset } from '../core/theme/store.ts'
 import { escapeHtml } from '../core/text.ts'
 import { recordDwell, recordPageView } from '../core/traffic.ts'
 import { getDb } from '../db/index.ts'
 import type { PostTag } from '../db/schema.ts'
 import type { Env } from '../types.ts'
+import { memberRoutes, viewerOf } from './site-members.ts'
 
 /**
  * ⭐ The public site.
@@ -47,6 +58,8 @@ import type { Env } from '../types.ts'
  *   /<tag>/<slug>          a post whose primary tag is <tag>
  *   /<slug>                a post with no tags — or a redirect to /<tag>/<slug>
  *   /author/<slug>         the author's archive (there is one author)
+ *   /offers  /offers/<slug>  (POST …/buy)  /offers/return  /offers/cancel
+ *   /testimonials          what readers said, once approved
  *   /search?q=  /subscribe  /feed.xml  /sitemap.xml  /robots.txt  /assets/*
  *
  * The signup form posts to the ordinary public form endpoint on the admin host,
@@ -81,15 +94,33 @@ async function siteRequest(c: Ctx): Promise<SiteRequest> {
  */
 const PAGE_CACHE = { 'Cache-Control': 'public, max-age=60, s-maxage=300' }
 
+/**
+ * A gated post's page depends on who is reading, so it is never held by a
+ * shared cache. Everything else is the same for everyone.
+ */
+const PRIVATE_PAGE = { 'Cache-Control': 'private, no-store' }
+
 function send(
   c: Ctx,
   r: Rendered | null,
   req: SiteRequest,
   postId?: number,
+  perReader = false,
 ): Promise<Response> | Response {
   if (!r) return notFound(c, req)
   const html = r.status === 200 ? withBeacon(r.html, postId ?? null) : r.html
-  return c.html(html, r.status as 200, r.status === 200 ? PAGE_CACHE : undefined)
+  const headers = perReader ? PRIVATE_PAGE : r.status === 200 ? PAGE_CACHE : undefined
+  return c.html(html, r.status as 200, headers)
+}
+
+/**
+ * A post page. Only a gated post reads the member cookie — a public post's page
+ * is identical for everyone and stays cacheable.
+ */
+async function sendPost(c: Ctx, req: SiteRequest, post: Post, tags: PostTag[]) {
+  if (!isGated(post.accessLevel)) return send(c, await renderPost(req, post, tags), req, post.id)
+  const viewer = await viewerOf(c)
+  return send(c, await renderPost(req, post, tags, viewer.kind), req, post.id, true)
 }
 
 // ─────────────────────────────────────────────────────────── the beacon
@@ -224,6 +255,12 @@ site.get('/subscribe', async (c) => {
   return send(c, await renderSubscribe(req), req)
 })
 
+/** The testimonials wall. Above `/:slug` so a post can never shadow it. */
+site.get('/testimonials', async (c) => {
+  const req = await siteRequest(c)
+  return send(c, await renderTestimonials(req), req)
+})
+
 site.get('/author/:slug', async (c) => {
   const req = await siteRequest(c)
   return send(c, await renderAuthor(req, c.req.param('slug'), 1), req)
@@ -276,11 +313,14 @@ site.get('/sitemap.xml', async (c) => {
     rows.map((r) => r.id),
   )
   const topics = await listPublicTags(db, 500)
+  // Offer pages are indexed while for sale.
+  const forSale = await sellableOffers(db)
   const urls = [
     `<url><loc>${escapeHtml(cfg.origin)}/</loc></url>`,
     `<url><loc>${escapeHtml(cfg.origin)}/writing</loc></url>`,
     ...(cfg.longBio ? [`<url><loc>${escapeHtml(cfg.origin)}/about</loc></url>`] : []),
     ...topics.map((t) => `<url><loc>${escapeHtml(`${cfg.origin}/${t.slug}`)}</loc></url>`),
+    ...forSale.map((o) => `<url><loc>${escapeHtml(`${cfg.origin}/offers/${o.slug}`)}</loc></url>`),
     ...rows.map(
       (r) =>
         `<url><loc>${escapeHtml(`${cfg.origin}${postPath(r.slug, tags.get(r.id)?.[0]?.slug)}`)}</loc><lastmod>${r.publishedAt.toISOString().slice(0, 10)}</lastmod></url>`,
@@ -306,6 +346,167 @@ site.get('/robots.txt', (c) => {
   })
 })
 
+// ─────────────────────────────────────────────────────────── the store
+//
+// `/offers` and everything under it. Fixed paths, so they are registered here,
+// above the `/:slug` catch-alls. The rules live in `core/store.ts`; this only
+// turns them into pages and redirects.
+
+/** Pages that depend on the reader (the `from` they arrived with, their token). */
+const NO_STORE = { 'Cache-Control': 'private, no-store' }
+
+function money(cents: number, currency: string): string {
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: currency.toUpperCase() }).format(
+    cents / 100,
+  )
+}
+
+async function storePage(
+  c: Ctx,
+  page: { title: string; html: string; noindex?: boolean; status?: number; description?: string | null },
+  headers: Record<string, string> = NO_STORE,
+): Promise<Response> {
+  const req = await siteRequest(c)
+  const r = await renderSitePage(req, { ...page, path: c.req.path })
+  const html = r.status === 200 ? withBeacon(r.html, null) : r.html
+  return c.html(html, r.status as 200, headers)
+}
+
+site.get('/offers', async (c) => {
+  const offers = await sellableOffers(getDb(c.env))
+  const e = escapeHtml
+  const html = offers.length
+    ? `<ul class="kolea-offers">${offers
+        .map(
+          (o) =>
+            `<li><a href="/offers/${e(o.slug)}">${e(o.product.name)}</a> · ${e(money(o.price.unitAmount, o.price.currency))}${o.product.description ? `<br>${e(o.product.description)}` : ''}</li>`,
+        )
+        .join('')}</ul>`
+    : '<p>Nothing is for sale right now.</p>'
+  return storePage(c, { title: 'Offers', html }, PAGE_CACHE)
+})
+
+/**
+ * Where Stripe sends a buyer who paid. It only reads: the sale is booked by the
+ * signed webhook, never by this page. While the webhook has not landed it asks
+ * the browser to reload every 3 seconds — a `Refresh` header, no script — and
+ * gives up after 60 reloads (three minutes).
+ */
+site.get('/offers/return', async (c) => {
+  const db = getDb(c.env)
+  const checkout = await checkoutByToken(db, c.req.query('token') ?? '')
+  const headers = { ...NO_STORE, 'Referrer-Policy': 'no-referrer' }
+  if (!checkout) {
+    return storePage(c, { title: 'Not found', html: '<p>We could not find that checkout.</p>', noindex: true, status: 404 }, headers)
+  }
+
+  const e = escapeHtml
+  if (checkout.status === 'completed') {
+    return storePage(
+      c,
+      {
+        title: 'Thank you',
+        html: `<p>Your payment for <strong>${e(checkout.offerSlug)}</strong> is confirmed. A receipt is on its way from Stripe.</p>`,
+        noindex: true,
+      },
+      headers,
+    )
+  }
+  if (checkout.status === 'failed') {
+    return storePage(
+      c,
+      { title: 'Checkout did not open', html: '<p>Nothing was charged. Please try again.</p>', noindex: true },
+      headers,
+    )
+  }
+
+  const reloads = Number(/^\d{1,3}$/.test(c.req.query('n') ?? '') ? c.req.query('n') : 0)
+  if (reloads >= 60) {
+    return storePage(
+      c,
+      {
+        title: 'Still processing',
+        html: '<p>Your payment is still processing. Some payment methods take a few days. You can close this page; Stripe will email your receipt.</p>',
+        noindex: true,
+      },
+      headers,
+    )
+  }
+  return storePage(
+    c,
+    { title: 'Confirming your payment', html: '<p>Confirming your payment. This page refreshes on its own.</p>', noindex: true },
+    { ...headers, Refresh: `3; url=/offers/return?token=${checkout.token}&n=${reloads + 1}` },
+  )
+})
+
+/** Where Stripe sends a buyer who backed out. Nothing was charged; nothing changes. */
+site.get('/offers/cancel', async (c) => {
+  const checkout = await checkoutByToken(getDb(c.env), c.req.query('token') ?? '')
+  const back = checkout ? `<p><a href="/offers/${escapeHtml(checkout.offerSlug)}">Back to the offer</a></p>` : ''
+  return storePage(
+    c,
+    { title: 'Checkout cancelled', html: `<p>No payment was taken.</p>${back}`, noindex: true },
+    { ...NO_STORE, 'Referrer-Policy': 'no-referrer' },
+  )
+})
+
+site.get('/offers/:slug', async (c) => {
+  const db = getDb(c.env)
+  const offer = await sellableOffer(db, c.req.param('slug'))
+  if (!offer) return notFound(c)
+
+  // The converting post rides from the post's link (`?from=<broadcast id>`) into
+  // the Buy form. Checked here so a bad value is never echoed, and again at Buy.
+  const from = await convertingPost(db, c.req.query('from'))
+  const e = escapeHtml
+  const html = [
+    offer.product.description ? `<p>${e(offer.product.description)}</p>` : '',
+    `<form method="post" action="/offers/${e(offer.slug)}/buy" class="kolea-buy">`,
+    from ? `<input type="hidden" name="from" value="${from}">` : '',
+    `<p><button type="submit">Buy · ${e(money(offer.price.unitAmount, offer.price.currency))}</button></p>`,
+    '</form>',
+  ].join('')
+  return storePage(c, { title: offer.product.name, html, description: offer.product.description })
+})
+
+/**
+ * Buy. A same-origin POST: a form on another site cannot open Checkouts in a
+ * reader's name. 303 to Stripe on success; every refusal is a page that says so.
+ */
+site.post('/offers/:slug/buy', async (c) => {
+  const origin = c.req.header('Origin')
+  if (origin && c.env.SITE_URL && origin !== new URL(c.env.SITE_URL).origin) {
+    return c.text('Forbidden', 403)
+  }
+
+  const form = await c.req.parseBody()
+  const db = getDb(c.env)
+  const result = await startCheckout(c.env, db, {
+    slug: c.req.param('slug'),
+    from: typeof form.from === 'string' ? form.from : null,
+    ip: c.req.header('CF-Connecting-IP') ?? null,
+    userAgent: c.req.header('User-Agent') ?? null,
+  })
+
+  if (result.ok) return c.redirect(result.url, 303)
+  switch (result.reason) {
+    case 'not_for_sale':
+      return storePage(c, { title: 'Not for sale', html: '<p>This is not for sale right now.</p>', noindex: true, status: 404 })
+    case 'throttled':
+      return storePage(c, { title: 'Too many tries', html: '<p>Too many tries. Please wait an hour and try again.</p>', noindex: true, status: 429 })
+    default:
+      return storePage(c, {
+        title: 'Checkout unavailable',
+        html: '<p>Checkout could not be opened just now. Nothing was charged. Please try again in a minute.</p>',
+        noindex: true,
+        status: 503,
+      })
+  }
+})
+
+// Members and Premium: fixed paths, so they go above the catch-alls.
+site.route('/', memberRoutes)
+
 // ── The catch-alls. Registered last: every fixed path above must win over them.
 
 site.get('/:tag/page/:n', async (c) => {
@@ -324,7 +525,7 @@ site.get('/:tag/:slug', async (c) => {
   const tags = await tagsForPost(req.db, post.id)
   const canonical = postPath(post.slug, tags[0]?.slug)
   if (canonical !== c.req.path) return c.redirect(canonical, 301)
-  return send(c, await renderPost(req, post, tags), req, post.id)
+  return sendPost(c, req, post, tags)
 })
 
 /**
@@ -339,7 +540,7 @@ site.get('/:slug', async (c) => {
   if (post) {
     const tags = await tagsForPost(req.db, post.id)
     if (tags[0]) return c.redirect(postPath(post.slug, tags[0].slug), 301)
-    return send(c, await renderPost(req, post, tags), req, post.id)
+    return sendPost(c, req, post, tags)
   }
   const tag = await getPostTagBySlug(req.db, slug)
   return send(c, tag ? await renderTag(req, tag, 1) : null, req)
@@ -353,7 +554,11 @@ function rss(cfg: SiteConfig, posts: Post[], tags: Map<number, PostTag[]>): stri
   const items = posts
     .map((p) => {
       const url = `${cfg.origin}${postPath(p.slug, tags.get(p.id)?.[0]?.slug)}`
-      const body = renderPostHtml({ json: p.bodyJson, md: p.bodyMd })
+      // A feed is read by anybody, so a gated post carries only its teaser.
+      const body =
+        decideAccess('anonymous', p.accessLevel) === 'full'
+          ? renderPostHtml({ json: p.bodyJson, md: p.bodyMd })
+          : teaserHtml({ level: p.accessLevel, slug: p.slug, excerpt: p.excerpt, origin: cfg.origin })
       return [
         '<item>',
         `<title>${escapeHtml(p.subject)}</title>`,
@@ -362,8 +567,8 @@ function rss(cfg: SiteConfig, posts: Post[], tags: Map<number, PostTag[]>): stri
         `<guid isPermaLink="true">${escapeHtml(url)}</guid>`,
         `<pubDate>${p.publishedAt.toUTCString()}</pubDate>`,
         p.excerpt ? `<description>${escapeHtml(p.excerpt)}</description>` : '',
-        // Full text in the feed on purpose. The point of owning the list is that
-        // the reader gets the whole thing wherever they read.
+        // Full text in the feed on purpose (public posts). The point of owning the
+        // list is that the reader gets the whole thing wherever they read.
         `<content:encoded><![CDATA[${body.replaceAll(']]>', ']]&gt;')}]]></content:encoded>`,
         '</item>',
       ].join('')

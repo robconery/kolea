@@ -1,4 +1,5 @@
 import type { McpServer } from '@modelcontextprotocol/server'
+import { listFields } from '../core/fields.ts'
 import type { Ctx } from './kit.ts'
 
 /**
@@ -27,12 +28,14 @@ Consequences worth holding onto:
 - Leaving a sequence is a *standing preference*. \`sequence_enroll\` refuses anyone who left,
   and no operator action overrides that — only the subscriber can rejoin, from the
   preference center.
-- An *exit* is not an opt-out. \`sequence_update\` can set exit tags ("got this tag → leave
+- An *exit* is not an opt-out. \`sequence_exit_set\` (or \`sequence_update\`) sets exit tags ("got this tag → leave
   this series, optionally join that one") and a next sequence for finishers. Both are
   automation: they cancel or enroll, record why, and never write a consent record. To pull
   people out by rule, set an exit. \`sequence_remove_person\` records that the *person chose*
   to leave, permanently — never use it for automation.
 - Receipts and password resets are not marketing. An unsubscribe never blocks one.
+- Somebody who asks you (by reply, by ticket) to stop the newsletter: \`subscriber_unsubscribe\`.
+  Broadcast scope only — their sequences and receipts continue, and no suppression is written.
 - To stop mailing somebody, use \`suppression_add\`. \`subscriber_delete\` is for erasure
   requests and destroys their history, their messages and their purchases.
 
@@ -81,13 +84,18 @@ not a log line: \`mcp_calls\`, \`sync_runs\`, \`events\`, \`messages.suppressed_
 
 const MERGE_TAGS = `# Merge tags
 
-Supported in both a subject line and a body:
+Supported in a body (and in the subject of purchase mail):
 
 | Tag | Renders |
 |---|---|
 | \`{{name}}\` | The subscriber's name, or "there" when unknown |
 | \`{{first_name}}\` | First word of their name, or "there" |
 | \`{{email}}\` | Their address |
+
+Plus every **custom field**, by its key — listed below. A field the reader has no value for
+renders its fallback, else nothing.
+
+A fallback follows a bar: \`{{first_name|friend}}\`, \`{{plan|the free plan}}\`.
 
 Anything else is **not substituted**. An unknown \`{{plan_name}}\` is delivered to the reader
 verbatim, braces and all — it does not error, and it does not blank out.
@@ -96,6 +104,14 @@ verbatim, braces and all — it does not error, and it does not blank out.
 thing between a typo and a subscriber reading "Your {{plan_name}} plan". Check the preflight
 output before sending, every time.
 `
+
+/** The fixed text plus this list's custom fields, read live. */
+function mergeTagsDoc(fields: { key: string; label: string; type: string }[]): string {
+  const rows = fields.length
+    ? fields.map((f) => `| \`{{${f.key}}}\` | ${f.label} (${f.type}) |`).join('\n')
+    : '_No custom fields yet. Create them on the Custom fields screen._'
+  return `${MERGE_TAGS}\n## Custom fields\n\n${fields.length ? '| Tag | Field |\n|---|---|\n' : ''}${rows}\n\nThe same keys are what a segment rule's \`fields\` conditions and subscriber_upsert's \`fields\` take.\n`
+}
 
 export function registerResources(server: McpServer, ctx: Ctx): void {
   server.registerResource(
@@ -115,10 +131,14 @@ export function registerResources(server: McpServer, ctx: Ctx): void {
     'kolea://merge-tags',
     {
       title: 'Merge tags',
-      description: 'Which {{tags}} the email renderer understands.',
+      description: 'Which {{tags}} the email renderer understands, including this list’s custom fields and their types.',
       mimeType: 'text/markdown',
     },
-    async (uri) => ({ contents: [{ uri: uri.href, mimeType: 'text/markdown', text: MERGE_TAGS }] }),
+    async (uri) => ({
+      contents: [
+        { uri: uri.href, mimeType: 'text/markdown', text: mergeTagsDoc(await listFields(ctx.db)) },
+      ],
+    }),
   )
 
   server.registerResource(
@@ -167,7 +187,8 @@ export function registerResources(server: McpServer, ctx: Ctx): void {
         .bind(since)
         .all()
       const engagement = await ctx.env.DB.prepare(
-        'select type, count(*) as n from events where occurred_at >= ?1 group by type',
+        // `n` counts readers; `machine` is prefetch opens (events.machine), apart.
+        'select type, count(*) - sum(machine) as n, sum(machine) as machine from events where occurred_at >= ?1 group by type',
       )
         .bind(since)
         .all()

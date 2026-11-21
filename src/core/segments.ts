@@ -1,6 +1,7 @@
-import { type SQL, and, asc, count, eq, gt, gte, inArray, lte, notInArray, sql } from 'drizzle-orm'
+import { type SQL, and, asc, count, eq, gt, gte, inArray, lte, max, notInArray, sql } from 'drizzle-orm'
 import type { Db } from '../db/index.ts'
 import {
+  type FieldCondition,
   type Offer,
   type SegmentRule,
   type Tag,
@@ -11,6 +12,7 @@ import {
   subscriberTags,
   subscribers,
 } from '../db/schema.ts'
+import { type RawCondition, checkConditions, describeCondition, jsonPath, opsFor, takesValue } from './fields.ts'
 import { slugify } from './ids.ts'
 
 export type { SegmentRule }
@@ -61,8 +63,94 @@ function ruleFilters(db: Db, rule: SegmentRule): SQL[] {
   if (rule.joinedBefore) filters.push(lte(subscribers.createdAt, new Date(rule.joinedBefore)))
 
   filters.push(...purchaseFilters(db, rule))
+  for (const c of rule.conditions ?? []) filters.push(conditionFilter(c))
 
   return filters
+}
+
+/** Matches nobody. What a condition compiles to when it cannot be compiled safely. */
+const NOBODY = sql`0`
+
+/**
+ * One custom-field test, as a predicate on `subscribers.attributes`.
+ *
+ * Inline, no subquery, no join: a condition costs nothing against the D1 query
+ * budget, and a segment count stays one query however many conditions it has.
+ *
+ * Injection-safe by construction. The json path is built only from a key that
+ * passes `FIELD_KEY` (`jsonPath` returns null otherwise), and both the path and
+ * the value are bound parameters, never spliced. Stored rules were validated
+ * against the definitions on save (`checkConditions`), but a rule is JSON in a
+ * row and can be edited around that — so this re-checks the shape and **fails
+ * closed**: an unknown op, a bad key, an op that doesn't suit the type or a
+ * value of the wrong kind matches nobody. Failing open would be how an
+ * `is not set` typo mails the whole list.
+ *
+ * Comparisons are like-with-like: `json_type` pins the stored
+ * value's kind before comparing, so a number field holding the text "5" is not
+ * over 3, and a date (stored as `YYYY-MM-DD` text, which sorts as dates do) is
+ * compared as text.
+ */
+function conditionFilter(c: FieldCondition): SQL {
+  const path = jsonPath(c.key)
+  if (!path || !opsFor(c.type)?.includes(c.op)) return NOBODY
+
+  const attrs = subscribers.attributes
+  const kind = sql`json_type(${attrs}, ${path})`
+  const value = sql`json_extract(${attrs}, ${path})`
+
+  if (c.op === 'is_set') return sql`${kind} is not null`
+  if (c.op === 'is_not_set') return sql`${kind} is null`
+  if (!takesValue(c.op) || c.value === undefined) return NOBODY
+
+  if (c.op === 'contains') {
+    if (typeof c.value !== 'string') return NOBODY
+    const pattern = `%${c.value.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`
+    return sql`(${kind} = 'text' and ${value} like ${pattern} escape '\\')`
+  }
+
+  // The stored kind that a value of this field type must have to be compared.
+  let same: SQL
+  let bound: string | number
+  switch (c.type) {
+    case 'number':
+      if (typeof c.value !== 'number' || !Number.isFinite(c.value)) return NOBODY
+      same = sql`${kind} in ('integer', 'real')`
+      bound = c.value
+      break
+    case 'boolean':
+      // JSON true/false carry their own type names; no value comparison needed.
+      if (typeof c.value !== 'boolean' || c.op !== 'equals') return NOBODY
+      return c.value ? sql`${kind} = 'true'` : sql`${kind} = 'false'`
+    case 'date':
+      if (typeof c.value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(c.value)) return NOBODY
+      same = sql`${kind} = 'text'`
+      bound = c.value
+      break
+    case 'text':
+      if (typeof c.value !== 'string') return NOBODY
+      same = sql`${kind} = 'text'`
+      bound = c.value
+      break
+    default:
+      return NOBODY
+  }
+
+  switch (c.op) {
+    case 'equals':
+      return sql`(${same} and ${value} = ${bound})`
+    // "is not pro" includes the people with no plan at all.
+    // `coalesce` because a missing value makes the inner test NULL, and
+    // `not NULL` is NULL, which a WHERE treats as false.
+    case 'not_equals':
+      return sql`not coalesce((${same} and ${value} = ${bound}), 0)`
+    case 'greater_than':
+      return sql`(${same} and ${value} > ${bound})`
+    case 'less_than':
+      return sql`(${same} and ${value} < ${bound})`
+    default:
+      return NOBODY
+  }
 }
 
 /**
@@ -177,14 +265,37 @@ export async function resolveSegment(
   rule: SegmentRule,
   afterId = 0,
   limit = PAGE,
+  /** Inclusive upper bound on `subscribers.id` — a broadcast's frozen audience. */
+  upToId?: number,
 ): Promise<{ id: number; email: string; status: string }[]> {
   return await db
     .select({ id: subscribers.id, email: subscribers.email, status: subscribers.status })
     .from(subscribers)
-    .where(and(...ruleFilters(db, rule), gt(subscribers.id, afterId)))
+    .where(
+      and(
+        ...ruleFilters(db, rule),
+        gt(subscribers.id, afterId),
+        ...(upToId === undefined ? [] : [lte(subscribers.id, upToId)]),
+      ),
+    )
     .orderBy(asc(subscribers.id))
     .limit(limit)
     .all()
+}
+
+/**
+ * The highest subscriber id a rule matches right now, or 0 for nobody. A
+ * broadcast freezes this at dispatch (`broadcasts.audience_upper_id`) so its
+ * cursored walk can never reach somebody who joined after it started. One
+ * query, same WHERE builder as the count and the walk.
+ */
+export async function audienceUpperBound(db: Db, rule: SegmentRule): Promise<number> {
+  const row = await db
+    .select({ n: max(subscribers.id) })
+    .from(subscribers)
+    .where(and(...ruleFilters(db, rule)))
+    .get()
+  return row?.n ?? 0
 }
 
 export async function countSegment(db: Db, rule: SegmentRule): Promise<number> {
@@ -309,6 +420,7 @@ export function describeRule(
   rule: SegmentRule,
   tags: Pick<Tag, 'id' | 'name'>[],
   offers: Pick<Offer, 'slug' | 'title'>[] = [],
+  fields: { key: string; label: string }[] = [],
 ): string {
   const name = (id: number) => tags.find((t) => t.id === id)?.name ?? `tag ${id}`
   const offerName = (slug: string) => offers.find((o) => o.slug === slug)?.title ?? slug
@@ -364,5 +476,62 @@ export function describeRule(
   if (rule.purchasedAfter) parts.push(`bought since ${day(rule.purchasedAfter)}`)
   if (rule.purchasedBefore) parts.push(`nothing since ${day(rule.purchasedBefore)}`)
 
+  for (const c of rule.conditions ?? []) {
+    parts.push(describeCondition(c, fields.find((f) => f.key === c.key)?.label))
+  }
+
   return parts.length === 0 ? 'Everyone active' : `Active, ${parts.join(', ')}`
+}
+
+/**
+ * A segment rule as a caller writes it — MCP's `rule` argument, the REST API's
+ * body — snake_case, dates as text, field conditions untyped. Deliberately
+ * flat: no boolean tree, no nesting.
+ */
+export interface RuleInput {
+  match?: 'any' | 'all'
+  include_tag_ids?: number[]
+  exclude_tag_ids?: number[]
+  joined_after?: string
+  joined_before?: string
+  fields?: RawCondition[]
+}
+
+/**
+ * Turn caller input into a stored rule, or say why not. Field conditions are
+ * typed against the live definitions: the type comes from the field, never the
+ * call. One function for every door, so MCP and the API accept the same rules.
+ */
+export async function ruleFromInput(
+  db: Db,
+  input: RuleInput,
+): Promise<{ ok: true; rule: SegmentRule } | { ok: false; reason: string; field?: string }> {
+  // One statement binds every tag id and condition value (D1: 100 parameters,
+  // shared with the status and paging binds), so a rule stays well under it.
+  const binds = (input.include_tag_ids?.length ?? 0) + (input.exclude_tag_ids?.length ?? 0) + 2 * (input.fields?.length ?? 0)
+  if (binds > 40) {
+    return { ok: false, reason: 'A segment can name at most 40 tags and conditions in all (a condition counts twice).', field: 'include_tag_ids' }
+  }
+  const rule: SegmentRule = {}
+  if (input.match) rule.match = input.match
+  if (input.include_tag_ids?.length) rule.includeTagIds = input.include_tag_ids
+  if (input.exclude_tag_ids?.length) rule.excludeTagIds = input.exclude_tag_ids
+
+  for (const [key, field, value] of [
+    ['joinedAfter', 'joined_after', input.joined_after],
+    ['joinedBefore', 'joined_before', input.joined_before],
+  ] as const) {
+    if (!value) continue
+    const ms = Date.parse(value)
+    if (Number.isNaN(ms)) return { ok: false, reason: `"${value}" is not a parseable date`, field }
+    rule[key] = ms
+  }
+
+  if (input.fields?.length) {
+    const checked = await checkConditions(db, input.fields)
+    if (!checked.ok) return { ok: false, reason: checked.errors.join('; '), field: 'fields' }
+    rule.conditions = checked.conditions
+  }
+
+  return { ok: true, rule }
 }

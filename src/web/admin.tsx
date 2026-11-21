@@ -1,6 +1,7 @@
 import { count, desc, eq, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { tickSequences } from '../core/sequences.ts'
+import { trackingBaseUrl } from '../core/tracking-host.ts'
 import { unsuppressAddress, suppressAddress } from '../core/consent.ts'
 import { getDb } from '../db/index.ts'
 import {
@@ -25,6 +26,8 @@ import { GoalBar } from './admin-goals.tsx'
 import { StoreHeadline, TierCard, monthColumn } from './admin-store.tsx'
 import { ColumnChart } from './charts.tsx'
 import { Flash, Layout, fmtDate, fmtMoney, statusPill } from './layout.tsx'
+import { offerChecklist, onboardingProgress } from '../core/onboarding.ts'
+import { OnboardingCard } from './admin-onboarding.tsx'
 
 export const admin = new Hono<{ Bindings: Env }>()
 
@@ -75,6 +78,10 @@ admin.get('/', async (c) => {
   // answer on its own: revenue says how much came in, a goal says whether that
   // was the number you were aiming at.
   const goals = await activeGoals(db, 4)
+
+  // First run: the checklist sits above everything until each step is settled
+  // or the operator dismisses it.
+  const setup = await onboardingProgress(c.env, db)
 
   const recent = await db
     .select({
@@ -127,6 +134,8 @@ admin.get('/', async (c) => {
       </div>
 
       <Flash msg={c.req.query('flash')} />
+
+      {offerChecklist(setup) ? <OnboardingCard progress={setup} from="/" /> : null}
 
       {(subs?.n ?? 0) === 0 ? (
         <div class="note">
@@ -609,6 +618,12 @@ admin.get('/settings', async (c) => {
                 <td class="mono">{c.env.PUBLIC_URL}</td>
               </tr>
               <tr>
+                <td class="muted">Tracking host</td>
+                <td class="mono">
+                  {c.env.TRACKING_HOST ? trackingBaseUrl(c.env) : 'Public URL (TRACKING_HOST not set)'}
+                </td>
+              </tr>
+              <tr>
                 <td class="muted">Queue</td>
                 <td class="mono">{c.env.SEND_QUEUE ? 'bound' : 'not bound, sending inline'}</td>
               </tr>
@@ -646,9 +661,18 @@ admin.get('/settings', async (c) => {
        "body":"Here you go: [link](https://example.com)",
        "idempotency_key":"order-1234"}'`}
           </pre>
+          <p class="muted">
+            Or name a stored <a href="/transactional">transactional template</a> and fill its
+            variables instead of sending a subject and body:
+          </p>
+          <pre class="mono code">
+{`  -d '{"to":"someone@example.com",
+       "template":"order-receipt",
+       "variables":{"order_id":"A-1042"},
+       "idempotency_key":"order-1234"}'`}
+          </pre>
           <p class="faint">
-            Create a key with <span class="mono">bun run seed</span> output, or via the API keys
-            table. ⚠️ TODO: key management UI.
+            Make a <span class="mono">send</span> key on <a href="/settings/agents">Agents &amp; keys</a>.
           </p>
         </div>
       </div>

@@ -1,7 +1,7 @@
 import { marked } from 'marked'
 import type { DocNode } from '../db/schema.ts'
 import { docIsEmpty } from './render-doc.ts'
-import { escapeHtml, mergeFields } from './text.ts'
+import { TESTIMONIAL_WALL_PATH, escapeHtml, mergeFields } from './text.ts'
 
 /**
  * TipTap/ProseMirror JSON → HTML for the public web site.
@@ -25,20 +25,37 @@ import { escapeHtml, mergeFields } from './text.ts'
  */
 
 /** What a merge tag renders as with no recipient behind it. */
-function neutral(field: string): string {
+function neutral(field: string, fallback?: unknown): string {
+  const written = typeof fallback === 'string' && fallback.trim() ? fallback.trim() : undefined
   switch (field) {
     case 'name':
     case 'first_name':
-      return 'there'
+      return written ?? 'there'
+    // A testimonial link in mail is one reader's own; on a page nobody is that
+    // reader, so the words point at the wall everyone can read.
+    case 'testimonial_link':
+      return TESTIMONIAL_WALL_PATH
     // `email`, `link` and anything else are per-person by definition. Rendering
-    // a placeholder would be worse than rendering nothing.
+    // a placeholder would be worse than rendering nothing. A fallback the
+    // writer chose is not a placeholder, though — it is the copy for "nobody".
     default:
-      return ''
+      return written ?? ''
   }
 }
 
 export function renderDocToWebHtml(doc: DocNode): string {
-  return children(doc)
+  return neutralizeLinks(children(doc))
+}
+
+/**
+ * `{{testimonial_link}}` is most often a link *target* (a button, a link mark),
+ * which the walker does not merge. Resolve those to the public wall here so a
+ * post never carries the raw tag, and never anything personal.
+ */
+function neutralizeLinks(html: string): string {
+  return html
+    .replaceAll('{{testimonial_link}}', TESTIMONIAL_WALL_PATH)
+    .replaceAll(encodeURIComponent('{{testimonial_link}}'), TESTIMONIAL_WALL_PATH)
 }
 
 function children(node: DocNode): string {
@@ -126,7 +143,7 @@ function renderNode(node: DocNode): string {
     }
 
     case 'mergeTag':
-      return escapeHtml(neutral(String(node.attrs?.field ?? '')))
+      return escapeHtml(neutral(String(node.attrs?.field ?? ''), node.attrs?.fallback))
 
     case 'table':
       // The wrapper is what keeps a wide table from pushing the whole page
@@ -223,7 +240,7 @@ export function renderPostHtml(body: PostBody): string {
   if (body.json && !docIsEmpty(body.json)) return renderDocToWebHtml(body.json)
   // Imported markdown carries merge tags that no longer have a recipient.
   const neutralized = mergeFields(body.md, { email: '', name: null })
-  return marked.parse(neutralized, { async: false }) as string
+  return neutralizeLinks(marked.parse(neutralized, { async: false }) as string)
 }
 
 /**
@@ -239,7 +256,10 @@ export function postPlainText(body: PostBody): string {
 
 function docText(node: DocNode): string {
   if (node.type === 'text') return node.text ?? ''
-  if (node.type === 'mergeTag') return neutral(String(node.attrs?.field ?? ''))
+  if (node.type === 'mergeTag') {
+    const field = String(node.attrs?.field ?? '')
+    return field === 'testimonial_link' ? '' : neutral(field, node.attrs?.fallback)
+  }
   if (node.type === 'hardBreak') return ' '
   const inner = (node.content ?? []).map(docText).join('')
   return BLOCKS.has(node.type ?? '') ? `${inner} ` : inner

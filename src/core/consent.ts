@@ -10,6 +10,7 @@ import {
 // `sequences` is used for existence checks as well as the preference listing.
 import { logActivity } from './activity.ts'
 import { normalizeEmail } from './ids.ts'
+import { emitWebhook, subscriberPayload } from './webhooks.ts'
 
 /**
  * ⭐ Scoped consent.
@@ -25,6 +26,15 @@ import { normalizeEmail } from './ids.ts'
  * Only `unsubscribeAll`, a hard bounce, or a complaint may write a suppression.
  * Every other path in this codebase must go through the functions below rather
  * than writing those tables directly.
+ *
+ * One more reason exists, and it is not a fourth cause of "off everything":
+ * `pruned` is the marker a list clean-up leaves on the address of somebody it
+ * deleted after they left the newsletter. It carries exactly their old
+ * broadcast-scoped choice past the deletion and nothing wider: it blocks
+ * broadcasts (and makes an import bring them back `unsubscribed`), and it does
+ * not block a sequence they join, transactional mail, or a double opt-in
+ * confirmation. The person signing up again themselves clears it
+ * (`clearPrunedMarker`).
  */
 
 export type Scope = { kind: 'broadcast' } | { kind: 'sequence'; sequenceId: number }
@@ -110,8 +120,25 @@ export async function loadConsentSnapshot(
   return { suppressions: suppressed, sequenceOptouts: optouts }
 }
 
+/** Any suppression at all, `pruned` included. The broadcast rule. */
 export function isSuppressedIn(snap: ConsentSnapshot, email: string): boolean {
   return snap.suppressions.has(normalizeEmail(email))
+}
+
+/** The clean-up's broadcast-only marker; see the header. */
+export const PRUNED = 'pruned'
+
+export function isPrunedIn(snap: ConsentSnapshot, email: string): boolean {
+  return snap.suppressions.get(normalizeEmail(email)) === PRUNED
+}
+
+/**
+ * A suppression that is off everything marketing: every reason except
+ * `pruned`, which only ever stood for "left the newsletter".
+ */
+function isOffEverythingIn(snap: ConsentSnapshot, email: string): boolean {
+  const reason = snap.suppressions.get(normalizeEmail(email))
+  return reason !== undefined && reason !== PRUNED
 }
 
 /**
@@ -139,7 +166,8 @@ export function canReceiveSequenceIn(
   sub: { id: number; email: string; status: string },
   sequenceId: number,
 ): Block {
-  if (isSuppressedIn(snap, sub.email)) return { blocked: true, reason: 'suppressed' }
+  // `pruned` is broadcast-scoped (see the header): a series they join stays theirs.
+  if (isOffEverythingIn(snap, sub.email)) return { blocked: true, reason: 'suppressed' }
   if (sub.status === 'bounced' || sub.status === 'complained') {
     return { blocked: true, reason: `status:${sub.status}` }
   }
@@ -159,6 +187,29 @@ export function canReceiveSequenceIn(
 export function canReceiveTransactionalIn(snap: ConsentSnapshot, email: string): Block {
   const reason = snap.suppressions.get(normalizeEmail(email))
   if (reason === 'hard_bounce' || reason === 'complaint') return { blocked: true, reason }
+  return OK
+}
+
+/**
+ * Can we send a double opt-in confirmation to this address?
+ *
+ * System mail, so it ignores `unsubscribed` the way transactional mail does:
+ * somebody who left the newsletter and signs up again may be asking to come
+ * back. But stricter than transactional on suppression. A confirmation is the
+ * one mail a stranger can cause by typing an address into a public form, and
+ * the person behind a suppressed address asked for nothing at all, so any
+ * off-everything suppression blocks it, not only a bounce or a complaint.
+ */
+export function canReceiveConfirmationIn(
+  snap: ConsentSnapshot,
+  sub: { email: string; status: string },
+): Block {
+  // Except `pruned`: that address belongs to somebody who only left the
+  // newsletter, and a confirmation is how they come back to it.
+  if (isOffEverythingIn(snap, sub.email)) return { blocked: true, reason: 'suppressed' }
+  if (sub.status === 'bounced' || sub.status === 'complained') {
+    return { blocked: true, reason: `status:${sub.status}` }
+  }
   return OK
 }
 
@@ -271,14 +322,66 @@ export async function unsubscribeBroadcasts(db: Db, subscriberId: number) {
   // return, so the history of who left and when exists nowhere else. Net list
   // growth is uncomputable without this row.
   await logActivity(db, { type: 'unsubscribed', subscriberId, meta: { scope: 'broadcasts' } })
+  await emitUnsubscribed(db, subscriberId, 'broadcasts')
+}
+
+/**
+ * Tell webhook receivers. Leaving one *sequence* is deliberately not an
+ * `unsubscribed` event: it is a narrower choice, and a receiver mirroring the
+ * list must not read it as leaving the newsletter (invariant 2).
+ */
+async function emitUnsubscribed(db: Db, subscriberId: number, scope: 'broadcasts' | 'everything') {
+  await emitWebhook(
+    db,
+    'unsubscribed',
+    async () => {
+      const subscriber = await subscriberPayload(db, subscriberId)
+      return subscriber && { subscriber, scope }
+    },
+    scope === 'everything' ? { dedupeKey: `unsub_all:${subscriberId}` } : {},
+  )
+}
+
+/**
+ * Off the newsletter on the person's say-so, recorded by the operator (an
+ * email reply, a support ticket, `subscriber_unsubscribe`).
+ *
+ * Broadcast scope only, exactly like the preference-center action: no
+ * suppression row, and enrollments carry on — the onboarding series they asked
+ * for still arrives (invariant 2). Only `active` and `pending` move. Someone
+ * already unsubscribed, bounced or complained is already off broadcasts, and
+ * overwriting `bounced` with `unsubscribed` would hide a dead address behind a
+ * consent choice, so those are left exactly as they are.
+ */
+export async function leaveBroadcasts(
+  db: Db,
+  subscriberId: number,
+): Promise<{ outcome: 'unsubscribed' | 'unchanged' | 'not_found'; status?: string }> {
+  const sub = await db
+    .select({ status: subscribers.status })
+    .from(subscribers)
+    .where(eq(subscribers.id, subscriberId))
+    .get()
+  if (!sub) return { outcome: 'not_found' }
+  if (sub.status !== 'active' && sub.status !== 'pending') return { outcome: 'unchanged', status: sub.status }
+  await unsubscribeBroadcasts(db, subscriberId)
+  return { outcome: 'unsubscribed', status: 'unsubscribed' }
 }
 
 export async function resubscribeBroadcasts(db: Db, subscriberId: number) {
-  await db
+  const row = await db
     .update(subscribers)
     .set({ status: 'active', unsubscribedAt: null })
     .where(eq(subscribers.id, subscriberId))
+    .returning({ email: subscribers.email })
+  // Their own act from the preference center: the clean-up's marker for their
+  // old "off the newsletter" choice must not keep blocking the newsletter.
+  if (row[0]) await clearPrunedMarker(db, row[0].email)
   await logActivity(db, { type: 'resubscribed', subscriberId })
+  await emitWebhook(db, 'subscribed', async () => {
+    const subscriber = await subscriberPayload(db, subscriberId)
+    return subscriber && { subscriber, via: 'resubscribed' }
+  })
 }
 
 /**
@@ -317,6 +420,7 @@ export async function unsubscribeAll(db: Db, subscriberId: number, email: string
     meta: { email: normalizeEmail(email), sequencesCancelled: cancelled.map((c) => c.sequenceId) },
     dedupeKey: `unsub_all:${subscriberId}`,
   })
+  await emitUnsubscribed(db, subscriberId, 'everything')
 }
 
 export async function suppressAddress(
@@ -334,6 +438,22 @@ export async function suppressAddress(
   // Already suppressed — nothing changed, so nothing happened.
   if (inserted.length === 0) return
   await logActivityForAddress(db, addr, 'suppressed', { reason })
+}
+
+/**
+ * The person signed up again themselves (a form submit, a double opt-in
+ * click, the preference center): the clean-up's `pruned` marker for their old
+ * "off the newsletter" choice is spent. Removes only a `pruned` row; a hard
+ * bounce, complaint, manual or "off everything" suppression is untouched.
+ */
+export async function clearPrunedMarker(db: Db, email: string): Promise<void> {
+  const addr = normalizeEmail(email)
+  const removed = await db
+    .delete(suppressions)
+    .where(and(eq(suppressions.email, addr), eq(suppressions.reason, PRUNED)))
+    .returning({ email: suppressions.email })
+  if (removed.length === 0) return
+  await logActivityForAddress(db, addr, 'unsuppressed', { reason: PRUNED, via: 'signed_up_again' })
 }
 
 export async function unsuppressAddress(db: Db, email: string) {

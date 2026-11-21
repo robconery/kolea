@@ -132,9 +132,8 @@
 		"SITE_AUTHOR": "{{FROM_NAME}}",
 		"SITE_FORM_SLUG": "newsletter",
 		// Local only: skips the Cloudflare Access check. Never set in production.
-		"DEV_AUTH_BYPASS": "true",
-		// Safe locally: the provider is "console", so an MCP send lands in the Outbox.
-		"MCP_ALLOW_SEND": "true"
+		"DEV_AUTH_BYPASS": "true"
+		// Agent sending is a switch in the admin (System > Agents & keys), off by default.
 	},
 	// ── Production (`bun run deploy` always passes --env production) ───────────
 	"env": {
@@ -232,9 +231,9 @@
 				"DEV_AUTH_BYPASS": "false",
 				// Both required: `web/auth.ts` fails closed and refuses everyone without them.
 				"CF_ACCESS_TEAM_DOMAIN": "{{CF_ACCESS_TEAM_DOMAIN}}",
-				"CF_ACCESS_AUD": "{{CF_ACCESS_AUD}}",
-				// MCP can read and draft everything, but cannot send until this is "true".
-				"MCP_ALLOW_SEND": "false"
+				"CF_ACCESS_AUD": "{{CF_ACCESS_AUD}}"
+				// Agent sending is the switch on System > Agents & keys, off by default.
+				// Add "MCP_ALLOW_SEND": "false" to force it off whatever the switch says.
 			}
 		}
 	}

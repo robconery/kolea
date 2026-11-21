@@ -1,22 +1,26 @@
-import { and, eq, inArray, ne } from 'drizzle-orm'
+import { and, eq, inArray, isNull, lt, ne, or } from 'drizzle-orm'
 import type { Db } from '../db/index.ts'
-import { broadcasts, messages, sequenceSteps, sequences, subscribers } from '../db/schema.ts'
+import { type MergeExtras, broadcasts, messages, sequenceSteps, sequences, subscribers } from '../db/schema.ts'
 import { ConsoleProvider } from '../providers/console.ts'
+import { MailgunProvider } from '../providers/mailgun.ts'
 import { ResendProvider } from '../providers/resend.ts'
-import type { EmailProvider, OutgoingEmail } from '../providers/types.ts'
+import { type EmailProvider, OUTCOME_UNKNOWN, type OutgoingEmail } from '../providers/types.ts'
 import type { AcceptedSend, Env, SendJob } from '../types.ts'
 import {
   type ConsentSnapshot,
   type Scope,
   canReceiveBroadcastIn,
+  canReceiveConfirmationIn,
   canReceiveSequenceIn,
   canReceiveTransactionalIn,
   loadConsentSnapshot,
 } from './consent.ts'
 import { downloadUrl, grantDownload, grantsForMessages } from './downloads.ts'
+import { fieldKeys } from './fields.ts'
 import { normalizeEmail } from './ids.ts'
 import { authoredLead, postUrl } from './posts.ts'
 import { BROADCAST_SCOPE_LABEL, type EmailBody, renderEmail } from './render.ts'
+import { trackingBaseUrl } from './tracking-host.ts'
 
 /**
  * ⭐ Where a preview goes. Never a form field, never a subscriber the operator
@@ -121,12 +125,91 @@ function previewSourceId(target: PreviewTarget): number {
 /** D1 caps bound parameters at 100 per query. */
 const PARAM_CHUNK = 100
 
-function providerFor(env: Env, db: Db): EmailProvider {
+/**
+ * Whether the configured provider can send, without building it. The same
+ * branches as `providerFor` below, kept beside it so a new adapter cannot be
+ * added to one and forgotten in the other. `live` is false for the console
+ * provider: it is the kill switch, and mail lands in the Outbox.
+ */
+export function providerReadiness(env: Env): { name: string; live: boolean; problem: string | null } {
+  if (env.EMAIL_PROVIDER === 'resend') {
+    return env.RESEND_API_KEY
+      ? { name: 'resend', live: true, problem: null }
+      : { name: 'resend', live: false, problem: 'EMAIL_PROVIDER=resend but RESEND_API_KEY is unset — every send fails' }
+  }
+  if (env.EMAIL_PROVIDER === 'mailgun') {
+    return env.MAILGUN_API_KEY && env.MAILGUN_DOMAIN
+      ? { name: 'mailgun', live: true, problem: null }
+      : { name: 'mailgun', live: false, problem: 'EMAIL_PROVIDER=mailgun but MAILGUN_API_KEY or MAILGUN_DOMAIN is unset — every send fails' }
+  }
+  return { name: 'console', live: false, problem: null }
+}
+
+
+/**
+ * The configured provider. Exported for `core/domains.ts`, which asks the same
+ * provider which DNS records it wants — never for sending from outside here.
+ */
+export function providerFor(env: Env, db: Db): EmailProvider {
   if (env.EMAIL_PROVIDER === 'resend') {
     if (!env.RESEND_API_KEY) throw new Error('EMAIL_PROVIDER=resend but RESEND_API_KEY is unset')
     return new ResendProvider(env.RESEND_API_KEY)
   }
+  if (env.EMAIL_PROVIDER === 'mailgun') {
+    if (!env.MAILGUN_API_KEY) throw new Error('EMAIL_PROVIDER=mailgun but MAILGUN_API_KEY is unset')
+    if (!env.MAILGUN_DOMAIN) throw new Error('EMAIL_PROVIDER=mailgun but MAILGUN_DOMAIN is unset')
+    return new MailgunProvider({
+      apiKey: env.MAILGUN_API_KEY,
+      domain: env.MAILGUN_DOMAIN,
+      region: env.MAILGUN_REGION,
+    })
+  }
   return new ConsoleProvider(db)
+}
+
+/**
+ * What `POST /webhooks/:provider` needs to read one provider's webhook: the
+ * adapter, its signing secret, and the status that tells that provider "refused,
+ * do not send this again". Or why the route cannot take it at all.
+ *
+ * Lives here so the route never names an adapter. Reading a webhook needs no
+ * send key: Mailgun's is verified with the signing key alone, so the route works
+ * whichever provider is currently sending (mail already out still reports in).
+ */
+export type WebhookReader =
+  | { ok: true; provider: EmailProvider; secret: string | undefined; rejectStatus: 401 | 406 }
+  | { ok: false; status: 400 | 404 | 503; error: string }
+
+export function webhookReaderFor(env: Env, name: string): WebhookReader {
+  if (name === 'resend') {
+    if (!env.RESEND_API_KEY) return { ok: false, status: 400, error: 'provider not configured' }
+    return {
+      ok: true,
+      provider: new ResendProvider(env.RESEND_API_KEY),
+      secret: env.RESEND_WEBHOOK_SECRET,
+      rejectStatus: 401,
+    }
+  }
+  if (name === 'mailgun') {
+    // Fails closed, like Stripe's. A 503 is one Mailgun retries for hours, so a
+    // bounce posted before the key was set still lands once it is.
+    if (!env.MAILGUN_WEBHOOK_SIGNING_KEY) {
+      return { ok: false, status: 503, error: 'MAILGUN_WEBHOOK_SIGNING_KEY is not configured' }
+    }
+    return {
+      ok: true,
+      provider: new MailgunProvider({
+        apiKey: env.MAILGUN_API_KEY ?? '',
+        domain: env.MAILGUN_DOMAIN ?? '',
+        region: env.MAILGUN_REGION,
+      }),
+      secret: env.MAILGUN_WEBHOOK_SIGNING_KEY,
+      // Mailgun reads 406 as "refused, stop retrying"; anything else but 200 it
+      // retries. A forged or stale signature will not get better with time.
+      rejectStatus: 406,
+    }
+  }
+  return { ok: false, status: 404, error: 'unknown provider' }
 }
 
 /**
@@ -185,6 +268,21 @@ export async function sendMessage(env: Env, db: Db, messageId: number): Promise<
   return outcomes.get(messageId) ?? { status: 'skipped' }
 }
 
+export interface SendOptions {
+  /**
+   * Merge values held in memory only, per message id, never written to the
+   * row. A member's sign-in link is the case: the token must never be stored
+   * in plain text (only its hash is, on `member_sign_in_links`), so it rides
+   * here for the one send and is gone afterwards. A message marked as needing
+   * one (`EPHEMERAL_PREFIX` on its idempotency key) that arrives without it is
+   * suppressed, never sent with a dead `{{…}}` in it.
+   */
+  extras?: Map<number, MergeExtras>
+}
+
+/** Idempotency-key prefix of messages whose merge values exist only in memory. */
+export const EPHEMERAL_PREFIX = 'ephemeral:'
+
 type MessageRow = typeof messages.$inferSelect
 type SubscriberRow = typeof subscribers.$inferSelect
 
@@ -220,6 +318,7 @@ export async function sendMessages(
   env: Env,
   db: Db,
   messageIds: number[],
+  opts: SendOptions = {},
 ): Promise<Map<number, SendOutcome>> {
   const outcomes = new Map<number, SendOutcome>()
   const ids = [...new Set(messageIds)]
@@ -232,7 +331,23 @@ export async function sendMessages(
   // In id order whatever order the queue delivered them in, so the same set of
   // messages always makes the same provider request, byte for byte. A provider
   // that dedupes repeated requests can only do it if a repeat looks the same.
-  const queued = msgs.filter((m) => m.status === 'queued').sort((a, b) => a.id - b.id)
+  const candidates = msgs.filter((m) => m.status === 'queued').sort((a, b) => a.id - b.id)
+  if (candidates.length === 0) return outcomes
+
+  // ⭐ Claim before sending. Re-reading `queued` is not enough on its own: two
+  // consumers that read the same row before either wrote `sent` would both
+  // send it. Only the rows this one conditional update matched are ours.
+  const claimed = await claimForSending(
+    db,
+    candidates.map((m) => m.id),
+  )
+  const queued = candidates.filter((m) => claimed.has(m.id))
+  for (const m of candidates) {
+    // Someone else is sending it right now. Retryable, not skipped: if that
+    // consumer dies, this queue message is what comes back for the row once
+    // the claim expires.
+    if (!claimed.has(m.id)) outcomes.set(m.id, { status: 'failed', error: 'being sent by another consumer', retryable: true })
+  }
   if (queued.length === 0) return outcomes
 
   // ── everything this batch touches, fetched once
@@ -261,7 +376,7 @@ export async function sendMessages(
     for (let i = 0; i < cancelledIds.length; i += 90) {
       await db
         .update(messages)
-        .set({ status: 'failed', error: 'broadcast cancelled' })
+        .set({ status: 'failed', error: 'broadcast cancelled', claimedAt: null })
         .where(inArray(messages.id, cancelledIds.slice(i, i + 90)))
     }
     const dropped = new Set(cancelledIds)
@@ -290,6 +405,9 @@ export async function sendMessages(
     ),
   )
 
+  // Which `{{tags}}` are custom fields. One query for the batch, not per person.
+  const declaredFields = await fieldKeys(db)
+
   const snapshot = await loadConsentSnapshot(
     db,
     queued.map((m) => m.toEmail),
@@ -314,6 +432,12 @@ export async function sendMessages(
       continue
     }
 
+    const ephemeral = opts.extras?.get(msg.id)
+    if (!ephemeral && msg.idempotencyKey?.startsWith(EPHEMERAL_PREFIX)) {
+      outcomes.set(msg.id, await markSuppressed(db, msg.id, 'ephemeral_link_gone'))
+      continue
+    }
+
     const block = eligibility(snapshot, msg, sub, resolved.scope)
     if (block.blocked) {
       outcomes.set(msg.id, await markSuppressed(db, msg.id, block.reason))
@@ -326,7 +450,11 @@ export async function sendMessages(
     // A form's delivery mail is not in that category: the person just joined the
     // list, so it carries the ordinary newsletter footer. Only the *eligibility*
     // rule is transactional — see `eligibility()`.
-    const isMarketing = msg.kind !== 'transactional'
+    //
+    // A double opt-in confirmation is system mail too: no footer (there is
+    // nothing yet to unsubscribe from) and no tracking (the link in it is the
+    // one thing that must never break on a redirect).
+    const isMarketing = msg.kind !== 'transactional' && msg.kind !== 'confirmation'
 
     const grantToken =
       msg.kind === 'form' && msg.formId ? grants.get(`${msg.formId}:${msg.subscriberId}`) : undefined
@@ -335,15 +463,17 @@ export async function sendMessages(
     // when the message was queued (purchase mail); `{{link}}` is looked up live
     // because a grant token never expires and the lookup is already batched.
     const extras =
-      msg.extras || grantToken
+      msg.extras || grantToken || ephemeral
         ? {
             ...(msg.extras ?? {}),
             ...(grantToken ? { link: downloadUrl(env.PUBLIC_URL, grantToken) } : {}),
+            ...(ephemeral ?? {}),
           }
         : undefined
 
     const rendered = renderEmail(resolved.body, {
       publicUrl: env.PUBLIC_URL,
+      trackingUrl: trackingBaseUrl(env),
       messageId: msg.id,
       unsubToken: sub.unsubToken,
       scope: resolved.scope,
@@ -354,7 +484,12 @@ export async function sendMessages(
       postUrl: resolved.postUrl,
       title: resolved.title,
       lead: resolved.lead,
-      subscriber: { email: sub.email, name: sub.name },
+      subscriber: {
+        email: sub.email,
+        name: sub.name,
+        attributes: sub.attributes,
+        fieldKeys: declaredFields,
+      },
       trackOpens: isMarketing,
       trackClicks: isMarketing,
       showFooter: isMarketing,
@@ -383,7 +518,18 @@ export async function sendMessages(
   // ── one provider request for the lot
 
   const provider = providerFor(env, db)
-  const results = await provider.sendBatch(pending.map((p) => p.email))
+  let results: Awaited<ReturnType<EmailProvider['sendBatch']>>
+  try {
+    results = await provider.sendBatch(pending.map((p) => p.email))
+  } catch (err) {
+    // Nothing went out; hand the rows straight back so the queue's retry of
+    // this batch can claim them, rather than waiting out the lease.
+    await releaseClaims(
+      db,
+      pending.map((p) => p.message.id),
+    )
+    throw err
+  }
 
   // ── and one write for everything it said
   //
@@ -400,6 +546,7 @@ export async function sendMessages(
     if (!result) {
       // Shouldn't happen — the port promises one result per input — but a silent
       // `sent` here would be a lost email, so treat it as retryable.
+      writes.push({ messageId: message.id, failed: { error: 'no provider result', retryable: true } })
       outcomes.set(message.id, { status: 'failed', error: 'no provider result', retryable: true })
       continue
     }
@@ -417,11 +564,18 @@ export async function sendMessages(
       continue
     }
 
-    writes.push({ messageId: message.id, failed: { error: result.error, retryable: result.retryable } })
+    // ⭐ "It may have gone" is stored so that it says so on its own: every
+    // resend path leaves an OUTCOME_UNKNOWN row out by its prefix, and it is
+    // never put back on the queue here, whatever the adapter said.
+    const unknown = result.outcomeUnknown === true
+    const error =
+      unknown && !result.error.startsWith(OUTCOME_UNKNOWN) ? `${OUTCOME_UNKNOWN}: ${result.error}` : result.error
+    const retryable = result.retryable && !unknown
+    writes.push({ messageId: message.id, failed: { error, retryable } })
     outcomes.set(message.id, {
       status: 'failed',
-      error: result.error,
-      retryable: result.retryable,
+      error,
+      retryable,
       retryAfterSeconds: result.retryAfterSeconds,
     })
   }
@@ -469,7 +623,8 @@ export class UnrecordedSendError extends Error {
  *
  * `db.batch` is one request to D1 and one transaction. Nothing here touches a
  * row that is already `sent`, so writing the same result twice is harmless and
- * a late write can never take a send back.
+ * a late write can never take a send back. Every result also gives up the send
+ * claim: the row is finished, or it is going back to the queue.
  */
 async function recordResults(db: Db, writes: ResultWrite[]): Promise<void> {
   const statements = writes.map((w) =>
@@ -483,8 +638,14 @@ async function recordResults(db: Db, writes: ResultWrite[]): Promise<void> {
               providerMessageId: w.accepted.providerMessageId,
               sentAt: new Date(w.accepted.sentAt),
               error: null,
+              claimedAt: null,
             }
-          : { status: w.failed.retryable ? ('queued' as const) : ('failed' as const), error: w.failed.error },
+          : {
+              status: w.failed.retryable ? ('queued' as const) : ('failed' as const),
+              error: w.failed.error,
+              // Free at once, so the queue's retry of this row can claim it.
+              claimedAt: null,
+            },
       )
       .where(and(eq(messages.id, w.messageId), ne(messages.status, 'sent'))),
   )
@@ -499,6 +660,44 @@ async function recordResults(db: Db, writes: ResultWrite[]): Promise<void> {
  */
 export async function recordAccepted(db: Db, accepted: AcceptedWrite[]): Promise<void> {
   await recordResults(db, accepted)
+}
+
+/**
+ * How long a send claim holds. Far longer than one provider call; a claim this
+ * old belongs to a consumer that died mid-send, and the row is free again.
+ */
+export const CLAIM_LEASE_MS = 10 * 60 * 1000
+/** Ids per claim statement: 90 plus the three fixed parameters, under D1's 100. */
+const CLAIM_CHUNK = 90
+
+/** Atomically take the still-queued, unclaimed rows among `ids`. Returns the ones taken. */
+async function claimForSending(db: Db, ids: number[]): Promise<Set<number>> {
+  const now = Date.now()
+  const taken = new Set<number>()
+  for (let i = 0; i < ids.length; i += CLAIM_CHUNK) {
+    const rows = await db
+      .update(messages)
+      .set({ claimedAt: new Date(now) })
+      .where(
+        and(
+          inArray(messages.id, ids.slice(i, i + CLAIM_CHUNK)),
+          eq(messages.status, 'queued'),
+          or(isNull(messages.claimedAt), lt(messages.claimedAt, new Date(now - CLAIM_LEASE_MS))),
+        ),
+      )
+      .returning({ id: messages.id })
+    for (const r of rows) taken.add(r.id)
+  }
+  return taken
+}
+
+async function releaseClaims(db: Db, ids: number[]): Promise<void> {
+  for (let i = 0; i < ids.length; i += CLAIM_CHUNK) {
+    await db
+      .update(messages)
+      .set({ claimedAt: null })
+      .where(and(inArray(messages.id, ids.slice(i, i + CLAIM_CHUNK)), eq(messages.status, 'queued')))
+  }
 }
 
 /**
@@ -592,6 +791,7 @@ function eligibility(
   if (msg.kind === 'sequence' && scope.kind === 'sequence') {
     return canReceiveSequenceIn(snapshot, sub, scope.sequenceId)
   }
+  if (msg.kind === 'confirmation') return canReceiveConfirmationIn(snapshot, sub)
   // `form` lands here with `transactional`, deliberately. Handing over the file
   // somebody just asked for is fulfillment, not marketing: an unsubscribed
   // reader still gets their download, and only a dead address or a spam
@@ -602,7 +802,7 @@ function eligibility(
 async function markSuppressed(db: Db, messageId: number, reason: string): Promise<SendOutcome> {
   await db
     .update(messages)
-    .set({ status: 'suppressed', suppressedReason: reason })
+    .set({ status: 'suppressed', suppressedReason: reason, claimedAt: null })
     .where(eq(messages.id, messageId))
   return { status: 'suppressed', reason }
 }

@@ -10,14 +10,19 @@ import type { Db } from '../db/index.ts'
  *
  * Three components, weighted by how much each one actually reflects the writing:
  *
- *   READ (25) — opens over reached. Weighted LOW on purpose. Apple Mail Privacy
- *     Protection pre-fetches tracking pixels, so a large slice of any open rate is
- *     machines. It measures the subject line and the sending reputation, and it
- *     cannot measure the body at all.
+ *   READ (15) — reader opens over reached. Weighted LOW on purpose. Machine
+ *     opens (Apple Mail Privacy Protection, prefetchers, scanners) are detected
+ *     and left out of the count (`core/machine-opens.ts`), but
+ *     detection is a heuristic — a proxy that sends a real browser's agent from
+ *     outside Apple's network still reads as a person — and an open measures the
+ *     subject line and the sending reputation, never the body. So the score does
+ *     both: detects, and still weights opens low.
  *
- *   PULL (45) — clicks over opens. The heaviest weight, because it is the only
- *     figure here where a human read the words and then decided to do something.
- *     It is also MPP-immune: a proxy that opens does not click.
+ *   PULL (45) — clicks over reader opens. The heaviest weight, because it is the
+ *     only figure here where a human read the words and then decided to do
+ *     something. It is also MPP-immune: a proxy that opens does not click. With
+ *     machine opens out of the denominator it reads higher than it did before
+ *     detection existed, and more truthfully.
  *
  *   COST (30) — unsubscribes and complaints over reached, inverted. A send that
  *     buys clicks by burning readers is not effective, it is borrowing.
@@ -293,7 +298,7 @@ export async function recentSignals(db: Db, limit = 12): Promise<BroadcastSignal
            -- per event, so a well-engaged message would otherwise count as three
            -- recipients and quietly deflate every rate on the card.
            count(distinct m.id) as recipients,
-           count(distinct case when e.type = 'open' then e.message_id end) as opened,
+           count(distinct case when e.type = 'open' and e.machine = 0 then e.message_id end) as opened,
            count(distinct case when e.type = 'click' then e.message_id end) as clicked,
            count(distinct case when e.type = 'bounce' then e.message_id end) as bounced,
            count(distinct case when e.type = 'complaint' then e.message_id end) as complained,

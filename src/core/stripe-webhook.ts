@@ -5,6 +5,7 @@ import type { Env } from '../types.ts'
 import { recordConversion } from './conversions.ts'
 import { type SaleResult, recordSale } from './sales.ts'
 import { upsertPrice, upsertProduct } from './stripe-catalog.ts'
+import { completeStoreCheckout, storeTokenOf } from './store.ts'
 import {
   type StripeCharge,
   type StripeCheckoutSession,
@@ -14,6 +15,7 @@ import {
   type StripePaymentIntent,
   type StripePriceObject,
   type StripeProductObject,
+  type StripeSubscriptionObject,
   idOf,
   lineItemAmount,
   lineItemIds,
@@ -21,6 +23,13 @@ import {
   subscriptionOf,
 } from './stripe-client.ts'
 import { emailFor } from './stripe.ts'
+import {
+  applyPremiumCheckout,
+  closePremiumCheckout,
+  observeSubscription,
+  premiumSubscriptionId,
+  subscriptionFacts,
+} from './premium.ts'
 
 /**
  * Stripe webhooks — the live path for money.
@@ -219,11 +228,52 @@ async function dispatch(
       return await onCharge(env, db, object as unknown as StripeCharge, true)
 
     case 'checkout.session.completed':
-    case 'checkout.session.async_payment_succeeded':
-      return await onCheckoutSession(env, db, object as unknown as StripeCheckoutSession)
+    case 'checkout.session.async_payment_succeeded': {
+      const session = object as unknown as StripeCheckoutSession
+      // A Premium Checkout (members). Its money is booked by `invoice.paid`,
+      // which every subscription payment fires, so this only grants access.
+      if (isPremiumSession(session)) return await applyPremiumCheckout(env, db, session, eventTime(event))
+      return await onCheckoutSession(env, db, session)
+    }
 
-    case 'invoice.paid':
-      return await onInvoicePaid(env, db, object as unknown as StripeInvoice)
+    case 'checkout.session.expired':
+    case 'checkout.session.async_payment_failed': {
+      const session = object as unknown as StripeCheckoutSession
+      if (!isPremiumSession(session)) return { status: 'ignored', note: 'not a Premium checkout' }
+      return await closePremiumCheckout(db, session, event.type.endsWith('expired') ? 'expired' : 'failed')
+    }
+
+    case 'customer.subscription.updated':
+    case 'customer.subscription.deleted': {
+      const sub = object as unknown as StripeSubscriptionObject
+      const facts = subscriptionFacts(sub)
+      return await observeSubscription(db, sub.id, {
+        at: eventTime(event),
+        // `.deleted` means the subscription has ended, whatever status it carries.
+        status: event.type === 'customer.subscription.deleted' ? 'canceled' : facts.status,
+        currentPeriodEndAt: facts.currentPeriodEndAt,
+        cancelAtPeriodEnd: facts.cancelAtPeriodEnd,
+        cancelReason: facts.cancelReason,
+      })
+    }
+
+    case 'invoice.payment_failed': {
+      const subscription = subscriptionOf(object as unknown as StripeInvoice)
+      if (!subscription) return { status: 'ignored', note: 'invoice has no subscription' }
+      return await observeSubscription(db, subscription, { at: eventTime(event), status: 'past_due' })
+    }
+
+    case 'invoice.paid': {
+      const invoice = object as unknown as StripeInvoice
+      const outcome = await onInvoicePaid(env, db, invoice)
+      // A paid invoice on a Premium subscription that was past due has recovered.
+      const subscription = subscriptionOf(invoice)
+      if (subscription && (await premiumSubscriptionId(db, subscription))) {
+        const premium = await observeSubscription(db, subscription, { at: eventTime(event), status: 'active' })
+        return { ...outcome, note: `${outcome.note}; ${premium.note}` }
+      }
+      return outcome
+    }
 
     case 'product.created':
     case 'product.updated':
@@ -259,6 +309,16 @@ async function dispatch(
       // discarded event stays distinguishable from a lost one.
       return { status: 'ignored', note: 'no handler for this event type' }
   }
+}
+
+/** Stripe's `created` on the event: the order Premium state changes are applied in. */
+function eventTime(event: StripeEventEnvelope): Date {
+  return new Date(event.created * 1000)
+}
+
+/** A Checkout this Worker started for Premium carries its row's token. */
+function isPremiumSession(session: StripeCheckoutSession): boolean {
+  return session.mode === 'subscription' && Boolean(session.metadata?.kolea_checkout)
 }
 
 // ───────────────────────────────────────────────── money handlers
@@ -331,6 +391,14 @@ async function onCheckoutSession(
   if (!email) return { status: 'ignored', note: 'no email on the checkout session' }
 
   const chargeId = await chargeIdFor(env, session.payment_intent)
+  const storeToken = storeTokenOf(session)
+  if (!chargeId && storeToken) {
+    // A store checkout carries the one fact the charge does not — the post the
+    // reader bought from. Ignoring this event would let `charge.succeeded` book
+    // the money and lose that for good, so it fails instead: the 500 asks
+    // Stripe to redeliver, and by then the charge exists.
+    throw new Error('store checkout paid but no charge resolved yet; Stripe will redeliver')
+  }
   if (!chargeId) {
     // No charge means no shared key with the reconcile. Recording under the
     // session id would create a second row for the same money the moment a
@@ -367,10 +435,14 @@ async function onCheckoutSession(
   // AFTER the items land — both the kind and the offer are read off them.
   const conv = await recordConversion(db, result.saleId, items.data)
 
+  // A store checkout also closes its own row and pins the converting post on
+  // the sale. Nothing else: no mail, no tags — the same sale any checkout makes.
+  const store = storeToken ? await completeStoreCheckout(db, session, result) : null
+
   return {
     status: 'processed',
     saleId: result.saleId,
-    note: `checkout ${result.status}, ${attached} line item(s) attached, conversion ${conv.status}${conv.kindSlug ? ` (${conv.kindSlug})` : ''}`,
+    note: `checkout ${result.status}, ${attached} line item(s) attached, conversion ${conv.status}${conv.kindSlug ? ` (${conv.kindSlug})` : ''}${store ? `, store checkout ${store}` : ''}`,
   }
 }
 
@@ -393,6 +465,9 @@ async function onInvoicePaid(env: Env, db: Db, invoice: StripeInvoice): Promise<
 
   const { externalId, viaCharge } = await invoiceExternalId(env, invoice)
   const subscription = subscriptionOf(invoice)
+  // Members: a Premium payment says so on the sale, so revenue reports can tell
+  // memberships from products. Null when the checkout event has not landed yet.
+  const premiumId = await premiumSubscriptionId(db, subscription)
 
   const result = await recordSale(db, {
     email,
@@ -410,6 +485,7 @@ async function onInvoicePaid(env: Env, db: Db, invoice: StripeInvoice): Promise<
       invoiceNumber: invoice.number ?? null,
       billingReason: invoice.billing_reason ?? null,
       ...(subscription ? { subscription } : {}),
+      ...(premiumId ? { premiumSubscriptionId: premiumId } : {}),
       // Says whether this row shares a key with the reconcile or not. Without it,
       // an invoice keyed on `in_…` is indistinguishable from one keyed on `ch_…`.
       keyedOn: viaCharge ? 'charge' : 'invoice',

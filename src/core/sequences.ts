@@ -10,6 +10,7 @@ import {
   sequences,
   subscriberTags,
   subscribers,
+  syncRuns,
   tags,
 } from '../db/schema.ts'
 import type { Env } from '../types.ts'
@@ -17,10 +18,25 @@ import type { ActivityInput } from './activity.ts'
 import { logActivities, logActivity } from './activity.ts'
 import { canReceiveSequence } from './consent.ts'
 import { slugify } from './ids.ts'
+import { type SendWindow, checkWindow, nextWindowOpen, windowOpen } from './send-window.ts'
 import { dispatch } from './sending.ts'
+import type { QueryBudget } from './query-budget.ts'
+import { getTimeZone } from './site-settings.ts'
 import { findPlaceholders } from './sequence-templates/placeholders.ts'
 
-const TICK_LIMIT = 200
+/**
+ * Most enrollments one tick takes. The send path costs about
+ * `QUERIES_PER_ENROLLMENT` D1 queries each, so 120 is ~840 — the whole
+ * 1,000-query cap on a quiet minute. A cron tick passes a `QueryBudget` and
+ * takes fewer when a broadcast shares the minute; the rest wait a minute.
+ */
+const TICK_LIMIT = 120
+/** Step, person, consent (2), insert, steps, update: the send path's queries. */
+export const QUERIES_PER_ENROLLMENT = 7
+/** The due read, the zone, the held updates, chaining and the activity flush. */
+const TICK_OVERHEAD = 20
+/** D1 binds at most 100 parameters; leaves room for the fixed ones. */
+const ID_CHUNK = 90
 const DAY_MS = 24 * 60 * 60 * 1000
 
 /** Whole days, clamped to a year. Shared by the admin form and the MCP tools. */
@@ -212,10 +228,26 @@ export async function exitOnTag(db: Db, subscriberId: number, tagId: number): Pr
  * dispatch it, and move the enrollment to the following step.
  *
  * Called from cron, and from the "Run sequences now" button so the whole thing
- * is playable locally without waiting on a clock.
+ * is playable locally without waiting on a clock. `now` is the cron's own
+ * scheduled time when there is one, so a tick that starts late still reads the
+ * window for the minute it was meant to run.
+ *
+ * ⭐ A sequence with a send-time window sends only inside
+ * it. A step that comes due outside the window is not skipped and not dropped:
+ * the enrollment's `next_run_at` moves to the window's next opening, read in the
+ * operator's time zone, and the tick that runs then sends it. Nothing is sent
+ * outside the window, and nothing due is ever lost.
  */
-export async function tickSequences(env: Env, db: Db): Promise<number> {
-  const now = new Date()
+export async function tickSequences(
+  env: Env,
+  db: Db,
+  now: Date = new Date(),
+  opts: { budget?: QueryBudget } = {},
+): Promise<number> {
+  const limit = opts.budget
+    ? opts.budget.fits(QUERIES_PER_ENROLLMENT, TICK_LIMIT, TICK_OVERHEAD)
+    : TICK_LIMIT
+  if (limit === 0) return 0
 
   const due = await db
     .select({
@@ -223,6 +255,8 @@ export async function tickSequences(env: Env, db: Db): Promise<number> {
       sequenceId: sequenceEnrollments.sequenceId,
       subscriberId: sequenceEnrollments.subscriberId,
       stepId: sequenceEnrollments.nextStepId,
+      windowStart: sequences.sendWindowStart,
+      windowEnd: sequences.sendWindowEnd,
     })
     .from(sequenceEnrollments)
     .innerJoin(sequences, eq(sequences.id, sequenceEnrollments.sequenceId))
@@ -233,8 +267,9 @@ export async function tickSequences(env: Env, db: Db): Promise<number> {
         lte(sequenceEnrollments.nextRunAt, now),
       ),
     )
-    .limit(TICK_LIMIT)
+    .limit(limit)
     .all()
+  opts.budget?.spend(TICK_OVERHEAD + QUERIES_PER_ENROLLMENT * due.length)
 
   const toSend: number[] = []
 
@@ -252,11 +287,32 @@ export async function tickSequences(env: Env, db: Db): Promise<number> {
   /** sequenceId → the people who were sent its LAST step in this tick. */
   const finished = new Map<number, number[]>()
 
+  /**
+   * sequenceId → enrollments due outside that sequence's window. Moved forward
+   * in ONE update per sequence after the loop: every one of them waits for the
+   * same opening, and a write per enrollment would spend the D1 budget the
+   * sends need.
+   */
+  const held = new Map<number, { window: SendWindow; ids: number[] }>()
+  // Read once, and only when some due sequence has a window to read it for.
+  let zone: string | null = null
+
   for (const d of due) {
     if (d.stepId === null) {
       await complete(db, d.enrollmentId)
       activity.push(completedActivity(d.subscriberId, d.sequenceId, now, 'no_next_step'))
       continue
+    }
+
+    const window = storedWindow(d.windowStart, d.windowEnd)
+    if (window) {
+      zone ??= await getTimeZone(db)
+      if (!windowOpen(window, now, zone)) {
+        const h = held.get(d.sequenceId) ?? { window, ids: [] }
+        h.ids.push(d.enrollmentId)
+        held.set(d.sequenceId, h)
+        continue
+      }
     }
 
     const step = await db.select().from(sequenceSteps).where(eq(sequenceSteps.id, d.stepId)).get()
@@ -343,10 +399,57 @@ export async function tickSequences(env: Env, db: Db): Promise<number> {
     }
   }
 
+  for (const { window, ids } of held.values()) {
+    const opens = nextWindowOpen(window, now, zone!)
+    for (let i = 0; i < ids.length; i += ID_CHUNK) {
+      await db
+        .update(sequenceEnrollments)
+        .set({ nextRunAt: opens })
+        .where(
+          and(inArray(sequenceEnrollments.id, ids.slice(i, i + ID_CHUNK)), eq(sequenceEnrollments.status, 'active')),
+        )
+    }
+  }
+
   activity.push(...(await chainFinished(db, finished, now)))
   await logActivities(db, activity)
   await dispatch(env, db, toSend)
   return toSend.length
+}
+
+/**
+ * Write down a minutely tick that threw, as a `sync_runs` row the Logs show
+ * under Sequences. The cron catches the throw so the broadcast and the rest of
+ * the minute still run; this is what keeps that catch from being a silence.
+ * The tick itself is idempotent, so the next minute simply tries again.
+ */
+export async function recordTickFailure(db: Db, error: unknown, now: Date = new Date()): Promise<void> {
+  // Drizzle wraps the driver's error in "Failed query: <sql>"; the cause is the
+  // part a person can act on.
+  const reason =
+    error instanceof Error
+      ? error.cause instanceof Error
+        ? error.cause.message
+        : error.message
+      : String(error)
+  await db.insert(syncRuns).values({
+    kind: 'sequence_tick',
+    trigger: 'cron',
+    status: 'failed',
+    notes: [reason.slice(0, 500)],
+    startedAt: now,
+    finishedAt: now,
+  })
+}
+
+/**
+ * A sequence row's window, or null for none. Half a window (one end set) is
+ * treated as none: `updateSequence` never writes one, and a window that cannot
+ * be read must not hold mail forever.
+ */
+export function storedWindow(start: number | null, end: number | null): SendWindow | null {
+  const checked = checkWindow(start, end)
+  return checked.ok ? checked.window : null
 }
 
 function completedActivity(
@@ -541,6 +644,11 @@ export interface SequenceInput {
   campaignId?: number | null
   /** "When this sequence ends, add them to…". Null ends the chain. */
   nextSequenceId?: number | null
+  /**
+   * Only send between these minutes of the day, in the operator's time zone.
+   * Null clears it. See `core/send-window.ts` and `tickSequences`.
+   */
+  sendWindow?: { start: number | null; end: number | null } | null
 }
 
 export async function listSequences(db: Db) {
@@ -596,6 +704,13 @@ export async function updateSequence(
     }
   }
 
+  let window: SendWindow | null | undefined
+  if (patch.sendWindow !== undefined) {
+    const checked = checkWindow(patch.sendWindow?.start ?? null, patch.sendWindow?.end ?? null)
+    if (!checked.ok) return { ok: false, reason: checked.reason }
+    window = checked.window
+  }
+
   const trigger = patch.trigger ?? s.trigger
   await db
     .update(sequences)
@@ -608,6 +723,9 @@ export async function updateSequence(
         : {}),
       ...(patch.campaignId !== undefined ? { campaignId: patch.campaignId } : {}),
       ...(patch.nextSequenceId !== undefined ? { nextSequenceId: patch.nextSequenceId } : {}),
+      ...(window !== undefined
+        ? { sendWindowStart: window?.start ?? null, sendWindowEnd: window?.end ?? null }
+        : {}),
     })
     .where(eq(sequences.id, id))
 
@@ -906,4 +1024,10 @@ export async function enrollmentsFor(db: Db, sequenceId: number, limit = 50) {
     .orderBy(asc(sequenceEnrollments.nextRunAt))
     .limit(limit)
     .all()
+}
+
+/** Whether a sequence is switched on. False for one that does not exist. */
+export async function sequenceIsLive(db: Db, id: number): Promise<boolean> {
+  const row = await db.select({ on: sequences.isActive }).from(sequences).where(eq(sequences.id, id)).get()
+  return row?.on === true
 }

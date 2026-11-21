@@ -6,8 +6,10 @@ import {
   createBroadcast,
   reviseSentBroadcast,
   resumeBroadcast,
+  resumeOutlook,
   startBroadcast,
 } from '../core/broadcasts.ts'
+import { fromAddressStanding } from '../core/domains.ts'
 import { listCampaigns } from '../core/campaigns.ts'
 import { storeMedia } from '../core/media.ts'
 import { setPostTags, tagSlug, tagsForPost } from '../core/post-tags.ts'
@@ -20,9 +22,13 @@ import {
   uniqueSlug,
   unpublishPost,
 } from '../core/posts.ts'
+import { ACCESS_LEVELS, LEVEL_LABEL, isAccessLevel } from '../core/member-access.ts'
 import { postPlainText } from '../core/render-web.ts'
 import { searchPhotos, triggerDownload, unsplashConfigured } from '../core/unsplash.ts'
-import { aiConfigured, modelFor, modelLabel } from '../core/ai/openrouter.ts'
+import { aiReady, modelLabel } from '../core/ai/openrouter.ts'
+import { type Target, latestDone, reviewOf } from '../core/council.ts'
+import { resolveAi } from '../core/ai/settings.ts'
+import { getVoice, voiceSummary } from '../core/ai/ghostwriter-voice.ts'
 import { countSegment, describeRule, listSegments } from '../core/segments.ts'
 import {
   type SequenceTrigger,
@@ -39,11 +45,14 @@ import {
   setExit,
   setSequenceActive,
   stepsFor,
+  storedWindow,
   tickSequences,
   updateSequence,
   updateStep,
 } from '../core/sequences.ts'
 import { findPlaceholders } from '../core/sequence-templates/index.ts'
+import { clock, parseClock, timeZones } from '../core/send-window.ts'
+import { getTimeZone, setTimeZone } from '../core/site-settings.ts'
 import { BROADCAST_SCOPE_LABEL, footerPreviewHtml, previewHtml } from '../core/render.ts'
 import { type PreviewTarget, previewAddress, sendPreview } from '../core/sending.ts'
 import { type Db, getDb } from '../db/index.ts'
@@ -57,6 +66,7 @@ import {
   tags,
 } from '../db/schema.ts'
 import type { Env } from '../types.ts'
+import { refuse } from './audit.ts'
 import {
   CampaignPicker,
   type ComposeAi,
@@ -74,15 +84,60 @@ import {
 
 export const mail = new Hono<{ Bindings: Env }>()
 
-/** The composer's AI buttons, or null to hide them when OpenRouter isn't set up. */
-function composeAi(env: Env, context: string): ComposeAi | null {
-  if (!aiConfigured(env)) return null
+/** The composer's AI buttons, or null to hide them when no key is set up to pay. */
+async function composeAi(env: Env, db: Db, context: string): Promise<ComposeAi | null> {
+  const ai = await resolveAi(env, db)
+  if (!ai.ready) return null
   return {
-    subjectModel: modelLabel(modelFor(env, 'subject')),
-    cleanupModel: modelLabel(modelFor(env, 'cleanup')),
+    subjectModel: modelLabel(ai.models.subject),
+    cleanupModel: modelLabel(ai.models.cleanup),
+    ghostModel: modelLabel(ai.models.ghostwriter),
+    ghostVoice: voiceSummary(await getVoice(db)),
     context,
   }
 }
+
+// ───────────────────────────────────────────────── the reader council
+
+interface CouncilGlance {
+  verdict: string | null
+  split: 'divides' | 'safe' | null
+}
+
+/** What the side column says about the council: null hides it (AI off). */
+async function councilSide(env: Env, db: Db, target: Target): Promise<CouncilGlance | null> {
+  if (!(await aiReady(env, db))) return null
+  const last = await latestDone(db, target)
+  const review = last ? reviewOf(last) : null
+  return { verdict: review?.verdict ?? null, split: review?.split ?? null }
+}
+
+/**
+ * "Ask the council" in an editor's side column. A named submit in the
+ * composer's form: the draft is saved first, then the review desk opens. It
+ * never calls a model by itself; the desk has the button that does.
+ */
+const CouncilSide: FC<{ review: CouncilGlance | null }> = ({ review }) =>
+  review ? (
+    <div class="side-sec" data-test="council-side">
+      <h3>Reader council</h3>
+      <p class="faint" style="margin:0 0 10px">
+        A fan, a skeptic and someone in between read your draft, then an editor says what to keep and what to cut.
+        Advice only.
+      </p>
+      {review.verdict ? (
+        <p style="margin:0 0 10px">
+          <span class={review.split === 'divides' ? 'pill ok' : 'pill warn'}>
+            {review.split === 'divides' ? 'Divides the room' : 'Plays it safe'}
+          </span>{' '}
+          <span class="faint">{review.verdict}</span>
+        </p>
+      ) : null}
+      <button class="btn sm" name="council" value="1" data-test="ask-council">
+        {review.verdict ? 'Open the review' : 'Ask the council'}
+      </button>
+    </div>
+  ) : null
 
 // ───────────────────────────────────────────────── audience picking
 
@@ -243,7 +298,7 @@ mail.get('/broadcasts/new', async (c) => {
       action="/broadcasts"
       autosave="/broadcasts/autosave"
       slop
-      ai={composeAi(c.env, 'a newsletter broadcast to the list')}
+      ai={await composeAi(c.env, db, 'a newsletter broadcast to the list')}
       preview="/broadcasts/preview"
       back="/broadcasts"
       backLabel="Back to broadcasts"
@@ -368,6 +423,8 @@ async function savePostFields(
   }
   if (form.has('web_panel')) {
     patch.featured = form.has('featured')
+    const level = form.get('access_level')
+    if (isAccessLevel(level)) patch.accessLevel = level
     const slug = String(form.get('slug') ?? '').trim()
     if (slug) {
       if (slug !== b.slug) patch.slug = await uniqueSlug(db, id, slug)
@@ -561,7 +618,7 @@ mail.get('/broadcasts/:id', async (c) => {
         action={`/broadcasts/${id}/edit`}
         autosave="/broadcasts/autosave"
         slop
-        ai={composeAi(c.env, 'a newsletter broadcast to the list')}
+        ai={await composeAi(c.env, db, 'a newsletter broadcast to the list')}
         preview="/broadcasts/preview"
         recordId={id}
         back="/broadcasts"
@@ -605,6 +662,7 @@ mail.get('/broadcasts/:id', async (c) => {
               </div>
             ) : null}
             <WebPanel env={c.env} b={b} topics={topics} mode="draft" />
+            <CouncilSide review={await councilSide(c.env, db, { kind: 'broadcast', id })} />
           </>
         }
         foot={
@@ -660,7 +718,7 @@ mail.get('/broadcasts/:id', async (c) => {
       nav="bc"
       action={revising ? `/broadcasts/${id}/revise` : `/broadcasts/${id}`}
       slop
-      ai={revising ? composeAi(c.env, 'a newsletter broadcast that has already been sent') : null}
+      ai={revising ? await composeAi(c.env, db, 'a newsletter broadcast that has already been sent') : null}
       recordId={id}
       back="/broadcasts"
       backLabel="Back to broadcasts"
@@ -761,6 +819,11 @@ mail.get('/broadcasts/:id', async (c) => {
             <div class="l">Opened</div>
             {reached > 0 ? (
               <div class="h">{((stats.opened / reached) * 100).toFixed(1)}% of reached</div>
+            ) : null}
+            {stats.machineOpened > 0 ? (
+              <div class="h" title="Apple Mail Privacy Protection and other prefetchers fetch the pixel whether or not anyone reads the mail. Left out of Opened.">
+                + {stats.machineOpened} machine opens, not counted
+              </div>
             ) : null}
           </div>
           <div class="stat">
@@ -951,6 +1014,20 @@ const WebPanel: FC<{
           <span>Feature it on the front page</span>
         </label>
 
+        {/* On the web only: the mail still goes to its whole segment. A members
+            or Premium post shows everyone else the title, the written excerpt
+            and a way to sign in or upgrade. */}
+        <div class="field">
+          <label for="access_level">Who can read it</label>
+          <select id="access_level" name="access_level">
+            {ACCESS_LEVELS.map((level) => (
+              <option value={level} selected={(b?.accessLevel ?? 'public') === level}>
+                {LEVEL_LABEL[level]}
+              </option>
+            ))}
+          </select>
+        </div>
+
         <details class="web-slug">
           <summary>URL</summary>
           <input
@@ -1109,9 +1186,11 @@ mail.post('/broadcasts/:id/topics', async (c) => {
 
 /** Publish (or refresh) the post from the fields on the form. */
 async function publishFromForm(db: Db, id: number, form: FormData): Promise<string> {
+  const level = form.get('access_level')
   const post = await publishPost(db, id, {
     slug: String(form.get('slug') ?? '').trim() || null,
     excerpt: String(form.get('excerpt') ?? '').trim() || null,
+    ...(isAccessLevel(level) ? { accessLevel: level } : {}),
   })
   await setPostFeatured(db, id, form.get('featured') !== null)
   const tags = await setPostTags(db, id, readTopics(form))
@@ -1167,6 +1246,8 @@ mail.post('/broadcasts/:id/edit', async (c) => {
     )
   }
   if (String(form.get('send') ?? '') === '1') return c.redirect(`/broadcasts/${id}/send`)
+  // "Ask the council" is a submit in this form, so the council reads what is on screen.
+  if (String(form.get('council') ?? '') === '1') return c.redirect(`/broadcasts/${id}/council`)
   return c.redirect(`/broadcasts/${id}?flash=Saved.`)
 })
 
@@ -1256,6 +1337,17 @@ mail.get('/broadcasts/:id/send', async (c) => {
   const warnings: string[] = []
   if (words > 0 && words < 150) warnings.push(`It's short: ${words} words. Is it finished?`)
   if (/\b(TODO|TK|XXX|lorem ipsum)\b/i.test(`${b.subject} ${text}`)) warnings.push('It contains a placeholder (TODO, TK, XXX or lorem ipsum).')
+  // An unverified From domain warns and does not block: the domain may well
+  // have been verified at the provider long before the Sending domains screen
+  // existed.
+  const standing = await fromAddressStanding(c.env, db)
+  if (standing.domain && standing.status !== 'verified') {
+    warnings.push(
+      standing.status === 'unknown'
+        ? `It comes from ${c.env.FROM_EMAIL}, and ${standing.domain} isn't set up under Sending domains, so nothing here has checked its DNS.`
+        : `It comes from ${c.env.FROM_EMAIL}, and ${standing.domain} is ${standing.status} under Sending domains. Mail from it may land in spam or be refused.`,
+    )
+  }
 
   const people = `${audienceSize.toLocaleString('en-US')} ${audienceSize === 1 ? 'person' : 'people'}`
 
@@ -1331,10 +1423,8 @@ mail.get('/broadcasts/:id/resume', async (c) => {
     return c.redirect(`/broadcasts/${id}?flash=${encodeURIComponent(`This broadcast is ${b.status}; only a cancelled send can be resumed.`)}&kind=warn`)
   }
   const choices = await audienceChoices(db)
-  const audienceSize = await countSegment(db, b.segment ?? {})
-  const stats = await broadcastStats(db, id)
-  const already = stats.sent + stats.suppressed
-  const remaining = Math.max(0, audienceSize - already)
+  const outlook = (await resumeOutlook(db, id))!
+  const { audience: audienceSize, alreadySent, remaining } = outlook
   const n = (x: number) => x.toLocaleString('en-US')
 
   return c.html(
@@ -1359,7 +1449,7 @@ mail.get('/broadcasts/:id/resume', async (c) => {
           </p>
           <ul style="margin:0 0 22px;padding-left:18px;line-height:1.7">
             <li>
-              <strong>{n(stats.sent)}</strong> already got it. They will not get it again: every person has one message
+              <strong>{n(alreadySent)}</strong> already got it. They will not get it again: every person has one message
               per broadcast, and sent ones are never re-sent.
             </li>
             <li>It picks up after the last person reached, and anyone who joined since is included.</li>
@@ -1406,7 +1496,11 @@ mail.post('/broadcasts/:id/send', async (c) => {
 
   // Only the confirmation screen's own button carries these. Anything else —
   // an old tab, a stray form, a double submit — goes back to that screen.
-  if (String(form.get('confirm') ?? '') !== 'send') return c.redirect(`/broadcasts/${id}/send`)
+  if (String(form.get('confirm') ?? '') !== 'send') {
+    // Looks like a plain redirect, so the audit trail is told it was a refusal.
+    refuse(c, 'send was not confirmed on the confirmation screen')
+    return c.redirect(`/broadcasts/${id}/send`)
+  }
 
   // The audience can change between the screen and the click (people join,
   // leave, bounce). If it did, show the new number rather than send to it.
@@ -1637,6 +1731,8 @@ mail.get('/sequences/:id', async (c) => {
   const allCampaigns = await listCampaigns(db)
   const flow = (await sequenceFlow(db, id))!
   const otherSequences = (await listSequences(db)).filter((o) => o.id !== id)
+  const zone = await getTimeZone(db)
+  const window = storedWindow(s.sendWindowStart, s.sendWindowEnd)
 
   return c.html(
     <Layout title={s.name} nav="seq">
@@ -1744,8 +1840,62 @@ mail.get('/sequences/:id', async (c) => {
 
       <div class="card">
         <div class="card-h">
+          <h2>When it sends</h2>
+        </div>
+        <div class="card-b">
+          <div class="note">
+            {window ? (
+              <>
+                Steps go out between <strong>{clock(window.start)}</strong> and{' '}
+                <strong>{clock(window.end)}</strong>, {zone}. A step that comes due outside that
+                window waits for it to open; it is never skipped.
+              </>
+            ) : (
+              <>
+                Steps go out the minute they come due, day or night. Set a window to keep them to
+                the hours you choose.
+              </>
+            )}
+          </div>
+          <form method="post" action={`/sequences/${id}/window`}>
+            <div class="row">
+              <div class="field">
+                <label>From</label>
+                <input type="time" name="start" value={window ? clock(window.start) : ''} />
+              </div>
+              <div class="field">
+                <label>Until</label>
+                <input type="time" name="end" value={window ? clock(window.end) : ''} />
+              </div>
+              <div class="field">
+                <label>Your time zone (every sequence uses it)</label>
+                <select name="timeZone">
+                  {timeZones().map((z) => (
+                    <option value={z} selected={z === zone}>
+                      {z}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <button class="btn primary">Save window</button>
+            <p class="faint" style="margin:8px 0 0">
+              Leave both times empty for no window. An end earlier than the start runs past
+              midnight, e.g. 22:00 until 06:00.
+            </p>
+          </form>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-h">
           <h2>Steps</h2>
           <div class="actions">
+            {steps.length > 0 ? (
+              <a class="btn sm" href={`/sequences/${id}/takes`}>
+                Ghostwriter takes
+              </a>
+            ) : null}
             <a class="btn sm primary" href={`/sequences/${id}/steps/new`}>
               Add a step
             </a>
@@ -2154,7 +2304,7 @@ mail.get('/sequences/:id/steps/new', async (c) => {
       action={`/sequences/${id}/steps`}
       autosave={`/sequences/${id}/steps/autosave`}
       slop
-      ai={composeAi(c.env, `step ${count.length + 1} of the automated sequence "${seq.name}"`)}
+      ai={await composeAi(c.env, db, `step ${count.length + 1} of the automated sequence "${seq.name}"`)}
       preview={`/sequences/${id}/steps/preview`}
       back={`/sequences/${id}`}
       backLabel="Back to sequence"
@@ -2288,7 +2438,7 @@ mail.get('/sequences/:id/steps/:stepId', async (c) => {
       action={`/sequences/${id}/steps/${stepId}`}
       autosave={`/sequences/${id}/steps/autosave`}
       slop
-      ai={composeAi(c.env, `step ${step.position} of the automated sequence "${seq?.name ?? ''}"`)}
+      ai={await composeAi(c.env, db, `step ${step.position} of the automated sequence "${seq?.name ?? ''}"`)}
       preview={`/sequences/${id}/steps/preview`}
       recordId={stepId}
       back={`/sequences/${id}`}
@@ -2305,6 +2455,7 @@ mail.get('/sequences/:id/steps/:stepId', async (c) => {
             <h3>All steps</h3>
             <StepNav seqId={id} steps={siblings} current={stepId} />
           </div>
+          <CouncilSide review={await councilSide(c.env, db, { kind: 'step', id: stepId })} />
           <div class="side-sec">
             <h3>Writing</h3>
             <EditorHint />
@@ -2397,6 +2548,7 @@ mail.post('/sequences/:id/steps/:stepId', async (c) => {
     })
     return c.redirect(`/sequences/${id}/steps/${stepId}${q}`)
   }
+  if (String(form.get('council') ?? '') === '1') return c.redirect(`/sequences/${id}/steps/${stepId}/council`)
 
   return c.redirect(`/sequences/${id}/steps/${stepId}?flash=Saved.`)
 })
@@ -2499,6 +2651,29 @@ mail.post('/sequences/:id/next', async (c) => {
     return c.redirect(`/sequences/${id}?flash=${encodeURIComponent(result.reason!)}&kind=warn`)
   }
   return c.redirect(`/sequences/${id}?flash=Saved.`)
+})
+
+mail.post('/sequences/:id/window', async (c) => {
+  const db = getDb(c.env)
+  const id = Number(c.req.param('id'))
+  const form = await c.req.formData()
+  const back = (msg: string, warn = false) =>
+    c.redirect(`/sequences/${id}?flash=${encodeURIComponent(msg)}${warn ? '&kind=warn' : ''}`)
+
+  const start = parseClock(String(form.get('start') ?? ''))
+  const end = parseClock(String(form.get('end') ?? ''))
+  if (start === 'invalid' || end === 'invalid') return back('Times must be HH:MM.', true)
+
+  // The zone first: a window saved against a zone that then failed would read
+  // in the wrong hours until somebody noticed.
+  const zone = String(form.get('timeZone') ?? '').trim()
+  if (zone) {
+    const tz = await setTimeZone(db, zone)
+    if (!tz.ok) return back(tz.reason!, true)
+  }
+  const result = await updateSequence(db, id, { sendWindow: { start, end } })
+  if (!result.ok) return back(result.reason!, true)
+  return back(start === null ? 'No send window: steps go out when due.' : 'Send window saved.')
 })
 
 mail.post('/sequences/:id/exits', async (c) => {

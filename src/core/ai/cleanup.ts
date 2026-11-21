@@ -3,7 +3,7 @@ import type { DocNode } from '../../db/schema.ts'
 import type { Env } from '../../types.ts'
 import { type Report, findSlop } from '../../slop/index.ts'
 import { docToEditable, editableToDoc } from './doc-markdown.ts'
-import { complete, modelFor } from './openrouter.ts'
+import { complete } from './openrouter.ts'
 import { WRITING_GUIDE } from './style.ts'
 
 /**
@@ -84,8 +84,7 @@ export async function cleanUp(env: Env, db: Db, input: { doc: DocNode | null }):
   ].join('\n')
 
   const result = await complete(env, db, {
-    label: 'cleanup',
-    model: modelFor(env, 'cleanup'),
+    task: 'cleanup',
     messages: [
       { role: 'system', content: `${WRITING_GUIDE}\n\n${RULES}` },
       { role: 'user', content: user },
@@ -113,7 +112,7 @@ export async function cleanUp(env: Env, db: Db, input: { doc: DocNode | null }):
 }
 
 /** The draft's own tells, worst first, so the model is told what to stop doing. */
-function problems(report: Report): string {
+export function problems(report: Report): string {
   if (report.hits.length === 0 && report.notes.length === 0) {
     return 'The slop checker found nothing specific in this draft. Tighten it against the guide anyway, and change as little as you need to.'
   }

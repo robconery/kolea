@@ -1,17 +1,14 @@
-import { eq } from 'drizzle-orm'
 import { type Context, Hono } from 'hono'
-import { applyProviderEvent, recordEvent } from '../core/events.ts'
-import { isValidEmail, normalizeEmail } from '../core/ids.ts'
-import { dispatch } from '../core/sending.ts'
+import { applyProviderEvent } from '../core/events.ts'
+import { dispatch, webhookReaderFor } from '../core/sending.ts'
 import {
   type StripeEventEnvelope,
   handleStripeEvent,
   verifyStripeSignature,
 } from '../core/stripe-webhook.ts'
 import { upsertSubscriber } from '../core/subscribers.ts'
+import { acceptSend, parseSendRequest } from '../core/transactional.ts'
 import { getDb } from '../db/index.ts'
-import { messages, subscribers } from '../db/schema.ts'
-import { ResendProvider } from '../providers/resend.ts'
 import type { Env } from '../types.ts'
 import { verifyApiKey } from './auth.ts'
 
@@ -19,105 +16,73 @@ export const api = new Hono<{ Bindings: Env }>()
 
 // ───────────────────────────────────────────────── transactional send
 
-interface SendBody {
-  to?: string
-  subject?: string
-  body?: string
-  name?: string
-  idempotency_key?: string
-}
-
+/**
+ * `POST /api/send` — HTTP shape only. The rules (whole mail or stored template,
+ * `{{variables}}`, idempotency, the quiet recipient) are `core/transactional.ts`.
+ *
+ * 401 for any key problem, 400 for a malformed body, 422 for a well-formed
+ * request naming a template that is missing, inactive, or short of variables,
+ * 202 once the message is durable, 200 for an idempotent replay.
+ */
 api.post('/api/send', async (c) => {
   const db = getDb(c.env)
 
   const key = await verifyApiKey(db, c.req.header('Authorization'))
   if (!key) return c.json({ error: 'invalid token' }, 401)
 
-  let payload: SendBody
+  let payload: unknown
   try {
-    payload = await c.req.json<SendBody>()
+    payload = await c.req.json()
   } catch {
     return c.json({ error: 'body must be JSON' }, 400)
   }
 
-  const to = normalizeEmail(payload.to ?? '')
-  if (!to || !isValidEmail(to)) return c.json({ error: 'field `to` must be a valid email' }, 400)
-  if (!payload.subject) return c.json({ error: 'field `subject` is required' }, 400)
-  if (!payload.body) return c.json({ error: 'field `body` is required' }, 400)
+  const parsed = parseSendRequest(payload)
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400)
 
-  // Replaying an idempotency key returns the original result rather than
-  // sending twice (SPEC 7.3).
-  const idem = payload.idempotency_key ? `txn:${payload.idempotency_key}` : null
-  if (idem) {
-    const existing = await db
-      .select()
-      .from(messages)
-      .where(eq(messages.idempotencyKey, idem))
-      .get()
-    if (existing) {
-      return c.json({ id: existing.id, status: existing.status, idempotent: true })
-    }
+  const result = await acceptSend(db, parsed.request)
+
+  if (result.kind === 'refused') {
+    return c.json({ error: result.error, ...(result.missing ? { missing: result.missing } : {}) }, 422)
   }
-
-  // Transactional recipients may not be on the list at all; create them quietly
-  // so the send is attributable, but never enroll or market to them.
-  let sub = await db.select().from(subscribers).where(eq(subscribers.email, to)).get()
-  if (!sub) {
-    const { id } = await upsertSubscriber(db, {
-      email: to,
-      name: payload.name ?? null,
-      source: 'transactional',
-      // Somebody receiving a password reset did not join the newsletter, so they
-      // land `pending`: reachable by this send and invisible to every broadcast.
-      status: 'pending',
-      triggerSubscribeSequences: false,
+  if (result.kind === 'replayed') {
+    return c.json({
+      id: result.messageId,
+      status: result.status,
+      template: result.template,
+      idempotent: true,
     })
-    sub = await db.select().from(subscribers).where(eq(subscribers.id, id!)).get()
   }
-  if (!sub) return c.json({ error: 'could not resolve recipient' }, 500)
-
-  const inserted = await db
-    .insert(messages)
-    .values({
-      subscriberId: sub.id,
-      kind: 'transactional',
-      toEmail: to,
-      subject: payload.subject,
-      bodyMd: payload.body,
-      status: 'queued',
-      idempotencyKey: idem,
-      createdAt: new Date(),
-    })
-    .returning({ id: messages.id })
-
-  const messageId = inserted[0]!.id
 
   // Respond once the message is durably recorded — don't block on the provider
   // (SPEC 7.5).
-  c.executionCtx.waitUntil(dispatch(c.env, db, [messageId]))
+  c.executionCtx.waitUntil(dispatch(c.env, db, [result.messageId]))
 
-  return c.json({ id: messageId, status: 'queued' }, 202)
+  return c.json({ id: result.messageId, status: 'queued', template: result.template }, 202)
 })
 
 // ───────────────────────────────────────────────── provider webhooks
 
-api.post('/webhooks/:provider', async (c) => {
+// Named providers only: the admin's own `/webhooks/:id` screens share the prefix.
+api.post('/webhooks/:provider{resend|mailgun|stripe}', async (c) => {
   const db = getDb(c.env)
   const name = c.req.param('provider')
 
   if (name === 'stripe') return await stripeWebhook(c)
-  if (name !== 'resend') return c.json({ error: 'unknown provider' }, 404)
-  if (!c.env.RESEND_API_KEY) return c.json({ error: 'provider not configured' }, 400)
+  const reader = webhookReaderFor(c.env, name)
+  if (!reader.ok) return c.json({ error: reader.error }, reader.status)
 
-  const provider = new ResendProvider(c.env.RESEND_API_KEY)
+  let evs: Awaited<ReturnType<typeof reader.provider.parseWebhook>>
   try {
-    const evs = await provider.parseWebhook(c.req.raw, c.env.RESEND_WEBHOOK_SECRET)
-    for (const ev of evs) await applyProviderEvent(db, ev)
-    return c.json({ ok: true, applied: evs.length })
+    evs = await reader.provider.parseWebhook(c.req.raw, reader.secret)
   } catch (err) {
     // A bad signature is rejected and observable, never silently accepted.
-    return c.json({ error: String(err) }, 401)
+    return c.json({ error: String(err) }, reader.rejectStatus)
   }
+  // Outside the try: a database failure here is a 500 the provider retries, not
+  // a "bad signature" that tells it to give up on a real bounce.
+  for (const ev of evs) await applyProviderEvent(db, ev)
+  return c.json({ ok: true, applied: evs.length })
 })
 
 /**
@@ -170,47 +135,6 @@ async function stripeWebhook(c: Context<{ Bindings: Env }>) {
     return c.json({ error: String(err), event: event.id }, 500)
   }
 }
-
-// ───────────────────────────────────────────────── tracking
-
-const PIXEL = Uint8Array.from(
-  atob('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'),
-  (ch) => ch.charCodeAt(0),
-)
-
-api.get('/t/open/:id{[0-9]+\\.gif}', async (c) => {
-  const db = getDb(c.env)
-  const messageId = Number(c.req.param('id').replace('.gif', ''))
-
-  // Recording must never be able to break the pixel (SPEC 5.4) — a message row
-  // deleted after send would otherwise 500 this from inboxes forever.
-  try {
-    if (messageId) await recordEvent(db, messageId, 'open')
-  } catch {
-    /* swallow — the pixel matters more than the datapoint */
-  }
-
-  return c.body(PIXEL as unknown as ArrayBuffer, 200, {
-    'Content-Type': 'image/gif',
-    'Cache-Control': 'no-store, no-cache, must-revalidate, private',
-  })
-})
-
-api.get('/t/click/:id', async (c) => {
-  const db = getDb(c.env)
-  const messageId = Number(c.req.param('id'))
-  const url = c.req.query('u')
-  if (!url) return c.notFound()
-
-  // Recording must never be able to break the reader's click (SPEC 5.4).
-  try {
-    if (messageId) await recordEvent(db, messageId, 'click', { url })
-  } catch {
-    /* swallow — the redirect matters more than the datapoint */
-  }
-
-  return c.redirect(url, 302)
-})
 
 // ───────────────────────────────────────────────── public signup
 

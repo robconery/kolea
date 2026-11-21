@@ -31,6 +31,25 @@ export interface Env {
   PUBLIC_URL: string
 
   /**
+   * The sender's own tracking subdomain, e.g. `links.example.com`. Optional.
+   *
+   * Set, new mail's open pixel and tracked links use this host instead of
+   * `PUBLIC_URL`'s, and `worker.tsx` answers `/t/open` and `/t/click` on it —
+   * and nothing else: every other path on it is a 404, so the console can never
+   * be reached through a host with no Access in front of it. The DNS record must
+   * point at this Worker (a Custom Domain or route on the zone).
+   *
+   * ⚠️ Append-only. Links already in inboxes name the host they were sent with,
+   * forever. A comma-separated list is accepted: the first entry is used for new
+   * mail, every entry keeps answering. Never delete a host that has been used;
+   * move it later in the list. `PUBLIC_URL` itself always keeps answering.
+   *
+   * Unset (the default) means tracking uses `PUBLIC_URL`, exactly as before.
+   * See `core/tracking-host.ts`.
+   */
+  TRACKING_HOST?: string
+
+  /**
    * The public site's own origin, e.g. `https://example.com`.
    *
    * Hostname dispatch, not a path prefix: `worker.tsx` routes a request whose
@@ -99,7 +118,19 @@ export interface Env {
    * `core/ai/` is ever called.
    */
   OPENROUTER_KEY?: string
-  /** OpenRouter model ids per job. Defaults live in `core/ai/openrouter.ts`. */
+  /**
+   * 32+ random characters. Encrypts the operator's own model keys (OpenRouter,
+   * Anthropic, OpenAI) saved on Settings → AI, with AES-GCM. A secret, not a
+   * var. Unset means no key can be saved there; the screen says so. Changing it
+   * makes every saved key unreadable until it is pasted again.
+   */
+  AI_KEY_ENCRYPTION_SECRET?: string
+  /** `fake` answers every helper on the machine, with no key and no network. Local and specs only. */
+  AI_PROVIDER?: string
+  /**
+   * Model ids per job, OpenRouter-style. A choice on Settings → AI wins over
+   * these; defaults live in `core/ai/catalogue.ts`.
+   */
   AI_MODEL_SUBJECT?: string
   AI_MODEL_CLEANUP?: string
   AI_MODEL_SEQUENCE?: string
@@ -111,15 +142,59 @@ export interface Env {
   AI_MONTHLY_BUDGET_USD?: string
 
   RESEND_API_KEY?: string
+
+  /**
+   * How sending-domain records are looked up (`core/domains.ts`). Unset means
+   * real DNS: DNS-over-HTTPS to Cloudflare's 1.1.1.1, read-only and keyless.
+   * `"fake"` uses the in-memory resolver in `providers/dns.ts` — the suite
+   * pins it, and it is handy locally alongside `CLOUDFLARE_DNS=fake`.
+   */
+  DNS_RESOLVER?: string
+  /**
+   * Which Cloudflare DNS API one-click setup talks to. Unset means the real v4
+   * API, used only when `CLOUDFLARE_DNS_API_TOKEN` is set. `"fake"` writes into
+   * the in-memory DNS instead, so local one-click setup verifies end to end.
+   */
+  CLOUDFLARE_DNS?: string
+  /**
+   * A Cloudflare API token scoped to **Zone:Read + DNS:Edit** on the zones you
+   * send from. A secret, not a var. Unset hides the one-click "Add to
+   * Cloudflare" button; the records can always be copied by hand.
+   */
+  CLOUDFLARE_DNS_API_TOKEN?: string
   RESEND_WEBHOOK_SECRET?: string
+
+  /** Private API key (`key-…`). Required when `EMAIL_PROVIDER=mailgun`. */
+  MAILGUN_API_KEY?: string
+  /** The sending domain registered in Mailgun, e.g. `mg.example.com`. */
+  MAILGUN_DOMAIN?: string
+  /**
+   * "HTTP webhook signing key" from Mailgun's Webhooks page — not the API key.
+   * Without it `/webhooks/mailgun` fails closed with a 503, which Mailgun
+   * retries, so events wait for the key instead of being accepted unsigned.
+   */
+  MAILGUN_WEBHOOK_SIGNING_KEY?: string
+  /** `us` (default, api.mailgun.net) or `eu` (api.eu.mailgun.net). Must match the account. */
+  MAILGUN_REGION?: string
 
   /**
    * The unguessable path segment the MCP server answers on: `/mcp/<secret>`.
    * Unset means the endpoint 404s — MCP is off unless deliberately turned on.
    */
   MCP_PATH_SECRET?: string
-  /** "true" lets MCP tools put mail on the wire. Anything else is a kill switch. */
+  /**
+   * Hard override for agent sending. `"false"` forces it off whatever the admin
+   * switch says; unset (or anything else) lets the switch on System > Agents &
+   * keys decide. It can only take away. See `core/agents.ts`.
+   */
   MCP_ALLOW_SEND?: string
+
+  /**
+   * Which adapter POSTs outbound webhooks (`providers/webhooks.ts`). Unset or
+   * `fetch` is the real one, and production must leave it so. `fake` records
+   * requests in memory and never touches the network — the test suite only.
+   */
+  WEBHOOK_TRANSPORT?: string
 
   /** Restricted read key: charges, refunds, customers, products, prices. */
   STRIPE_SECRET_KEY?: string
@@ -129,4 +204,29 @@ export interface Env {
    * endpoint anybody can post fake revenue to.
    */
   STRIPE_WEBHOOK_SECRET?: string
+
+  /**
+   * Test seam for the importers (Kit, Ghost, Mailchimp, Drip): when bound, every
+   * importer request goes through this instead of global `fetch`. Deliberately in
+   * NO wrangler environment — production talks to the real APIs. The spec suite
+   * binds a fake that answers like those APIs, and `createWorld()` binds one that
+   * refuses everything by default, so no test can reach a third party.
+   */
+  IMPORT_HTTP?: Fetcher
+
+  /**
+   * Signs the member session cookie on the public site.
+   * A secret, not a var: any long random string. Unset means readers cannot
+   * sign in — the sign-in page says so, and members-only and Premium posts show
+   * their teaser to everyone. Rotating it signs every member out.
+   */
+  MEMBER_SESSION_SECRET?: string
+  /**
+   * Which payment port Premium uses (`core/premium-billing.ts`). Unset — the
+   * production default — is the real Stripe adapter, which needs
+   * `STRIPE_SECRET_KEY` to be allowed to create Checkout Sessions (the
+   * read-only restricted key is not). `fake` is the in-memory test double and
+   * must never be set in production.
+   */
+  PREMIUM_BILLING?: string
 }

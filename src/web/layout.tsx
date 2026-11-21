@@ -955,11 +955,15 @@ mark.ph{background:rgba(123,79,158,.10);color:var(--plum);border-radius:4px;padd
  * this is eleven glyphs.
  */
 const ICONS: Record<string, string> = {
+  /* A key: readers who sign in, and the ones who pay. */
+  members: 'M8.4 15.6a3.6 3.6 0 1 0 0-7.2 3.6 3.6 0 0 0 0 7.2ZM11.6 12h8.8M17.6 12v3M20.4 12v2.2',
   home: 'M3.8 11.4 12 4.4l8.2 7M6.4 10v9.6h11.2V10M10.2 19.6v-5.2h3.6v5.2',
   /* A person in front of a page: who writes the site. */
   site: 'M12 11.2a3.4 3.4 0 1 0 0-6.8 3.4 3.4 0 0 0 0 6.8ZM5.6 19.6c.8-3.4 3.4-5.4 6.4-5.4s5.6 2 6.4 5.4',
   /* A page with a layout on it: header bar, a column, a block. */
   theme: 'M4.4 4.4h15.2v15.2H4.4zM4.4 8.6h15.2M8.8 8.6v11M11.6 12h5.2M11.6 15.4h3.6',
+  /* A folder tab: pages filed under a heading. */
+  topics: 'M3.8 6.2h5.8l1.8 2h8.8v11H3.8V6.2ZM3.8 10.6h16.4',
   /* A heartbeat trace. The feed is a pulse — the one screen that shows the list
      as something moving rather than something counted. */
   act: 'M3.2 12.4h4l2.2-6 3.4 12.4 2.4-8.2 1.7 4.6h4.4',
@@ -968,14 +972,23 @@ const ICONS: Record<string, string> = {
   tags: 'M9.4 4.4 7.6 19.6M16.4 4.4l-1.8 15.2M4.8 8.8h15M4 15.2h15',
   /* Two overlapping circles: a segment is the part of the list that satisfies
      more than one thing at once. */
+  /* An arrow coming down into a tray: a list arriving from elsewhere. */
+  imp: 'M12 4v10m-4-4 4 4 4-4M4.8 14.4v4.8h14.4v-4.8',
   segs: 'M9.6 19a7 7 0 1 0 0-14 7 7 0 0 0 0 14Zm4.8 0a7 7 0 1 0 0-14 7 7 0 0 0 0 14Z',
+  /* A card with labelled lines: the facts a person carries. */
+  fields: 'M4.6 5.4h14.8v13.2H4.6zM7.8 9.4h2.4M12.6 9.4h3.6M7.8 12.6h2.4M12.6 12.6h3.6M7.8 15.6h2.4',
   bc: 'M4 12.2 20.2 4.6l-4.4 15.2-3.9-5.9L4 12.2Zm7.9 1.7 4.9-8',
   seq: 'M5.4 6.6h6.2a3.1 3.1 0 0 1 0 6.2H9a3.1 3.1 0 0 0 0 6.2h6.6M14.6 16.6l2.6 2.4-2.6 2.4M14.6 4.2 17.2 6.6l-2.6 2.4',
   /* Two sheets, one behind the other: a copy waiting to be made. */
   tpl: 'M8.2 7.4h10.2v12.8H8.2V7.4ZM5.6 16.6V3.8h10.2M11 11.6h4.6M11 14.8h3',
+  /* A sheet with a brace in it: a stored mail with a blank another program fills. */
+  txn: 'M6.2 3.8h11.6v16.4H6.2V3.8Zm4.4 5c-1 0-1.4.5-1.4 1.3v.9c0 .6-.3 1-.9 1 .6 0 .9.4.9 1v.9c0 .8.4 1.3 1.4 1.3m2.8-6.4c1 0 1.4.5 1.4 1.3v.9c0 .6.3 1 .9 1-.6 0-.9.4-.9 1v.9c0 .8-.4 1.3-1.4 1.3',
   out: 'M4 13.6h4.2l1.3 2.5h5l1.3-2.5H20M6.5 4.8h11l2.5 8.8v5.6H4v-5.6l2.5-8.8Z',
+  /* An envelope with a way back: sent, didn't land, goes again. */
+  undel: 'M4 7.5h16v10H4v-10Zm0 0 8 5.5 8-5.5M15.5 3.8l-2 2 2 2M13.5 5.8h4a2.5 2.5 0 0 1 0 5',
   /* A sheet with a filled line and an arrow leaving it: fill this in, get that back. */
   forms: 'M6.2 3.8h11.6v16.4H6.2V3.8Zm2.8 4.2h6M9 11.2h3.2M14.8 12.6v5m0 0 2-2m-2 2-2-2',
+  launch: 'M12 3.4c2.6 1.9 4 4.6 4 8.1v4.3H8v-4.3c0-3.5 1.4-6.2 4-8.1ZM8 13.6l-2.6 2.6v3h2.6M16 13.6l2.6 2.6v3H16M10.6 19.4h2.8M12 9.4a1.3 1.3 0 1 0 0 2.6 1.3 1.3 0 0 0 0-2.6Z',
   camp: 'M12 3.6a8.4 8.4 0 1 0 0 16.8 8.4 8.4 0 0 0 0-16.8Zm0 4.6a3.8 3.8 0 1 0 0 7.6 3.8 3.8 0 0 0 0-7.6Zm0 3.3a.5.5 0 1 0 0 1 .5.5 0 0 0 0-1Z',
   store: 'M5.6 8.2h12.8l1 11.4H4.6l1-11.4Zm3.4 0V6.4a3 3 0 0 1 6 0v1.8',
   /* A dollar sign: the mail that goes out after money comes in. */
@@ -1004,7 +1017,33 @@ const ICONS: Record<string, string> = {
   ancon: 'M12 3.9a8.1 8.1 0 1 0 8.1 8.1H12V3.9Z',
   /* A pulse. The list either has one or it doesn't. */
   anhl: 'M3.8 12.4h3.1l2-4.6 2.7 9 2.5-6.3 1.6 1.9h4.5',
+  /* A line leaving the box: facts sent on to somewhere else. */
+  hooks: 'M5 6.5h8.5v11H5zM13.5 12h6m-2.4-2.6L19.7 12l-2.6 2.6',
+  // A page of lines with a lens: the log you search.
+  logs: 'M5 6.5h9M5 10.5h5M5 14.5h4M18.6 15.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM17.8 17.7l2.4 2.4',
   set: 'M4.4 8h9.2M17.6 8h2M4.4 16h2.2M10.6 16h9M15.4 5.6v4.8M8.2 13.6v4.8',
+  /* A key: what an agent or another app holds instead of a login. */
+  agents: 'M8.4 15.6a3.6 3.6 0 1 0 0-7.2 3.6 3.6 0 0 0 0 7.2ZM12 12h8.2M17.4 12v2.6M20.2 12v2',
+  /* A speech bubble with quote marks: what readers say back. */
+  testi: 'M4.4 5.4h15.2v10.4h-8.4l-4 3.6v-3.6H4.4V5.4ZM9.6 9v1.6c0 .9-.5 1.5-1.2 1.8M13.8 9v1.6c0 .9-.5 1.5-1.2 1.8',
+  /* A quill: the voice that writes for you. */
+  ghost: 'M19.4 4.6c-6 .6-10.2 4.6-11.6 11.4l-2.2 3.4M7.8 16c3.4-.4 6-1.6 7.6-3.6M10.4 12.2c2.6-.2 4.6-1 6.2-2.4',
+  /* A sheet with an arrow coming in: old sales brought onto the ledger. */
+  simport: 'M6.6 3.8h10.8v16.4H6.6V3.8ZM12 7.4v7.2m-2.8-2.8 2.8 2.8 2.8-2.8M9.4 17.4h5.2',
+  /* A boxed parcel: the thing on the shelf. */
+  forsale: 'M12 3.8 19.6 7.8v8.4L12 20.2l-7.6-4V7.8L12 3.8ZM4.4 7.8 12 11.8l7.6-4M12 11.8v8.4',
+  /* A globe: where mail is sent from. */
+  dom: 'M12 20.4a8.4 8.4 0 1 0 0-16.8 8.4 8.4 0 0 0 0 16.8ZM3.6 12h16.8M12 3.6c2.2 2.3 3.3 5.1 3.3 8.4s-1.1 6.1-3.3 8.4c-2.2-2.3-3.3-5.1-3.3-8.4S9.8 5.9 12 3.6Z',
+  /* A picture: a hill and a sun in a frame. */
+  media: 'M4.4 5.4h15.2v13.2H4.4V5.4Zm0 10 4.4-4.4 3.6 3.6 2.4-2.4 4.8 4.8M15.4 8.4a1.3 1.3 0 1 0 0 2.6 1.3 1.3 0 0 0 0-2.6Z',
+  /* Three figures: the people who run the console. */
+  team: 'M12 10.6a2.8 2.8 0 1 0 0-5.6 2.8 2.8 0 0 0 0 5.6ZM6.6 19.4c.5-3 2.7-4.8 5.4-4.8s4.9 1.8 5.4 4.8M5.8 8.2a2.2 2.2 0 1 0 0 4.4M18.2 8.2a2.2 2.2 0 1 1 0 4.4M3.2 17.2c.3-1.6 1.2-2.7 2.6-3.2M20.8 17.2c-.3-1.6-1.2-2.7-2.6-3.2',
+  /* A sparkle and a smaller one: the writing helpers. */
+  aiset: 'M11 3.6c.6 4.4 2.4 6.6 6.8 7.2-4.4.6-6.2 2.8-6.8 7.2-.6-4.4-2.4-6.6-6.8-7.2 4.4-.6 6.2-2.8 6.8-7.2ZM18.4 15.4c.2 1.6.8 2.2 2.2 2.4-1.4.2-2 .8-2.2 2.4-.2-1.6-.8-2.2-2.2-2.4 1.4-.2 2-.8 2.2-2.4Z',
+  /* A plug: an app wired in. */
+  apps: 'M9 3.8v4M15 3.8v4M6.6 7.8h10.8v3.4a5.4 5.4 0 0 1-10.8 0V7.8ZM12 16.6v3.6',
+  /* A checklist: the first-run steps. */
+  setup: 'M4.4 6.6l1.4 1.4 2.4-2.6M4.4 12.2l1.4 1.4 2.4-2.6M4.4 17.8l1.4 1.4 2.4-2.6M11.2 7h8.4M11.2 12.6h8.4M11.2 18.2h5.6',
   help: 'M12 3.8a8.2 8.2 0 1 0 0 16.4 8.2 8.2 0 0 0 0-16.4Zm-2.4 5.5a2.5 2.5 0 1 1 3.3 2.4c-.6.2-.9.8-.9 1.4v.6m0 2.5v.1',
 }
 
@@ -1033,6 +1072,13 @@ const NAV: ({ grp: string } | { href: string; key: string; label: string })[] = 
   // an enrollment — effectively undiscoverable.
   { href: '/tags', key: 'tags', label: 'Tags & automation' },
   { href: '/segments', key: 'segs', label: 'Segments' },
+  // What the people on the list say back, waiting on a yes before the wall.
+  { href: '/testimonials', key: 'testi', label: 'Testimonials' },
+  // Next to Segments because that is where a field earns its keep: a value
+  // nobody can ask a question of is a value nobody needed to store.
+  { href: '/fields', key: 'fields', label: 'Custom fields' },
+  // Kit, Ghost, Mailchimp, Drip: bringing a list in is an audience act.
+  { href: '/imports', key: 'imp', label: 'Imports' },
   // ⭐ Mail sits directly under the audience: who is on the list, then what
   // goes out to them — the two screens used every day, at the top.
   { grp: 'Mail' },
@@ -1041,7 +1087,15 @@ const NAV: ({ grp: string } | { href: string; key: string; label: string })[] = 
   // Directly under Sequences: a template is where a sequence starts, and it is
   // a library you come back to, not a step inside "new sequence".
   { href: '/sequences/templates', key: 'tpl', label: 'Templates' },
+  // The voice the Ghostwriter writes in. Beside the screens it writes for.
+  { href: '/ghostwriter', key: 'ghost', label: 'Ghostwriter' },
+  // Mail another app sends by naming a slug. Beside the Outbox, which is where
+  // the result of every one of those calls shows up.
+  { href: '/transactional', key: 'txn', label: 'Transactional' },
   { href: '/outbox', key: 'out', label: 'Outbox' },
+  // Under the Outbox: the other half of "where did my mail go". Mail that
+  // failed is never dropped; this is the visible way to send it again.
+  { href: '/undelivered', key: 'undel', label: 'Undelivered' },
   // ⭐ Analytics follows the mail it measures. Six slots rather than
   // one-with-tabs because each is a different question, and burying five of
   // them behind a tab strip is how a measurement tool goes unread.
@@ -1057,10 +1111,18 @@ const NAV: ({ grp: string } | { href: string; key: string; label: string })[] = 
   { href: '/analytics/health', key: 'anhl', label: 'List health' },
   { grp: 'Money' },
   { href: '/campaigns', key: 'camp', label: 'Campaigns' },
+  // Directly under Campaigns: a launch is a campaign with a plan, built in seven
+  // steps, and it hands off to the mail screens rather than sending itself.
+  { href: '/launches', key: 'launch', label: 'Launch Studio' },
   // ⭐ Its own slot rather than a tab under Campaigns: a form is where a lead
   // magnet is built and where the file lives, and it was unfindable one level in.
   { href: '/forms', key: 'forms', label: 'Forms' },
   { href: '/sales', key: 'sales', label: 'Sales' },
+  // Bookkeeping for the years before Stripe: next to the ledger it fills in.
+  { href: '/sales/import', key: 'simport', label: 'Import sales' },
+  // Readers who sign in on the site and who pay for Premium: money, because
+  // Premium is the recurring part of it.
+  { href: '/members', key: 'members', label: 'Members' },
   // Directly under Sales, because that is where it is used from: a sale is the
   // thing you press the button on, and this is what the button says.
   { href: '/purchase-mail', key: 'pmail', label: 'Purchase mail' },
@@ -1070,6 +1132,7 @@ const NAV: ({ grp: string } | { href: string; key: string; label: string })[] = 
   { href: '/conversions', key: 'conv', label: 'Conversions' },
   { href: '/store', key: 'store', label: 'Store overview' },
   { href: '/store/offers', key: 'offers', label: 'Offers' },
+  { href: '/store/for-sale', key: 'forsale', label: 'For sale' },
   { href: '/store/customers', key: 'cust', label: 'Customers' },
   { href: '/store/ideas', key: 'ideas', label: 'Segment ideas' },
   // Who the site is (the profile) and how it looks (themes) sit with the rest
@@ -1077,8 +1140,31 @@ const NAV: ({ grp: string } | { href: string; key: string; label: string })[] = 
   { grp: 'System' },
   { href: '/site', key: 'site', label: 'Profile' },
   { href: '/themes', key: 'theme', label: 'Themes' },
+  // Where mail is sent from, and whether DNS agrees.
+  { href: '/domains', key: 'dom', label: 'Sending domains' },
+  // Every uploaded image, whichever screen it came in by.
+  { href: '/media', key: 'media', label: 'Media' },
+  // Beside Themes: both are the public site, and topics organise its pages.
+  { href: '/topics', key: 'topics', label: 'Topics' },
   { href: '/consent', key: 'cons', label: 'Consent' },
+  // Where facts about the list are POSTed to other systems, and the log of
+  // every delivery. Next to Consent: both are about where people's data goes.
+  { href: '/webhooks', key: 'hooks', label: 'Webhooks' },
+  // Everything that happened, in words. With the setup screens because it is
+  // where you go when something looks wrong, not a number you read daily.
+  { href: '/logs', key: 'logs', label: 'Logs' },
   { href: '/settings', key: 'set', label: 'Settings' },
+  // Who can use this console and as what. Identity is Cloudflare Access's.
+  { href: '/team', key: 'team', label: 'Team' },
+  // Which key pays for the writing helpers and which model each uses.
+  { href: '/settings/ai', key: 'aiset', label: 'AI' },
+  // Who may reach the mailer without a browser, and what agents may do.
+  { href: '/settings/agents', key: 'agents', label: 'Agents & keys' },
+  // Apps approved over OAuth ("paste a URL into Claude"). Separate from API keys.
+  { href: '/connected-apps', key: 'apps', label: 'Connected apps' },
+  // The first-run checklist. Here as well as on the dashboard, so dismissing it
+  // there never loses it.
+  { href: '/onboarding', key: 'setup', label: 'Get set up' },
   { href: '/help', key: 'help', label: 'Help' },
 ]
 
@@ -1293,7 +1379,7 @@ export const Layout: FC<
  * the nav doesn't grow an entry per concept — people, the facts you store about
  * them, and the questions you ask of those facts.
  */
-export const AudienceTabs: FC<{ on: 'people' | 'tags' | 'segments' }> = ({ on }) => (
+export const AudienceTabs: FC<{ on: 'people' | 'tags' | 'segments' | 'fields' }> = ({ on }) => (
   <div class="tabs">
     <a href="/subscribers" class={on === 'people' ? 'on' : ''}>
       People
@@ -1303,6 +1389,9 @@ export const AudienceTabs: FC<{ on: 'people' | 'tags' | 'segments' }> = ({ on })
     </a>
     <a href="/segments" class={on === 'segments' ? 'on' : ''}>
       Segments
+    </a>
+    <a href="/fields" class={on === 'fields' ? 'on' : ''}>
+      Custom fields
     </a>
   </div>
 )
@@ -1545,6 +1634,9 @@ export interface ComposeAi {
   /** Display names, for the small print under each button. */
   subjectModel: string
   cleanupModel: string
+  /** The Ghostwriter's model, and the voice in a few words, for its small print. */
+  ghostModel?: string
+  ghostVoice?: string
   /** A few words on where this mail goes, handed to the subject suggester. */
   context?: string
 }
@@ -1623,6 +1715,8 @@ export const ComposeLayout: FC<
         data-ai={ai ? '1' : undefined}
         data-ai-subject-model={ai?.subjectModel}
         data-ai-cleanup-model={ai?.cleanupModel}
+        data-ai-ghost-model={ai?.ghostModel}
+        data-ai-ghost-voice={ai?.ghostVoice}
         data-ai-context={ai?.context}
         data-record-id={recordId ? String(recordId) : undefined}
       >

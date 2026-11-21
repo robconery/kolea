@@ -21,6 +21,26 @@ export const MERGE_FIELDS: MergeField[] = [
   { field: 'email', label: 'Email address', sample: 'ada@example.com' },
 ]
 
+/**
+ * Add the list's custom fields to the picker, once per page. Best-effort: if
+ * the request fails the built-ins still work, and a field can always be typed
+ * as `{{key}}` text, which the renderer resolves too.
+ */
+let customLoaded = false
+function loadCustomFields(): void {
+  if (customLoaded) return
+  customLoaded = true
+  fetch('/fields.json', { credentials: 'same-origin' })
+    .then((r) => (r.ok ? r.json() : []))
+    .then((rows: { key: string; label: string; type: string }[]) => {
+      for (const f of rows) {
+        if (MERGE_FIELDS.some((m) => m.field === f.key)) continue
+        MERGE_FIELDS.push({ field: f.key, label: f.label, sample: `their ${f.label.toLowerCase()}` })
+      }
+    })
+    .catch(() => {})
+}
+
 export const MergeTag = Node.create({
   name: 'mergeTag',
   group: 'inline',
@@ -34,6 +54,13 @@ export const MergeTag = Node.create({
         default: 'first_name',
         parseHTML: (el) => el.getAttribute('data-field'),
         renderHTML: (attrs) => ({ 'data-field': attrs.field as string }),
+      },
+      // What the reader sees when they have no value. Read by the renderers;
+      // kept here so a document round-trips it.
+      fallback: {
+        default: null,
+        parseHTML: (el) => el.getAttribute('data-fallback'),
+        renderHTML: (attrs) => (attrs.fallback ? { 'data-fallback': attrs.fallback as string } : {}),
       },
     }
   },
@@ -52,10 +79,11 @@ export const MergeTag = Node.create({
   },
 
   renderText({ node }) {
-    return `{{${node.attrs.field}}}`
+    return node.attrs.fallback ? `{{${node.attrs.field}|${node.attrs.fallback}}}` : `{{${node.attrs.field}}}`
   },
 
   addProseMirrorPlugins() {
+    loadCustomFields()
     return [
       Suggestion({
         editor: this.editor,

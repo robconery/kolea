@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { cleanUp } from '../core/ai/cleanup.ts'
-import { aiConfigured, spend } from '../core/ai/openrouter.ts'
+import { ghostwrite } from '../core/ai/ghostwriter.ts'
+import { aiReady, spend } from '../core/ai/openrouter.ts'
 import { suggestSubjects } from '../core/ai/subjects.ts'
 import { getDb } from '../db/index.ts'
 import type { DocNode } from '../db/schema.ts'
@@ -20,7 +21,9 @@ import type { Env } from '../types.ts'
 export const aiAdmin = new Hono<{ Bindings: Env }>()
 
 aiAdmin.use('/ai/*', async (c, next) => {
-  if (!aiConfigured(c.env)) return c.json({ ok: false, reason: 'AI is not set up. Add OPENROUTER_KEY.' }, 404)
+  if (!(await aiReady(c.env, getDb(c.env)))) {
+    return c.json({ ok: false, reason: 'AI is not set up. Choose a key on Settings, AI.' }, 404)
+  }
   if (!(c.req.header('content-type') ?? '').includes('application/json')) {
     return c.json({ ok: false, reason: 'Expected JSON.' }, 415)
   }
@@ -56,5 +59,22 @@ aiAdmin.post('/ai/cleanup', async (c) => {
   const db = getDb(c.env)
   const body = await readBody(c.req.raw)
   const result = await cleanUp(c.env, db, { doc: asDoc(body.doc) })
+  return c.json({ ...result, spend: await spend(c.env, db) })
+})
+
+/**
+ * The Ghostwriter in the composer: a topic and notes in, a draft in the tuned
+ * voice out. Writes nothing but cost rows; the browser puts the draft in the
+ * editor as one undoable change and the writer saves it the usual way.
+ */
+aiAdmin.post('/ai/ghostwrite', async (c) => {
+  const db = getDb(c.env)
+  const body = ((await c.req.json().catch(() => null)) ?? {}) as Record<string, unknown>
+  const str = (v: unknown) => (typeof v === 'string' ? v : '')
+  const result = await ghostwrite(c.env, db, {
+    topic: str(body.topic),
+    angle: str(body.angle),
+    context: str(body.context).slice(0, 200),
+  })
   return c.json({ ...result, spend: await spend(c.env, db) })
 })

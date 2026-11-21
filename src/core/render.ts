@@ -2,7 +2,7 @@ import { marked } from 'marked'
 import type { DocNode, MergeExtra, MergeExtras } from '../db/schema.ts'
 import { type Scope, formatScope } from './consent.ts'
 import { shareOnFacebookUrl, shareOnLinkedInUrl, shareOnXUrl } from './posts.ts'
-import { escapeHtml, mergeFields } from './text.ts'
+import { MERGE_TAG, type MergeSubject, escapeHtml, mergeFields, resolveMergeTag, testimonialPath } from './text.ts'
 import { docIsEmpty, renderDocToEmailHtml, renderDocToText } from './render-doc.ts'
 import { MAIL_COLOUR as C, MAIL_COLUMN, mailType } from './mail-style.ts'
 
@@ -15,6 +15,12 @@ export { escapeHtml, mergeFields }
 
 export interface RenderContext {
   publicUrl: string
+  /**
+   * The origin the open pixel and tracked links are built on — `TRACKING_HOST`
+   * when one is set, else `publicUrl`. Everything else (the preference centre,
+   * downloads, media) stays on `publicUrl`. See `core/tracking-host.ts`.
+   */
+  trackingUrl?: string
   messageId: number
   unsubToken: string
   scope: Scope
@@ -31,7 +37,12 @@ export interface RenderContext {
    * most places asks for one. Lines are separated by newlines. Left out when unset.
    */
   postalAddress?: string | null
-  subscriber: { email: string; name: string | null }
+  /**
+   * Who this copy is for. `attributes` + `fieldKeys` make declared custom
+   * fields (`{{plan}}`, `{{plan|free}}`) resolve; without them only the
+   * built-ins and extras do.
+   */
+  subscriber: MergeSubject
   trackOpens: boolean
   trackClicks: boolean
   /** False for transactional mail: a receipt gets no unsubscribe footer. */
@@ -113,6 +124,15 @@ export interface EmailBody {
 export function renderEmail(body: EmailBody, ctx: RenderContext): RenderedEmail {
   const scopeParam = encodeURIComponent(formatScope(ctx.scope))
 
+  // `{{testimonial_link}}` is this reader's own link to write a testimonial,
+  // carrying their token as the proof of who they are (`core/testimonials.ts`).
+  // Marketing mail only: a receipt is not the place to ask, so transactional
+  // mail (no footer) resolves it to nothing.
+  const extras: MergeExtras = {
+    testimonial_link: ctx.showFooter ? `${ctx.publicUrl}${testimonialPath(ctx.unsubToken)}` : '',
+    ...ctx.extras,
+  }
+
   // `m` is the message that carried this link, so an unsubscribe can be charged
   // to the mail that caused it. It is a hint, not an authority — the preference
   // centre checks the message actually belongs to the token holder before
@@ -129,24 +149,25 @@ export function renderEmail(body: EmailBody, ctx: RenderContext): RenderedEmail 
   // exempt for the same reason: the download is already counted on its grant
   // row, so the redirect would add a way for the one link that matters to break
   // and buy nothing.
+  const trackingUrl = ctx.trackingUrl ?? ctx.publicUrl
   const trackLink = (url: string): string => {
     if (!ctx.trackClicks) return url
     if (url.startsWith(`${ctx.publicUrl}/p/`)) return url
     if (url.startsWith(`${ctx.publicUrl}/d/`)) return url
     if (!/^https?:\/\//i.test(url)) return url
-    return `${ctx.publicUrl}/t/click/${ctx.messageId}?u=${encodeURIComponent(url)}`
+    return `${trackingUrl}/t/click/${ctx.messageId}?u=${encodeURIComponent(url)}`
   }
 
   // Two flattenings, because a `{{downloads}}` list is markup in one surface and
   // a numbered list in the other. The walker resolves merge-tag *nodes* during
   // the walk, so it has to be handed the right surface up front — the second
   // pass further down only catches literal `{{…}}` text that survived.
-  const htmlExtras = flattenExtras(ctx.extras, 'html')
-  const textExtras = flattenExtras(ctx.extras, 'text')
-  const htmlMergeValue = (field: string): string =>
-    mergeFieldValue(field, ctx.subscriber, htmlExtras)
-  const textMergeValue = (field: string): string =>
-    mergeFieldValue(field, ctx.subscriber, textExtras)
+  const htmlExtras = flattenExtras(extras, 'html')
+  const textExtras = flattenExtras(extras, 'text')
+  const htmlMergeValue = (field: string, fallback?: string): string =>
+    mergeFieldValue(field, ctx.subscriber, htmlExtras, fallback)
+  const textMergeValue = (field: string, fallback?: string): string =>
+    mergeFieldValue(field, ctx.subscriber, textExtras, fallback)
 
   let inner: string
   let plain: string
@@ -156,21 +177,36 @@ export function renderEmail(body: EmailBody, ctx: RenderContext): RenderedEmail 
     plain = renderDocToText(body.json, { trackLink, mergeValue: textMergeValue })
   } else {
     // Legacy markdown path.
-    const mergedHtml = mergeFields(body.md, ctx.subscriber, htmlExtras)
+    const mergedHtml = mergeFields(body.md, ctx.subscriber, htmlExtras, escapeHtml)
     inner = marked.parse(mergedHtml, { async: false }) as string
     if (ctx.trackClicks) inner = rewriteLinks(inner, ctx)
     plain = stripMd(mergeFields(body.md, ctx.subscriber, textExtras))
   }
 
+  // Literal custom-field tags typed into a document (`{{plan|free}}` as text,
+  // not a node) — the walker only resolves nodes. Declared fields only: an
+  // unknown tag stays as written, which is what the preflight warns about.
+  if (ctx.subscriber.fieldKeys?.length) {
+    const fieldsOnly: MergeSubject = { ...ctx.subscriber }
+    const literal = (text: string, esc: (s: string) => string) =>
+      text.replace(MERGE_TAG, (whole, field: string, quoted?: string, bare?: string) => {
+        if (!fieldsOnly.fieldKeys?.includes(field) || ctx.extras?.[field] !== undefined) return whole
+        const value = resolveMergeTag(field, quoted ?? (bare?.trim() || undefined), fieldsOnly)
+        return value === undefined ? whole : esc(value)
+      })
+    inner = literal(inner, escapeHtml)
+    plain = literal(plain, (s) => s)
+  }
+
   const pixel = ctx.trackOpens
-    ? `<img src="${ctx.publicUrl}/t/open/${ctx.messageId}.gif" width="1" height="1" alt="" style="display:block;border:0;width:1px;height:1px">`
+    ? `<img src="${trackingUrl}/t/open/${ctx.messageId}.gif" width="1" height="1" alt="" style="display:block;border:0;width:1px;height:1px">`
     : ''
 
   // A second pass over the finished strings, because `{{link}}` is most useful
   // as a *link target* — the href of a button or a link — and the
   // document walker only merges text nodes. Cheap, and it means the operator can
   // put the token wherever it reads best without learning which places work.
-  for (const [field, value] of Object.entries(ctx.extras ?? {})) {
+  for (const [field, value] of Object.entries(extras)) {
     const token = `{{${field}}}`
     const html = extraHtml(value)
     const text = extraText(value)
@@ -224,8 +260,8 @@ export function previewHtml(json: DocNode | null | undefined, md: string): strin
   if (json && !docIsEmpty(json)) {
     return renderDocToEmailHtml(json, {
       trackLink: (url) => url,
-      mergeValue: (field) =>
-        mergeFieldValue(field, { email: 'ada@example.com', name: 'Ada Lovelace' }),
+      mergeValue: (field, fallback) =>
+        mergeFieldValue(field, { email: 'ada@example.com', name: 'Ada Lovelace' }, undefined, fallback),
     })
   }
   return marked.parse(md, { async: false }) as string
@@ -246,20 +282,11 @@ export function footerPreviewHtml(scope: Scope, scopeLabel: string): string {
 /** Shared by the markdown path and the rich-document `mergeTag` node. */
 export function mergeFieldValue(
   field: string,
-  sub: { email: string; name: string | null },
+  sub: MergeSubject,
   extras?: Record<string, string>,
+  fallback?: string,
 ): string {
-  const first = (sub.name ?? '').trim().split(/\s+/)[0] ?? ''
-  switch (field) {
-    case 'first_name':
-      return first || 'there'
-    case 'name':
-      return sub.name ?? 'there'
-    case 'email':
-      return sub.email
-    default:
-      return extras?.[field] ?? ''
-  }
+  return resolveMergeTag(field, fallback, sub, extras) ?? fallback ?? ''
 }
 
 /**
@@ -360,7 +387,7 @@ function rewriteLinks(html: string, ctx: RenderContext): string {
   return html.replace(/href="(https?:\/\/[^"]+)"/g, (match, url: string) => {
     if (url.startsWith(`${ctx.publicUrl}/p/`)) return match // never track the unsubscribe link
     if (url.startsWith(`${ctx.publicUrl}/d/`)) return match // nor the download, counted on its grant
-    return `href="${ctx.publicUrl}/t/click/${ctx.messageId}?u=${encodeURIComponent(url)}"`
+    return `href="${ctx.trackingUrl ?? ctx.publicUrl}/t/click/${ctx.messageId}?u=${encodeURIComponent(url)}"`
   })
 }
 

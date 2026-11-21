@@ -3,7 +3,7 @@ import type { DocNode } from '../../db/schema.ts'
 import type { Env } from '../../types.ts'
 import { findSlop } from '../../slop/index.ts'
 import { docToPlainText } from './doc-markdown.ts'
-import { complete, modelFor } from './openrouter.ts'
+import { complete } from './openrouter.ts'
 import { SUBJECT_GUIDE } from './style.ts'
 import { recentSubjects } from './voice.ts'
 
@@ -99,8 +99,7 @@ export async function suggestSubjects(
     .join('\n')
 
   const result = await complete(env, db, {
-    label: 'subject',
-    model: modelFor(env, 'subject'),
+    task: 'subject',
     messages: [
       { role: 'system', content: system },
       { role: 'user', content: user },

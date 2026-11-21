@@ -1,6 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/server'
 import { and, desc, eq, like, or } from 'drizzle-orm'
 import * as z from 'zod/v4'
+import { AGENT_SENSITIVE_OFF, agentSensitiveAllowed } from '../../core/agents.ts'
 import {
   type ActivityType,
   activityCounts,
@@ -9,15 +10,14 @@ import {
   growthByDay,
 } from '../../core/activity.ts'
 import { campaignsForSubscriber, touchesFor } from '../../core/campaigns.ts'
-import { preferencesFor } from '../../core/consent.ts'
+import { leaveBroadcasts } from '../../core/consent.ts'
 import { normalizeEmail } from '../../core/ids.ts'
 import { salesForSubscriber } from '../../core/sales.ts'
-import { addTags, importCsv, removeTag, upsertSubscriber } from '../../core/subscribers.ts'
+import { subscriberDetail } from '../../core/subscriber-reads.ts'
+import { addTags, eraseSubscriber, importCsv, removeTag, upsertWithFields } from '../../core/subscribers.ts'
 import {
   events,
   messages,
-  sequenceEnrollments,
-  sequences,
   subscriberTags,
   subscribers,
   tags,
@@ -134,7 +134,8 @@ export function registerAudience(server: McpServer, ctx: Ctx): void {
     ctx,
     'subscriber_get',
     {
-      description: 'One subscriber with their tags, consent state, and sequence enrollments.',
+      description:
+        'One subscriber with their tags, custom field values (`fields`, every defined field, null where they have none), consent state, and sequence enrollments.',
       inputSchema: z.object({
         id: z.number().int().optional(),
         email: z.string().optional(),
@@ -145,24 +146,8 @@ export function registerAudience(server: McpServer, ctx: Ctx): void {
       const sub = await findByEmailOrId(ctx, args)
       if (!sub) return fail('No such subscriber.', 'Try subscriber_search to find the right id.')
 
-      const enrollments = await ctx.db
-        .select({
-          sequenceId: sequences.id,
-          sequence: sequences.name,
-          status: sequenceEnrollments.status,
-          nextRunAt: sequenceEnrollments.nextRunAt,
-        })
-        .from(sequenceEnrollments)
-        .innerJoin(sequences, eq(sequences.id, sequenceEnrollments.sequenceId))
-        .where(eq(sequenceEnrollments.subscriberId, sub.id))
-        .all()
-
-      return ok({
-        ...sub,
-        tags: await tagsOf(ctx, sub.id),
-        enrollments,
-        preferences: await preferencesFor(ctx.db, sub.id),
-      })
+      // From core, which never selects the reader's unsubscribe token.
+      return ok(await subscriberDetail(ctx.db, sub.id))
     },
   )
 
@@ -208,6 +193,7 @@ export function registerAudience(server: McpServer, ctx: Ctx): void {
             .select({
               messageId: events.messageId,
               type: events.type,
+              machine: events.machine,
               occurredAt: events.occurredAt,
               meta: events.meta,
             })
@@ -263,27 +249,40 @@ export function registerAudience(server: McpServer, ctx: Ctx): void {
     'subscriber_upsert',
     {
       description:
-        'Create or update a subscriber by email. Never resurrects someone who unsubscribed. Creating a person fires subscribe-triggered sequences unless you turn that off.',
+        'Create or update a subscriber by email. Never resurrects someone who unsubscribed. Creating a person fires subscribe-triggered sequences unless you turn that off. `fields` sets custom field values by key (see kolea://merge-tags for the keys and types); null or "" clears one. An unknown key or a value of the wrong type fails the whole call before anything is written.',
       inputSchema: z.object({
         email: z.string(),
         name: z.string().nullable().optional(),
         source: z.string().nullable().optional(),
         tag_ids: z.array(z.number().int()).optional(),
+        fields: z
+          .record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))
+          .optional()
+          .describe('Custom field values by key, e.g. { "plan": "pro", "seats": 5, "renews_on": "2027-01-31" }'),
         trigger_sequences: z
           .boolean()
           .optional()
           .describe('Default true. False for receipts and other non-signups.'),
       }),
     },
-    async ({ email, name, source, tag_ids, trigger_sequences }) => {
-      const result = await upsertSubscriber(ctx.db, {
-        email,
-        name: name ?? null,
-        source: source ?? 'mcp',
-        tagIds: tag_ids,
-        triggerSubscribeSequences: trigger_sequences,
-      })
-      if (result.outcome === 'invalid') return fail(`"${email}" is not a valid address.`)
+    async ({ email, name, source, tag_ids, fields, trigger_sequences }) => {
+      const r = await upsertWithFields(
+        ctx.db,
+        {
+          email,
+          name: name ?? null,
+          source: source ?? 'mcp',
+          tagIds: tag_ids,
+          triggerSubscribeSequences: trigger_sequences,
+        },
+        fields,
+      )
+      if (!r.ok) {
+        return r.fieldErrors
+          ? fail(r.reason, 'Read kolea://merge-tags for the defined keys and their types.')
+          : fail(r.reason)
+      }
+      const { ok: _ok, ...result } = r
       return ok(result)
     },
   )
@@ -294,12 +293,16 @@ export function registerAudience(server: McpServer, ctx: Ctx): void {
     'subscriber_import_csv',
     {
       description:
-        'Bulk import from CSV text with an `email` column (optional `name`, `tags`). Returns a per-row report.',
+        'Bulk import from CSV text with an `email` column (optional `name`, `tags`, and any column whose header is a custom field key). Returns a per-row report; a field value that does not fit its type is left out and listed in `fieldErrors`, and the person is still imported. At most 100 data rows per call: the rest are counted in `notProcessed` and `firstUnprocessedRow` says where the next call should start. Never promotes an existing `pending` person to active. Refused unless the operator has turned on sensitive changes for agents (System > Agents & keys).',
       inputSchema: z.object({
         csv: z.string().describe('Raw CSV including the header row'),
       }),
+      annotations: { destructiveHint: true },
     },
-    async ({ csv }) => ok(await importCsv(ctx.db, csv)),
+    async ({ csv }) => {
+      if (!(await agentSensitiveAllowed(ctx.db))) return fail(AGENT_SENSITIVE_OFF)
+      return ok(await importCsv(ctx.db, csv))
+    },
   )
 
   defineTool(
@@ -340,10 +343,40 @@ export function registerAudience(server: McpServer, ctx: Ctx): void {
   defineTool(
     server,
     ctx,
+    'subscriber_unsubscribe',
+    {
+      description:
+        'Take a person off the NEWSLETTER (broadcasts) because they asked — by reply, by ticket, in person. Broadcast scope only: their sequences carry on, receipts still arrive, and no suppression is written. Someone already unsubscribed, bounced or complained is left as they are. This is the person\'s choice recorded on their behalf, and only they can undo it from their preference center. To leave one sequence use sequence_remove_person; to stop ALL marketing use suppression_add.',
+      inputSchema: z.object({
+        id: z.number().int().optional(),
+        email: z.string().optional(),
+      }),
+      annotations: { idempotentHint: true },
+    },
+    async (args) => {
+      const sub = await findByEmailOrId(ctx, args)
+      if (!sub) return fail('No such subscriber.', 'Try subscriber_search to find the right id.')
+      const r = await leaveBroadcasts(ctx.db, sub.id)
+      return ok({
+        id: sub.id,
+        email: sub.email,
+        outcome: r.outcome,
+        status: r.status,
+        note:
+          r.outcome === 'unsubscribed'
+            ? 'Off the newsletter. Sequences and transactional mail continue.'
+            : `Already off broadcasts (${r.status}); nothing changed.`,
+      })
+    },
+  )
+
+  defineTool(
+    server,
+    ctx,
     'subscriber_delete',
     {
       description:
-        'Permanently delete a subscriber and everything cascading from them — messages, events, enrollments, attribution touches, and sales. For a GDPR erasure. To stop mailing someone, use suppression_add instead; it keeps the history.',
+        'Permanently delete a subscriber and everything cascading from them — messages, events, enrollments, attribution touches, and sales. For a GDPR erasure. To stop mailing someone, use suppression_add instead; it keeps the history. Refused unless the operator has turned on sensitive changes for agents (System > Agents & keys).',
       inputSchema: z.object({
         id: z.number().int(),
         confirm_email: z
@@ -353,6 +386,7 @@ export function registerAudience(server: McpServer, ctx: Ctx): void {
       annotations: { destructiveHint: true },
     },
     async ({ id, confirm_email }) => {
+      if (!(await agentSensitiveAllowed(ctx.db))) return fail(AGENT_SENSITIVE_OFF)
       const sub = await ctx.db.select().from(subscribers).where(eq(subscribers.id, id)).get()
       if (!sub) return fail('No such subscriber.')
       if (normalizeEmail(confirm_email) !== sub.email) {
@@ -362,14 +396,13 @@ export function registerAudience(server: McpServer, ctx: Ctx): void {
         )
       }
 
-      const purchases = await salesForSubscriber(ctx.db, id)
-      await ctx.db.delete(subscribers).where(eq(subscribers.id, id))
+      const { salesDeleted } = await eraseSubscriber(ctx.db, id)
 
       return ok({
         deleted: true,
         email: sub.email,
-        warning: purchases.length
-          ? `${purchases.length} sale(s) were deleted with them — revenue reports will change.`
+        warning: salesDeleted
+          ? `${salesDeleted} sale(s) were deleted with them — revenue reports will change.`
           : undefined,
       })
     },

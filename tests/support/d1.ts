@@ -30,14 +30,20 @@
  *   statement or none, as D1 documents, and counts as a single trip in
  *   `roundTrips`. Recording a whole send in one write is only worth asserting
  *   against a fake that can tell one trip from a hundred.
+ * - **The 100-bound-parameter cap.** A statement binding more than 100 values
+ *   throws here as it does on D1, so an unchunked `inArray` fails a spec
+ *   instead of production.
+ * - **The 5-term compound SELECT cap.** D1 refuses `a union all b union all …`
+ *   past five terms (`too many terms in compound SELECT`); stock SQLite allows
+ *   500. Modelled by counting compound operators at each nesting level.
+ * - **Statements are counted** (`queryCount`), so a spec can hold one
+ *   invocation to D1's 1,000-query cap. Every statement counts, batched or not,
+ *   which is how D1 charges them. Counting, not refusing: the cap is per Worker
+ *   invocation and a spec decides where one begins (`resetQueryCount`).
  *
  * ## What is not modelled
  *
- * Network failure, the 1,000-query-per-invocation cap, and the 100-bound-parameter
- * cap. Those are platform limits the code is written *against* (see
- * `docs/ARCHITECTURE.md` → Platform limits); the chunking that respects them is
- * visible in the source and is asserted where it is cheap to, but a local SQLite
- * cannot make exceeding them fail.
+ * Network failure.
  */
 import { Database } from 'bun:sqlite'
 
@@ -86,12 +92,61 @@ function meta(overrides: Partial<Meta> = {}): Meta {
   }
 }
 
+/** D1's cap on bound parameters per statement. */
+export const D1_MAX_PARAMS = 100
+
+/** D1's cap on terms in one compound SELECT (SQLITE_LIMIT_COMPOUND_SELECT). */
+export const D1_MAX_COMPOUND_TERMS = 5
+
+/**
+ * Throws if any single compound SELECT in `sql` has more than five terms.
+ * Counts `union` / `intersect` / `except` per parenthesis level, skipping
+ * quoted strings and identifiers, so a subquery's terms are its own.
+ */
+export function assertCompoundTerms(sql: string): void {
+  const stack: number[] = [1]
+  let i = 0
+  while (i < sql.length) {
+    const ch = sql[i] as string
+    if (ch === "'" || ch === '"' || ch === '`') {
+      const end = sql.indexOf(ch, i + 1)
+      i = end === -1 ? sql.length : end + 1
+      continue
+    }
+    if (ch === '(') {
+      stack.push(1)
+      i++
+      continue
+    }
+    if (ch === ')') {
+      if (stack.length > 1) stack.pop()
+      i++
+      continue
+    }
+    if (/[a-z]/i.test(ch) && (i === 0 || !/[\w$]/.test(sql[i - 1] as string))) {
+      const word = /^[a-z_]\w*/i.exec(sql.slice(i))?.[0] ?? ch
+      if (/^(union|intersect|except)$/i.test(word)) {
+        const top = stack.length - 1
+        stack[top] = (stack[top] as number) + 1
+        if ((stack[top] as number) > D1_MAX_COMPOUND_TERMS) {
+          throw new Error('D1_ERROR: too many terms in compound SELECT: SQLITE_ERROR')
+        }
+      }
+      i += word.length
+      continue
+    }
+    i++
+  }
+}
+
 /** What a spec may ask about the traffic to the database. */
 interface Traffic {
   /** Trips to the database: one per statement run on its own, one per batch. */
   roundTrips: number
   /** How many of those trips were batches. */
   batches: number
+  /** Statements run. D1 counts each one, batched or not, toward its 1,000. */
+  queries: number
 }
 
 /** One prepared statement, with its bound parameters. Immutable, like D1's. */
@@ -104,11 +159,18 @@ class FakeD1PreparedStatement {
   ) {}
 
   bind(...values: unknown[]): FakeD1PreparedStatement {
+    // D1 refuses a statement with more than 100 bound parameters. Modelled,
+    // because exceeding it is a production-only 500 that a local SQLite would
+    // otherwise run happily (it allows 32,766).
+    if (values.length > D1_MAX_PARAMS) {
+      throw new Error(`D1_ERROR: too many SQL variables (${values.length} > ${D1_MAX_PARAMS})`)
+    }
     return new FakeD1PreparedStatement(this.db, this.traffic, this.sql, values.map(coerce))
   }
 
   async first<T = unknown>(column?: string): Promise<T | null> {
     this.traffic.roundTrips++
+    this.traffic.queries++
     const row = this.db.query(this.sql).get(...this.params) as Record<string, unknown> | null
     if (row === null) return null
     return (column === undefined ? row : (row[column] ?? null)) as T
@@ -123,8 +185,9 @@ class FakeD1PreparedStatement {
     return this.allInBatch<T>()
   }
 
-  /** `all()` without the trip: a batch is charged once, by the batch. */
+  /** `all()` without the trip: a batch is charged one trip, by the batch. */
   allInBatch<T = unknown>(): { success: true; results: T[]; meta: Meta } {
+    this.traffic.queries++
     const results = this.db.query(this.sql).all(...this.params) as T[]
     return {
       success: true,
@@ -139,6 +202,7 @@ class FakeD1PreparedStatement {
   /** Positional rows, used by Drizzle when it maps columns itself. */
   async raw<T = unknown[]>(options?: { columnNames?: boolean }): Promise<T[]> {
     this.traffic.roundTrips++
+    this.traffic.queries++
     const stmt = this.db.query(this.sql)
     const rows = stmt.values(...this.params) as T[]
     if (!options?.columnNames) return rows
@@ -150,6 +214,7 @@ class FakeD1PreparedStatement {
     // statement whose rows were never stepped through, so read it as a query and
     // fall back to the write path only when there was nothing to read.
     this.traffic.roundTrips++
+    this.traffic.queries++
     const stmt = this.db.query(this.sql)
     const results = stmt.all(...this.params) as T[]
     const changes = this.db.query('select changes() as n').get() as { n: number }
@@ -175,10 +240,14 @@ class FakeD1PreparedStatement {
 export class FakeD1Database implements Traffic {
   roundTrips = 0
   batches = 0
+  queries = 0
 
   constructor(readonly sqlite: Database) {}
 
   prepare(sql: string): FakeD1PreparedStatement {
+    // D1 refuses a compound SELECT past five terms. Modelled, because local
+    // SQLite allows 500 and a page that unions more is a production-only 500.
+    assertCompoundTerms(sql)
     return new FakeD1PreparedStatement(this.sqlite, this, sql)
   }
 
@@ -226,4 +295,13 @@ export function freshD1(): D1Database {
   const sqlite = new Database(':memory:')
   sqlite.run('PRAGMA foreign_keys = ON')
   return new FakeD1Database(sqlite) as unknown as D1Database
+}
+
+/** Statements run against a `freshD1()` since it was made or last reset. */
+export function queryCount(d1: D1Database): number {
+  return (d1 as unknown as FakeD1Database).queries
+}
+
+export function resetQueryCount(d1: D1Database): void {
+  ;(d1 as unknown as FakeD1Database).queries = 0
 }

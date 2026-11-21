@@ -77,6 +77,9 @@ export type SqlCheck = { ok: true; sql: string } | { ok: false; reason: string }
  * Validate a query and return the version to actually run — same text, with a
  * `LIMIT` bolted on when the caller didn't set one.
  */
+const SECRET_IDENTIFIERS =
+  /\b(webhook_endpoints|import_runs|form_confirmations|download_grants|store_checkouts|premium_checkouts|member_sign_in_links|member_sessions|oauth_\w+|api_keys|ai_keys|preflight_tokens|unsub_token|token|token_hash|secret|credentials|download_share_token|sqlite_master|sqlite_schema|pragma_\w+)\b/i
+
 export function checkQuery(raw: string): SqlCheck {
   const sql = raw.trim().replace(/;\s*$/, '')
   if (!sql) return { ok: false, reason: 'empty query' }
@@ -95,6 +98,19 @@ export function checkQuery(raw: string): SqlCheck {
     return {
       ok: false,
       reason: `db_query is read-only and \`${forbidden[0].toLowerCase()}\` is not allowed`,
+    }
+  }
+
+  // Credentials and bearer tokens never leave through raw SQL, whatever the
+  // grant: webhook signing secrets, importer API keys, double opt-in and
+  // sign-in tokens, preference-center tokens, OAuth and API key hashes. Each
+  // one would let a reader act as someone else. Matched as identifiers, so
+  // over-blocking a harmless query is the failure mode, never a leak.
+  const secret = code.match(SECRET_IDENTIFIERS)
+  if (secret) {
+    return {
+      ok: false,
+      reason: `db_query cannot read \`${secret[0].toLowerCase()}\`: it holds credentials or tokens. Use the matching tool instead.`,
     }
   }
 

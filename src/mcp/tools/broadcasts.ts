@@ -1,6 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/server'
-import { asc, eq } from 'drizzle-orm'
+import { asc } from 'drizzle-orm'
 import * as z from 'zod/v4'
+import { agentSendAllowed, agentSendRefusal } from '../../core/agents.ts'
 import {
   broadcastStats,
   cancelBroadcast,
@@ -8,48 +9,29 @@ import {
   deleteBroadcast,
   getBroadcast,
   listBroadcasts,
+  resumeBroadcast,
+  resumeOutlook,
+  reviseSentBroadcast,
   scheduleBroadcast,
-  startBroadcast,
   updateBroadcast,
 } from '../../core/broadcasts.ts'
-import { canReceiveBroadcastIn, loadConsentSnapshot } from '../../core/consent.ts'
 import { mdToDoc } from '../../core/md-to-doc.ts'
-import { authoredLead, postUrl } from '../../core/posts.ts'
-import { previewHtml, renderEmail } from '../../core/render.ts'
-import { countSegment, describeRule, getSegment, resolveSegment } from '../../core/segments.ts'
+import { previewHtml } from '../../core/render.ts'
+import { countSegment, describeRule, getSegment } from '../../core/segments.ts'
 import { sendPreview } from '../../core/sending.ts'
 import type { SegmentRule } from '../../db/schema.ts'
-import { subscribers, tags } from '../../db/schema.ts'
+import { tags } from '../../db/schema.ts'
 import { type Ctx, clampLimit, defineTool, fail, failed, ok } from '../kit.ts'
-import { SEND_DISABLED, consumePreflight, digestOf, mintPreflight, sendingAllowed } from '../preflight.ts'
-
-/**
- * Merge tags the renderer knows. Anything else is passed through to the reader
- * verbatim, braces and all — no error, no blank. Exactly the silent failure a
- * preflight exists to surface.
- */
-const KNOWN_MERGE_FIELDS = new Set(['name', 'first_name', 'email'])
-
-/**
- * Segment pages the preflight walks. `resolveSegment` pages at 400 and each page
- * costs a handful of D1 queries, so five pages counts 2,000 people well inside
- * the 1,000-query cap. Beyond that the preflight reports what it counted.
- */
-const PREFLIGHT_PAGES = 5
-
-function unknownMergeFields(text: string): string[] {
-  const found = new Set<string>()
-  for (const m of text.matchAll(/\{\{\s*([a-z0-9_]+)\s*\}\}/gi)) {
-    const field = m[1]!.toLowerCase()
-    if (!KNOWN_MERGE_FIELDS.has(field)) found.add(field)
-  }
-  return [...found]
-}
+import { consumePreflight, digestOf, mintPreflight } from '../../core/preflight.ts'
+import { preflightBroadcast, sendBroadcastWithToken } from '../../core/send-preflight.ts'
 
 export function registerBroadcasts(server: McpServer, ctx: Ctx): void {
-  /** What the preflight token is bound to. Any edit to these invalidates it. */
-  const broadcastDigest = (b: { subject: string; bodyMd: string; bodyJson: unknown; segment: unknown }) =>
-    digestOf([b.subject, b.bodyMd, b.bodyJson, b.segment])
+  // What a resume will send: the current content, to whoever is left after
+  // `alreadySent`. A revise, or mail going out in between, kills the token.
+  const resumeDigest = (
+    b: { subject: string; bodyMd: string; bodyJson: unknown; segment: unknown },
+    alreadySent: number,
+  ) => digestOf(['resume', b.subject, b.bodyMd, b.bodyJson, b.segment, alreadySent])
 
   defineTool(
     server,
@@ -109,7 +91,7 @@ export function registerBroadcasts(server: McpServer, ctx: Ctx): void {
     'broadcast_create',
     {
       description:
-        'Create a draft broadcast from markdown. Merge tags {{name}}, {{first_name}} and {{email}} are supported. Give it an audience with segment_id (copies that segment’s rule) or an inline rule; with neither it goes to everyone who can receive broadcasts.',
+        'Create a draft broadcast from markdown. Merge tags {{name}}, {{first_name}}, {{email}} and every custom field key ({{plan}}) are supported, each with an optional fallback: {{plan|free}}. kolea://merge-tags lists the fields. Give it an audience with segment_id (copies that segment’s rule) or an inline rule; with neither it goes to everyone who can receive broadcasts.',
       inputSchema: z.object({
         subject: z.string().min(1),
         body_markdown: z.string().min(1),
@@ -247,7 +229,7 @@ export function registerBroadcasts(server: McpServer, ctx: Ctx): void {
       }),
     },
     async ({ id, to }) => {
-      if (!sendingAllowed(ctx.env)) return fail(SEND_DISABLED)
+      if (!(await agentSendAllowed(ctx.env, ctx.db))) return fail(agentSendRefusal(ctx.env))
 
       const b = await getBroadcast(ctx.db, id)
       if (!b) return fail('No such broadcast.')
@@ -282,121 +264,11 @@ export function registerBroadcasts(server: McpServer, ctx: Ctx): void {
       annotations: { readOnlyHint: true },
     },
     async ({ id }) => {
-      const b = await getBroadcast(ctx.db, id)
-      if (!b) return fail('No such broadcast.')
-      if (b.status !== 'draft') {
-        return fail(`Broadcast #${id} is ${b.status}, not a draft — there is nothing to preflight.`)
-      }
-
-      const totalCandidates = await countSegment(ctx.db, b.segment ?? {})
-
-      // Walk the same pages the real send walks, so the numbers here are the
-      // numbers that will happen. Capped: past the cap the counts become an
-      // extrapolation and the response says so rather than quietly rounding.
-      const blockedBy = new Map<string, number>()
-      let examined = 0
-      let willReceive = 0
-      let first: { id: number; email: string; status: string } | undefined
-      let cursor = 0
-
-      for (let page = 0; page < PREFLIGHT_PAGES; page++) {
-        const candidates = await resolveSegment(ctx.db, b.segment ?? {}, cursor)
-        if (!candidates.length) break
-
-        const snapshot = await loadConsentSnapshot(
-          ctx.db,
-          candidates.map((c) => c.email),
-        )
-        for (const c of candidates) {
-          const block = canReceiveBroadcastIn(snapshot, c)
-          if (block.blocked) blockedBy.set(block.reason, (blockedBy.get(block.reason) ?? 0) + 1)
-          else {
-            willReceive++
-            first ??= c
-          }
-        }
-
-        examined += candidates.length
-        cursor = candidates[candidates.length - 1]!.id
-      }
-
-      const partial = examined < totalCandidates
-      const sampleName = first
-        ? ((
-            await ctx.db
-              .select({ name: subscribers.name })
-              .from(subscribers)
-              .where(eq(subscribers.id, first.id))
-              .get()
-          )?.name ?? null)
-        : null
-
-      // Rendered against a real recipient where one exists, so the sample is the
-      // mail that will actually land rather than an idealized version of it.
-      const sample = renderEmail(
-        { json: b.bodyJson, md: b.bodyMd },
-        {
-          publicUrl: ctx.env.PUBLIC_URL,
-          messageId: 0,
-          unsubToken: 'sample-token',
-          scope: { kind: 'broadcast' },
-          scopeLabel: ctx.env.FROM_NAME,
-          accountName: ctx.env.SITE_TITLE ?? null,
-          postalAddress: ctx.env.POSTAL_ADDRESS ?? null,
-          subscriber: first
-            ? { email: first.email, name: sampleName }
-            : { email: 'ada@example.com', name: 'Ada Lovelace' },
-          subject: b.subject,
-          title: b.subject,
-          lead: authoredLead(b.excerpt, { json: b.bodyJson, md: b.bodyMd }),
-          postUrl: b.publishedAt ? postUrl(ctx.env.SITE_URL, b.slug) : null,
-          trackOpens: true,
-          trackClicks: true,
-          showFooter: true,
-        },
-      )
-
-      const unresolved = unknownMergeFields(`${b.subject} ${b.bodyMd}`)
-      const allTags = await ctx.db.select().from(tags).orderBy(asc(tags.name)).all()
-      const { token, expiresAt } = await mintPreflight(
-        ctx.db,
-        'broadcast_send',
-        b.id,
-        await broadcastDigest(b),
-        willReceive,
-      )
-
-      const warnings: string[] = []
-      if (!willReceive) warnings.push('Nobody would receive this — the audience resolves to zero.')
-      if (unresolved.length) {
-        warnings.push(
-          `Unknown merge tags — these reach the reader literally, braces and all: ${unresolved
-            .map((f) => `{{${f}}}`)
-            .join(', ')}`,
-        )
-      }
-      if (!b.campaignId) warnings.push('No campaign — clicks will not be attributed to anything.')
-      if (!sendingAllowed(ctx.env)) warnings.push(SEND_DISABLED)
-      if (partial) {
-        warnings.push(
-          `Audience is larger than the preflight walks: counted the first ${examined} of ${totalCandidates}. The rest are filtered by the same rules at send time.`,
-        )
-      }
-
-      return ok({
-        broadcast: { id: b.id, subject: b.subject, status: b.status, campaignId: b.campaignId },
-        audience: describeRule(b.segment ?? {}, allTags),
-        candidates: totalCandidates,
-        examined,
-        willReceive,
-        countsAreComplete: !partial,
-        filteredOut: Object.fromEntries(blockedBy),
-        warnings,
-        sampleRenderedFor: first?.email ?? '(no real recipient — sample values used)',
-        sampleText: sample.text.slice(0, 2000),
-        preflight_token: token,
-        expiresAt,
-      })
+      const r = await preflightBroadcast(ctx.env, ctx.db, id)
+      if (!r.ok) return fail(r.reason)
+      // The agent switch is MCP's gate, so its warning is added here, not in core.
+      if (!(await agentSendAllowed(ctx.env, ctx.db))) r.report.warnings.push(agentSendRefusal(ctx.env))
+      return ok(r.report)
     },
   )
 
@@ -414,31 +286,18 @@ export function registerBroadcasts(server: McpServer, ctx: Ctx): void {
       annotations: { destructiveHint: true, idempotentHint: false },
     },
     async ({ id, preflight_token }) => {
-      if (!sendingAllowed(ctx.env)) return fail(SEND_DISABLED)
+      if (!(await agentSendAllowed(ctx.env, ctx.db))) return fail(agentSendRefusal(ctx.env))
 
-      const b = await getBroadcast(ctx.db, id)
-      if (!b) return fail('No such broadcast.')
-      if (b.status !== 'draft') return fail(`Broadcast #${id} is already ${b.status}.`)
-
-      const check = await consumePreflight(
-        ctx.db,
-        'broadcast_send',
-        id,
-        await broadcastDigest(b),
-        preflight_token,
-      )
-      if (!check.ok) {
-        return fail(
-          `Refusing to send: ${check.reason}.`,
-          `Call broadcast_preflight({ id: ${id} }) and pass the token it returns.`,
-        )
+      const r = await sendBroadcastWithToken(ctx.env, ctx.db, id, preflight_token)
+      if (!r.ok) {
+        return r.code === 'preflight'
+          ? fail(r.reason, `Call broadcast_preflight({ id: ${id} }) and pass the token it returns.`)
+          : fail(r.reason)
       }
-
-      const materialized = await startBroadcast(ctx.env, ctx.db, id)
       return ok({
         sending: true,
-        expectedRecipients: check.recipientCount,
-        materializedThisCall: materialized,
+        expectedRecipients: r.expectedRecipients,
+        materializedThisCall: r.materialized,
         note: 'Large sends continue across cron ticks. Poll broadcast_stats.',
       })
     },
@@ -457,7 +316,7 @@ export function registerBroadcasts(server: McpServer, ctx: Ctx): void {
       }),
     },
     async ({ id, at }) => {
-      if (!sendingAllowed(ctx.env)) return fail(SEND_DISABLED)
+      if (!(await agentSendAllowed(ctx.env, ctx.db))) return fail(agentSendRefusal(ctx.env))
 
       const ms = Date.parse(at)
       if (Number.isNaN(ms)) return fail(`"${at}" is not a parseable timestamp.`)
@@ -487,6 +346,136 @@ export function registerBroadcasts(server: McpServer, ctx: Ctx): void {
           ? `${result.alreadySent} message(s) had already gone out and cannot be recalled.`
           : 'Nothing had gone out yet.',
       })
+    },
+  )
+
+  defineTool(
+    server,
+    ctx,
+    'broadcast_resume_preflight',
+    {
+      description:
+        'MANDATORY before broadcast_resume. For a CANCELLED broadcast: how many already have it, roughly how many are left, the subject and body they will get, and a single-use preflight_token (10 minutes) bound to that content. Any edit (broadcast_revise) invalidates it. Nothing is sent.',
+      inputSchema: z.object({ id: z.number().int() }),
+      annotations: { readOnlyHint: true },
+    },
+    async ({ id }) => {
+      const b = await getBroadcast(ctx.db, id)
+      if (!b) return fail('No such broadcast.')
+      if (b.status !== 'cancelled') {
+        return fail(`Broadcast #${id} is ${b.status}; only a cancelled send can be resumed.`)
+      }
+      const outlook = (await resumeOutlook(ctx.db, id))!
+      if (outlook.remaining === 0) {
+        return fail('Everyone in the audience already has it — there is nobody to resume for.')
+      }
+      const { token, expiresAt } = await mintPreflight(
+        ctx.db,
+        'broadcast_resume',
+        id,
+        await resumeDigest(b, outlook.alreadySent),
+        outlook.remaining,
+      )
+      const warnings: string[] = []
+      if (!(await agentSendAllowed(ctx.env, ctx.db))) warnings.push(agentSendRefusal(ctx.env))
+      return ok({
+        broadcast: { id: b.id, subject: b.subject, status: b.status },
+        alreadySent: outlook.alreadySent,
+        expectedRemaining: outlook.remaining,
+        bodyText: b.bodyMd.slice(0, 2000),
+        note: 'The audience was frozen when the send started: nobody who joined since is included. Nobody who already has it gets it again.',
+        warnings,
+        preflight_token: token,
+        expiresAt,
+      })
+    },
+  )
+
+  defineTool(
+    server,
+    ctx,
+    'broadcast_resume',
+    {
+      description:
+        'Pick a CANCELLED broadcast back up where it stopped. Requires a preflight_token from broadcast_resume_preflight for this broadcast, unused, under 10 minutes old, and minted after the last edit. Nobody is mailed twice: everyone who already has a sent message for it is skipped, mail the provider already accepted is never re-sent, and the walk continues after the last person reached. The audience is the one frozen when the send started: people who joined after that are NOT included. Everyone from here on gets the current subject and body, so a correction saved with broadcast_revise is what they read (re-run the preflight after revising). This sends real mail.',
+      inputSchema: z.object({
+        id: z.number().int(),
+        preflight_token: z.string().describe('From broadcast_resume_preflight'),
+      }),
+      annotations: { destructiveHint: true, idempotentHint: false },
+    },
+    async ({ id, preflight_token }) => {
+      if (!(await agentSendAllowed(ctx.env, ctx.db))) return fail(agentSendRefusal(ctx.env))
+
+      const b = await getBroadcast(ctx.db, id)
+      if (!b) return fail('No such broadcast.')
+      if (b.status !== 'cancelled') {
+        return fail(`Broadcast #${id} is ${b.status}; only a cancelled send can be resumed.`)
+      }
+      const outlook = (await resumeOutlook(ctx.db, id))!
+      // The confirmation screen offers no button at zero; neither does this.
+      if (outlook.remaining === 0) {
+        return fail('Everyone in the audience already has it — there is nobody to resume for.')
+      }
+
+      const check = await consumePreflight(
+        ctx.db,
+        'broadcast_resume',
+        id,
+        await resumeDigest(b, outlook.alreadySent),
+        preflight_token,
+      )
+      if (!check.ok) {
+        return fail(
+          `Refusing to resume: ${check.reason}.`,
+          `Call broadcast_resume_preflight({ id: ${id} }) and pass the token it returns.`,
+        )
+      }
+
+      const r = await resumeBroadcast(ctx.env, ctx.db, id)
+      if (!r.ok) return failed(r)
+      return ok({
+        resumed: true,
+        alreadySent: outlook.alreadySent,
+        expectedRemaining: outlook.remaining,
+        requeued: r.requeued,
+        materializedThisCall: r.materialized,
+        note: 'Nobody who already has it gets it again. Large sends continue across cron ticks; poll broadcast_stats.',
+      })
+    },
+  )
+
+  defineTool(
+    server,
+    ctx,
+    'broadcast_revise',
+    {
+      description:
+        'Correct a broadcast that already went out (sent, or cancelled part-way): its subject and body, nothing else. NEVER sends anything to anyone — the corrected copy reaches people only through its web page, and through broadcast_resume if the send was cancelled. The as-mailed copy is kept the first time. Omit a field to keep it. For a draft, use broadcast_update.',
+      inputSchema: z.object({
+        id: z.number().int(),
+        subject: z.string().min(1).optional(),
+        body_markdown: z.string().min(1).optional(),
+      }),
+      annotations: { idempotentHint: true },
+    },
+    async ({ id, subject, body_markdown }) => {
+      const b = await getBroadcast(ctx.db, id)
+      if (!b) return fail('No such broadcast.')
+      if (subject === undefined && body_markdown === undefined) {
+        return fail('Nothing to change.', 'Pass subject, body_markdown, or both.')
+      }
+
+      const result = await reviseSentBroadcast(ctx.db, id, {
+        subject: subject ?? b.subject,
+        ...(body_markdown !== undefined
+          ? { bodyMd: body_markdown, bodyJson: mdToDoc(body_markdown) }
+          : { bodyMd: b.bodyMd, bodyJson: b.bodyJson }),
+      })
+      if (!result.ok) {
+        return failed(result, b.status === 'draft' ? 'A draft is edited with broadcast_update.' : undefined)
+      }
+      return ok({ revised: true, sent: 0, note: 'Saved. Nothing was sent.' })
     },
   )
 

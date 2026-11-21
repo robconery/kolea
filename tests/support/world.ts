@@ -16,6 +16,9 @@
  * | `MEDIA`/`DOWNLOADS` | in-memory buckets      | R2 holds bytes; no rule lives there. |
  * | `ASSETS`     | 404 fetcher                   | Static assets are Cloudflare's, not ours. |
  * | mail         | `EMAIL_PROVIDER=console`      | The kill switch (CLAUDE.md). Mail lands in `dev_outbox` and the spec reads it. |
+ * | DNS          | `DNS_RESOLVER=fake`           | Sending-domain lookups read `providers/dns.ts`'s in-memory zone, never DoH. |
+ * | webhooks     | `WEBHOOK_TRANSPORT=fake`      | Outbound POSTs are recorded in memory, never sent. |
+ * | `IMPORT_HTTP`| refuses everything            | The importers' outbound HTTP. A spec binds `fakeImportApis()` to answer like Kit, Ghost, Mailchimp and Drip. |
  *
  * ⚠️ `EMAIL_PROVIDER` is `console` here and must stay that way. A spec that
  * flips it to `resend` would need `RESEND_API_KEY`, and the only thing standing
@@ -29,6 +32,7 @@ import { devOutbox } from '../../src/db/schema.ts'
 import type { Env, SendJob } from '../../src/types.ts'
 import worker from '../../src/worker.tsx'
 import { freshD1 } from './d1.ts'
+import { noNetwork } from './fake-import-apis.ts'
 import { migrate } from './migrate.ts'
 
 /** The origin every link in a rendered email is built against. */
@@ -48,8 +52,14 @@ export interface World {
   fetch(path: string, init?: RequestInit): Promise<Response>
   /** Same, for a form post — the shape every public page actually submits. */
   post(path: string, form: Record<string, string>): Promise<Response>
-  /** Run the minutely cron: sequence ticks plus scheduled broadcast pages. */
-  tick(): Promise<void>
+  /**
+   * Run the minutely cron: sequence ticks plus scheduled broadcast pages.
+   *
+   * `at` is the cron's `scheduledTime` — the one clock the Worker is handed
+   * rather than reading for itself — so a spec can run the tick at 03:00 in
+   * Honolulu without touching `Date`. Omitted, it is now.
+   */
+  tick(at?: Date): Promise<void>
   /** Await everything handed to `waitUntil`, including work it started itself. */
   settle(): Promise<void>
   /** Everything the console provider "sent", newest last. */
@@ -111,6 +121,18 @@ export function createWorld(overrides: Partial<Env> = {}): World {
     // wants to prove the gate exists creates its own world without this.
     DEV_AUTH_BYPASS: 'true',
 
+    // Sending-domain checks run on the minutely tick. The in-memory resolver
+    // keeps every spec off the real DNS; Cloudflare stays unconfigured (no
+    // token, no adapter) unless a spec asks for the fake.
+    DNS_RESOLVER: 'fake',
+    // Outbound webhooks go to an in-memory fake (`providers/webhooks.ts`), never
+    // the network. A spec reads and scripts it with `fakeTransportFor(env)`.
+    WEBHOOK_TRANSPORT: 'fake',
+    // The importers' HTTP seam. Refuses everything unless a spec binds the fake
+    // APIs (`support/fake-import-apis.ts`): no test may reach Kit, Ghost,
+    // Mailchimp or Drip.
+    IMPORT_HTTP: noNetwork,
+
     ...overrides,
   }
 
@@ -147,8 +169,12 @@ export function createWorld(overrides: Partial<Env> = {}): World {
       })
     },
 
-    async tick() {
-      await worker.scheduled({ cron: '*/1 * * * *' } as ScheduledController, env, ctx)
+    async tick(at) {
+      await worker.scheduled(
+        { cron: '*/1 * * * *', scheduledTime: (at ?? new Date()).getTime() } as ScheduledController,
+        env,
+        ctx,
+      )
       await settle()
     },
 

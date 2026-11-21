@@ -5,7 +5,8 @@ import type { Env } from '../../types.ts'
 import { mdToDoc } from '../md-to-doc.ts'
 import { templateSchedule } from '../sequence-templates/index.ts'
 import { updateStep } from '../sequences.ts'
-import { complete, modelFor } from './openrouter.ts'
+import { complete } from './openrouter.ts'
+import { resolveAi } from './settings.ts'
 import { SUBJECT_GUIDE, WRITING_GUIDE } from './style.ts'
 import { voiceSamples } from './voice.ts'
 
@@ -51,6 +52,8 @@ export type DraftResult =
       mails: DraftedMail[]
       story: string
       costUsd: number
+      /** The model that wrote the mails, for the flash. */
+      model: string
       /** Mails the model failed on, left as the template had them. */
       skipped: number
     }
@@ -99,7 +102,7 @@ const MAIL_SCHEMA = {
   },
 }
 
-const DRAFT_RULES = `
+export const DRAFT_RULES = `
 # Drafting rules
 
 You are drafting one email in an automated sequence for a writer who will rewrite it in their own words before it is sent. Your draft is a starting point that shows the structure and the argument, written well enough that the writer can see how it should sound.
@@ -129,7 +132,9 @@ export async function draftSequence(
   }
   if (t.steps.length === 0) return { ok: false, reason: 'This template has no mails to draft.' }
 
-  const model = modelFor(env, 'sequence')
+  // One read of the settings for the plan and every mail: they must all go
+  // to the same key and the same models even if the screen changes midway.
+  const setup = await resolveAi(env, db)
   const days = templateSchedule(t.steps)
   const outline = t.steps
     .map((s, i) => `Mail ${i + 1}, day ${days[i]}: "${s.label}". ${s.purpose}`)
@@ -148,8 +153,8 @@ export async function draftSequence(
 
   // ── Pass one: the plan
   const planned = await complete(env, db, {
-    label: 'sequence-plan',
-    model,
+    task: 'sequence-plan',
+    setup,
     messages: [
       {
         role: 'system',
@@ -185,8 +190,8 @@ export async function draftSequence(
   const drafted = await Promise.all(
     t.steps.map((step, i) =>
       complete(env, db, {
-        label: 'sequence-mail',
-        model,
+        task: 'sequence-mail',
+        setup,
         messages: [
           { role: 'system', content: system },
           {
@@ -237,7 +242,7 @@ export async function draftSequence(
     return { subject, bodyMd: `${banner(plans[i]!)}\n\n${body}` }
   })
 
-  return { ok: true, mails, story, costUsd, skipped }
+  return { ok: true, mails, story, costUsd, model: setup.models['sequence-mail'], skipped }
 }
 
 /**

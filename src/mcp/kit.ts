@@ -19,8 +19,24 @@ export interface Ctx {
   env: Env
   db: Db
   executionCtx: ExecutionContext
-  apiKeyId: number
+  /** The admin key the caller presented on `/mcp/:secret`, or null on `/mcp`. */
+  apiKeyId: number | null
+  /** The OAuth grant the caller's token belongs to on `/mcp`, or null. */
+  oauthGrantId: number | null
+  /**
+   * True for an OAuth grant the operator approved without "allow changes".
+   * `defineTool` refuses every tool not annotated `readOnlyHint: true`, so a
+   * read-only connection can look at everything and change nothing. An admin
+   * key is never read-only.
+   */
+  readOnly: boolean
 }
+
+/** What a read-only connection is told when it reaches for a tool that writes. */
+export const READ_ONLY_REFUSAL =
+  'This connection is read-only: the operator approved this app to look, not to change anything.'
+const READ_ONLY_HINT =
+  'Use the read-only tools (list, get, search, stats). To make changes, the operator disconnects this app under Connected apps and approves it again with "Allow changes" ticked.'
 
 /**
  * Aliased from the SDK rather than redeclared: the wire shape carries an
@@ -125,7 +141,14 @@ export function defineTool<S extends Schema>(
     let result: ToolResult
 
     try {
-      result = await handler(args)
+      // The gate sits here, once, rather than in 103 handlers: a tool that
+      // forgot to check could never be the one that let a read grant write.
+      // Anything not explicitly marked read-only counts as a write.
+      if (ctx.readOnly && config.annotations?.readOnlyHint !== true) {
+        result = fail(READ_ONLY_REFUSAL, READ_ONLY_HINT)
+      } else {
+        result = await handler(args)
+      }
       if (result.isError) {
         outcome = 'denied'
         // `content` is a union of block kinds; only a text block has a message.
@@ -143,6 +166,7 @@ export function defineTool<S extends Schema>(
       await ctx.db.insert(mcpCalls).values({
         tool: name,
         apiKeyId: ctx.apiKeyId,
+        oauthGrantId: ctx.oauthGrantId,
         args: (args ?? {}) as Record<string, unknown>,
         outcome,
         detail: detail?.slice(0, 500) ?? null,

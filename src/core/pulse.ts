@@ -101,11 +101,11 @@ export async function justSent(db: Db, limit = 6, now = Date.now()): Promise<Jus
   const totals = (await db.all(sql`
     select m.broadcast_id as id,
            count(distinct m.id) as recipients,
-           count(distinct case when e.type = 'open' then e.message_id end) as readers,
+           count(distinct case when e.type = 'open' and e.machine = 0 then e.message_id end) as readers,
            count(distinct case when e.type = 'click' then e.message_id end) as clickers,
            count(distinct case when e.type = 'bounce' then e.message_id end) as bounced,
            sum(case when e.type = 'click' and e.occurred_at >= ${dayAgo} then 1 else 0 end) as clicks_today,
-           max(case when e.type in ('open', 'click') then e.occurred_at end) as last_event
+           max(case when (e.type = 'click' or (e.type = 'open' and e.machine = 0)) then e.occurred_at end) as last_event
     from messages m
     left join events e on e.message_id = m.id
     where m.broadcast_id in (${ids})
@@ -132,7 +132,7 @@ export async function justSent(db: Db, limit = 6, now = Date.now()): Promise<Jus
     from (
       select message_id, min(occurred_at) as first_at
       from events
-      where type = 'open'
+      where type = 'open' and machine = 0
         and message_id in (select id from messages where broadcast_id in (${ids}))
       group by message_id
     ) f
@@ -283,8 +283,8 @@ export async function mostRead(db: Db, days = 30, limit = 10, now = Date.now()):
            coalesce(m.broadcast_id, ss.sequence_id) as id,
            coalesce(b.subject, s.name) as label,
            b.sent_at as sent_at,
-           count(distinct case when e.type = 'open' then e.message_id end) as readers,
-           sum(case when e.type = 'open' then 1 else 0 end) as opens,
+           count(distinct case when e.type = 'open' and e.machine = 0 then e.message_id end) as readers,
+           sum(case when e.type = 'open' and e.machine = 0 then 1 else 0 end) as opens,
            count(distinct case when e.type = 'click' then e.message_id end) as clickers,
            sum(case when e.type = 'click' then 1 else 0 end) as clicks
     from events e
@@ -293,7 +293,7 @@ export async function mostRead(db: Db, days = 30, limit = 10, now = Date.now()):
     left join sequence_steps ss on ss.id = m.sequence_step_id
     left join sequences s on s.id = ss.sequence_id
     where e.occurred_at >= ${since}
-      and e.type in ('open', 'click')
+      and (e.type = 'click' or (e.type = 'open' and e.machine = 0))
       and (m.broadcast_id is not null or m.sequence_step_id is not null)
     group by 1, 2
     order by readers desc, clickers desc
@@ -333,10 +333,10 @@ export async function engagementByDay(db: Db, days = 30, now = Date.now()): Prom
   const since = now - days * DAY_MS
   const rows = (await db.all(sql`
     select date(occurred_at / 1000, 'unixepoch') as day,
-           count(distinct case when type = 'open' then message_id end) as readers,
+           count(distinct case when type = 'open' and machine = 0 then message_id end) as readers,
            count(distinct case when type = 'click' then message_id end) as clickers
     from events
-    where occurred_at >= ${since} and type in ('open', 'click')
+    where occurred_at >= ${since} and (type = 'click' or (type = 'open' and machine = 0))
     group by 1
     order by 1
   `)) as { day: string; readers: number; clickers: number }[]
@@ -406,7 +406,7 @@ export async function pulseNow(db: Db, now = Date.now()): Promise<PulseNow> {
            sum(case when type = 'click' and occurred_at >= ${a} then 1 else 0 end) as c24,
            sum(case when type = 'click' and occurred_at < ${a} then 1 else 0 end) as cp
     from events
-    where occurred_at >= ${b} and type in ('open', 'click')
+    where occurred_at >= ${b} and (type = 'click' or (type = 'open' and machine = 0))
   `)) as { r24: number; rp: number; c24: number | null; cp: number | null } | undefined
   return {
     readers24: Number(r?.r24 ?? 0),

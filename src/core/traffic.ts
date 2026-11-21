@@ -206,12 +206,12 @@ export async function trafficReport(
     `),
     db.all(sql`
       select date(occurred_at / 1000, 'unixepoch') as day,
-             count(distinct case when type = 'open' then message_id end) as opens,
+             count(distinct case when type = 'open' and machine = 0 then message_id end) as opens,
              sum(case when type = 'click' then 1 else 0 end) as clicks,
              sum(case when type = 'click' and ${siteOrigin} != ''
                        and json_extract(meta, '$.url') like ${`${siteOrigin}%`} then 1 else 0 end) as to_site
       from events
-      where occurred_at >= ${startMs} and type in ('open', 'click')
+      where occurred_at >= ${startMs} and (type = 'click' or (type = 'open' and machine = 0))
       group by 1
     `),
     db.all(sql`
@@ -286,7 +286,7 @@ export async function trafficReport(
     const rows = (await db.all(sql`
       select m.broadcast_id as id, count(distinct e.message_id) as n
       from events e join messages m on m.id = e.message_id
-      where e.type = 'open' and m.broadcast_id in (${sql.join(postIds.map((id) => sql`${id}`), sql`, `)})
+      where e.type = 'open' and e.machine = 0 and m.broadcast_id in (${sql.join(postIds.map((id) => sql`${id}`), sql`, `)})
       group by m.broadcast_id
     `)) as Row[]
     for (const r of rows) reads.set(n(r.id), n(r.n))

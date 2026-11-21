@@ -1,11 +1,12 @@
-import { and, desc, eq, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, sql } from 'drizzle-orm'
 import type { Db } from '../db/index.ts'
-import { campaigns, sales, sequences, subscribers } from '../db/schema.ts'
+import { campaigns, saleItems, sales, sequences, subscribers } from '../db/schema.ts'
 import { logActivity } from './activity.ts'
 import { getCampaignBySlug, lastTouch, recordTouch } from './campaigns.ts'
 import { isValidEmail, normalizeEmail } from './ids.ts'
 import { exitSequence } from './sequences.ts'
 import { addTags, findOrCreateTag, upsertSubscriber } from './subscribers.ts'
+import { emitWebhook, salePayload, subscriberPayload } from './webhooks.ts'
 
 export interface SaleInput {
   email: string
@@ -24,6 +25,21 @@ export interface SaleInput {
   status?: 'paid' | 'refunded'
   occurredAt?: Date
   meta?: Record<string, unknown>
+  /**
+   * `explicit` credits only the campaign named on the sale and never infers one
+   * from the buyer's last touch. History imports use it: a 2019 sale must not be
+   * credited to a campaign the buyer touched in 2026.
+   */
+  attribution?: 'auto' | 'explicit'
+  /** `subscribers.source` for a buyer created by this sale. Defaults to `sale`. */
+  buyerSource?: string
+  /**
+   * Whether to tell webhook receivers (`purchased`). Defaults to true. A
+   * history import passes false: a 2019 sale is history, not news, and a
+   * receiver acting on `purchased` (a fulfilment, a thank-you) must not fire
+   * for it (the same rule the CSV list import follows).
+   */
+  emitWebhooks?: boolean
 }
 
 export type SaleStatus = 'recorded' | 'refunded' | 'duplicate' | 'invalid_email' | 'invalid_amount'
@@ -119,7 +135,7 @@ export async function recordSale(db: Db, input: SaleInput): Promise<SaleResult> 
   const existingSub = await db.select().from(subscribers).where(eq(subscribers.email, email)).get()
   let subscriberId = existingSub?.id
   if (!subscriberId) {
-    const { id } = await upsertBuyer(db, email, input.name ?? null)
+    const { id } = await upsertBuyer(db, email, input.name ?? null, input.buyerSource ?? 'sale')
     if (!id) return { status: 'invalid_email' }
     subscriberId = id
   } else if (input.name && !existingSub?.name) {
@@ -145,7 +161,7 @@ export async function recordSale(db: Db, input: SaleInput): Promise<SaleResult> 
     }
   }
 
-  if (!campaignId) {
+  if (!campaignId && input.attribution !== 'explicit') {
     const touch = await lastTouch(db, subscriberId)
     if (touch) {
       const campaign = await db
@@ -199,6 +215,22 @@ export async function recordSale(db: Db, input: SaleInput): Promise<SaleResult> 
     },
     dedupeKey: `${wantsRefund ? 'refunded' : 'purchased'}:${saleId}`,
   })
+
+  // A sale that arrives already refunded is history, not a purchase.
+  if (!wantsRefund && input.emitWebhooks !== false) {
+    await emitWebhook(
+      db,
+      'purchased',
+      async () => {
+        const [subscriber, sale] = await Promise.all([
+          subscriberPayload(db, subscriberId),
+          salePayload(db, saleId),
+        ])
+        return subscriber && sale ? { subscriber, sale } : null
+      },
+      { dedupeKey: `purchased:${saleId}`, occurredAt: input.occurredAt ?? now },
+    )
+  }
 
   // A campaign named on the sale itself is a touch we hadn't seen — record it so
   // the campaign's people count includes the person who bought from it.
@@ -260,11 +292,11 @@ export async function recordSale(db: Db, input: SaleInput): Promise<SaleResult> 
  * `subscribe`-triggered sequences stay out of it either way — post-purchase mail
  * comes from the tags on the sale, which is the explicit, visible path.
  */
-async function upsertBuyer(db: Db, email: string, name: string | null) {
+async function upsertBuyer(db: Db, email: string, name: string | null, source: string) {
   return await upsertSubscriber(db, {
     email,
     name,
-    source: 'sale',
+    source,
     status: 'pending',
     triggerSubscribeSequences: false,
   })
@@ -288,7 +320,7 @@ async function endSequenceFor(db: Db, subscriberId: number, slug: string): Promi
 
 // ───────────────────────────────────────────────── reading
 
-export async function listSales(db: Db, limit = 100) {
+export async function listSales(db: Db, limit = 100, offset = 0) {
   return await db
     .select({
       sale: sales,
@@ -301,7 +333,32 @@ export async function listSales(db: Db, limit = 100) {
     .leftJoin(campaigns, eq(campaigns.id, sales.campaignId))
     .orderBy(desc(sales.occurredAt), desc(sales.id))
     .limit(limit)
+    .offset(offset)
     .all()
+}
+
+/** One sale with its buyer, its frozen campaign credit and its line items. */
+export async function getSale(db: Db, id: number) {
+  const row = await db
+    .select({
+      sale: sales,
+      email: subscribers.email,
+      subscriberName: subscribers.name,
+      campaignName: campaigns.name,
+    })
+    .from(sales)
+    .innerJoin(subscribers, eq(subscribers.id, sales.subscriberId))
+    .leftJoin(campaigns, eq(campaigns.id, sales.campaignId))
+    .where(eq(sales.id, id))
+    .get()
+  if (!row) return null
+  const items = await db
+    .select()
+    .from(saleItems)
+    .where(eq(saleItems.saleId, id))
+    .orderBy(asc(saleItems.id))
+    .all()
+  return { ...row, items }
 }
 
 export async function salesForSubscriber(db: Db, subscriberId: number) {

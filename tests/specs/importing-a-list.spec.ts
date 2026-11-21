@@ -3,7 +3,8 @@
 import { beforeAll, describe, expect, it } from 'bun:test'
 import { count, eq } from 'drizzle-orm'
 import { type ImportReport, importCsv, upsertSubscriber } from '../../src/core/subscribers.ts'
-import { subscriberTags, subscribers, tags } from '../../src/db/schema.ts'
+import { sequenceEnrollments, subscriberTags, subscribers, tags } from '../../src/db/schema.ts'
+import { aSequence, aTag } from '../support/factories.ts'
 import { createWorld, type World } from '../support/world.ts'
 
 const header = 'email,name,tags'
@@ -122,6 +123,42 @@ describe('Feature: importing a list of people', () => {
     })
   })
 
+  describe('Scenario: importing into a list with live welcome and tag-started series', () => {
+    // ARCHITECTURE invariant 5: a bulk import must never start mail. Driven
+    // through the console, then a cron tick that would send anything enrolled.
+    let world: World
+    let enrollments: number
+    let outbox: number
+    let tagged: number
+
+    beforeAll(async () => {
+      world = createWorld()
+      const vip = await aTag(world, 'vip')
+      await aSequence(world, { name: 'Welcome', trigger: 'subscribe' })
+      await aSequence(world, { name: 'VIP', trigger: 'tag_added', triggerTagId: vip })
+      await world.post('/subscribers/import', {
+        csv: [header, 'ada@example.test,Ada,vip', 'grace@example.test,Grace,'].join('\n'),
+      })
+      await world.tick()
+      await world.settle()
+      enrollments = (await world.db.select({ n: count() }).from(sequenceEnrollments).get())?.n ?? 0
+      outbox = (await world.outbox()).length
+      tagged = (await world.db.select({ n: count() }).from(subscriberTags).get())?.n ?? 0
+    })
+
+    it('⭐ enrolls nobody in any sequence', () => {
+      expect(enrollments).toBe(0)
+    })
+
+    it('⭐ mails nobody', () => {
+      expect(outbox).toBe(0)
+    })
+
+    it('still applies the tags from the file', () => {
+      expect(tagged).toBe(1)
+    })
+  })
+
   // ───────────────────────────────────────────── sad path
 
   describe('Scenario: an import that contains somebody who unsubscribed', () => {
@@ -144,6 +181,55 @@ describe('Feature: importing a list of people', () => {
 
     it('leaves them unsubscribed', () => {
       expect(status).toBe('unsubscribed')
+    })
+  })
+
+  describe('Scenario: an import that contains a buyer we only have on file', () => {
+    // ⭐ `pending` is "did not ask for mail" (a buyer, or an unconfirmed double
+    // opt-in). A file is not the person asking, so it never promotes them.
+    let world: World
+    let status: string | undefined
+    let report: ImportReport
+
+    beforeAll(async () => {
+      world = createWorld()
+      await upsertSubscriber(world.db, { email: 'buyer@example.test', status: 'pending' })
+      report = await importCsv(world.db, [header, 'buyer@example.test,A Buyer,'].join('\n'))
+      status = (await world.db.select().from(subscribers).get())?.status
+    })
+
+    it('⭐ leaves them pending', () => {
+      expect(status).toBe('pending')
+    })
+
+    it('counts them as updated', () => {
+      expect(report.updated).toBe(1)
+    })
+  })
+
+  describe('Scenario: a paste longer than one import takes', () => {
+    // D1 allows 1,000 queries per invocation. The rest is reported, never a 500.
+    let world: World
+    let report: ImportReport
+    let people: number | undefined
+
+    beforeAll(async () => {
+      world = createWorld()
+      const rows = Array.from({ length: 105 }, (_, i) => `p${i}@example.test,P ${i},`)
+      report = await importCsv(world.db, [header, ...rows].join('\n'))
+      people = (await world.db.select({ n: count() }).from(subscribers).get())?.n
+    })
+
+    it('imports the first hundred', () => {
+      expect(people).toBe(100)
+    })
+
+    it('reports the rest as not processed', () => {
+      expect(report.notProcessed).toBe(5)
+    })
+
+    it('says where to start the next import', () => {
+      expect(report.firstUnprocessedRow).toBe(101)
     })
   })
 

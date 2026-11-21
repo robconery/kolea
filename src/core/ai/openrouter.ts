@@ -1,14 +1,21 @@
 import { gte, sql } from 'drizzle-orm'
 import type { Db } from '../../db/index.ts'
 import { aiCalls } from '../../db/schema.ts'
+import type { AiReply } from '../../providers/ai/types.ts'
 import type { Env } from '../../types.ts'
+import { type AiTask, estimateCost } from './catalogue.ts'
+import { type AiSetup, resolveAi } from './settings.ts'
+
+export { type AiTask, modelLabel } from './catalogue.ts'
 
 /**
- * OpenRouter: one HTTP endpoint in front of every model we might want.
+ * The one way a writing helper calls a model: budget-checked, routed to the
+ * key that pays, and recorded. (The file keeps its old name; it is no longer
+ * OpenRouter-only. Which provider answers is `settings.ts`'s decision and the
+ * HTTP lives in `providers/ai/`.)
  *
- * Off until configured. With no `OPENROUTER_KEY` the composer shows no AI
- * buttons and nothing here is ever called, the same way the Unsplash picker
- * works.
+ * Off until configured. With no usable key the composer shows no AI buttons
+ * and nothing here is ever called, the same way the Unsplash picker works.
  *
  * ⚠️ Nothing in `core/ai/` sends mail, schedules mail, or writes to a row a
  * subscriber can see. Every answer comes back to the operator's screen as a
@@ -16,67 +23,32 @@ import type { Env } from '../../types.ts'
  * nowhere until they press Send. That boundary is the reason it is safe to let
  * a model near the composer at all.
  *
- * Two things keep the bill honest:
+ * Two things keep the bill honest, whichever key pays:
  *
- *  1. Every call, won or lost, is a row in `ai_calls` with what OpenRouter says
- *     it cost. OpenRouter reports `usage.cost` on every response.
+ *  1. Every call, won or lost, is a row in `ai_calls` with what it cost:
+ *     OpenRouter's own figure, or tokens × list price for Anthropic and OpenAI,
+ *     which report tokens and not money (flagged `cost_estimated`).
  *  2. Before every call, this month's total is read back and compared with
  *     `AI_MONTHLY_BUDGET_USD`. Over the line, the call is refused before it is
- *     made. Set a credit limit on the OpenRouter key as well; this is the
- *     second lock, not the only one.
+ *     made. Set a credit limit on the key as well; this is the second lock,
+ *     not the only one.
  */
-
-const ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions'
-
-export type AiTask = 'subject' | 'cleanup' | 'sequence'
-
-/**
- * The defaults, chosen for this job and this price list (September 2026, per
- * million tokens in / out):
- *
- * - Subject lines: Sonnet 5 ($2 / $10). Short in, very short out, and the
- *   judgement is about taste rather than stamina. About a cent a click.
- * - Clean-up: Opus 5.5 ($4 / $20). Rewriting prose without flattening the
- *   writer's voice is the hardest thing on this list. About 5 to 10 cents.
- * - Sequence drafts: Opus 5.5. A plan plus one call per mail, around 20 to 40
- *   cents for a seven-mail sequence.
- *
- * Any of them can be swapped with an env var without a deploy of new code.
- */
-export const DEFAULT_MODELS: Record<AiTask, string> = {
-  subject: 'anthropic/claude-sonnet-5',
-  cleanup: 'anthropic/claude-opus-5.5',
-  sequence: 'anthropic/claude-opus-5.5',
-}
 
 const DEFAULT_BUDGET_USD = 10
 
 /**
- * The one switch for every AI feature. A key present means the subject link,
- * "Clean this up", the template pitch box and the `/ai/*` endpoints all exist.
- * No key (or a blank one) means none of them render and the endpoints 404.
- * Every screen asks this function; none of them reads the env var itself.
+ * The one switch for every AI feature: is there a key that pays, and can it be
+ * read? Yes means the subject link, "Clean this up", the template pitch box
+ * and the `/ai/*` endpoints all exist. No means none of them render and the
+ * endpoints 404. Every screen asks this; none of them reads an env var itself.
  */
-export function aiConfigured(env: Env): boolean {
-  return Boolean(env.OPENROUTER_KEY?.trim())
+export async function aiReady(env: Env, db: Db): Promise<boolean> {
+  return (await resolveAi(env, db)).ready
 }
 
-export function modelFor(env: Env, task: AiTask): string {
-  const override = {
-    subject: env.AI_MODEL_SUBJECT,
-    cleanup: env.AI_MODEL_CLEANUP,
-    sequence: env.AI_MODEL_SEQUENCE,
-  }[task]
-  return override?.trim() || DEFAULT_MODELS[task]
-}
-
-/** "anthropic/claude-opus-5.5" → "Claude Opus 5.5", for a button's small print. */
-export function modelLabel(model: string): string {
-  const name = model.split('/').pop() ?? model
-  return name
-    .split('-')
-    .map((w) => (/^\d/.test(w) ? w : w.charAt(0).toUpperCase() + w.slice(1)))
-    .join(' ')
+/** The model `task` uses now: the operator's choice, an `AI_MODEL_*` variable, or the default. */
+export async function modelFor(env: Env, db: Db, task: AiTask): Promise<string> {
+  return (await resolveAi(env, db)).models[task]
 }
 
 export function monthlyBudget(env: Env): number {
@@ -88,7 +60,7 @@ function monthStart(now = new Date()): Date {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
 }
 
-/** Dollars spent on models since the first of this month (UTC). */
+/** Dollars spent on models since the first of this month (UTC), whoever answered. */
 export async function spentThisMonth(db: Db): Promise<number> {
   const row = await db
     .select({ total: sql<number>`coalesce(sum(${aiCalls.costUsd}), 0)` })
@@ -113,15 +85,16 @@ export interface Message {
 }
 
 export interface CallInput {
-  /** What the row in `ai_calls` is filed under. */
-  label: string
-  model: string
+  /** The helper making the call. Picks the model and is what the `ai_calls` row is filed under. */
+  task: AiTask
   messages: Message[]
   maxTokens: number
   /** A JSON Schema. When set, the reply is parsed and returned as `json`. */
   schema?: { name: string; schema: Record<string, unknown> }
   /** Give up after this long. A hung request must not hold the composer hostage. */
   timeoutMs?: number
+  /** Already resolved, when a caller makes many calls at once (the sequence drafter). */
+  setup?: AiSetup
 }
 
 export type CallResult =
@@ -129,13 +102,16 @@ export type CallResult =
   | { ok: false; reason: string }
 
 /**
- * One chat completion, budget-checked and recorded.
+ * One model call, budget-checked and recorded.
  *
  * Never throws: a model that is down, slow or over budget is a sentence for
  * the operator, not a 500.
  */
 export async function complete(env: Env, db: Db, input: CallInput): Promise<CallResult> {
-  if (!aiConfigured(env)) return { ok: false, reason: 'AI is not set up. Add OPENROUTER_KEY.' }
+  const setup = input.setup ?? (await resolveAi(env, db))
+  if (!setup.ready || !setup.route) {
+    return { ok: false, reason: `AI is not set up. ${setup.reason ?? ''} See Settings, AI.`.replace(/\s+/g, ' ') }
+  }
 
   const budget = monthlyBudget(env)
   const spent = await spentThisMonth(db)
@@ -146,82 +122,64 @@ export async function complete(env: Env, db: Db, input: CallInput): Promise<Call
     }
   }
 
+  const { provider, apiKey } = setup.route
+  const model = setup.models[input.task]
   const started = Date.now()
-  const body: Record<string, unknown> = {
-    model: input.model,
+  const reply = await provider.complete({
+    apiKey,
+    model,
     messages: input.messages,
-    max_tokens: input.maxTokens,
-    // No `temperature`: the Claude 5 models refuse sampling parameters, and
-    // with `require_parameters` on, asking for one routes to nowhere (404).
-  }
-  if (input.schema) {
-    body.response_format = {
-      type: 'json_schema',
-      json_schema: { name: input.schema.name, strict: true, schema: input.schema.schema },
-    }
-    // Only route to a provider that honours the schema, rather than one that
-    // quietly ignores it and hands back prose.
-    body.provider = { require_parameters: true }
-  }
+    maxTokens: input.maxTokens,
+    schema: input.schema,
+    timeoutMs: input.timeoutMs ?? 90_000,
+  })
+  const rec = (r: Receipt) => record(db, input.task, provider.name, model, started, r)
+  const who = provider.name === 'fake' ? 'The fake model' : providerTitle(provider.name)
 
-  let res: Response
-  try {
-    res = await fetch(ENDPOINT, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${env.OPENROUTER_KEY}`,
-        'Content-Type': 'application/json',
-        // ASCII only: a header value with "ō" in it throws before it is sent.
-        'X-OpenRouter-Title': 'Kolea',
-      },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(input.timeoutMs ?? 90_000),
-    })
-  } catch (err) {
-    const timedOut = err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')
-    const reason = timedOut ? 'The model took too long to answer.' : 'Could not reach OpenRouter.'
-    await record(db, input, started, { ok: false, error: reason })
+  if (reply.kind === 'timeout' || reply.kind === 'unreachable') {
+    const reason = reply.kind === 'timeout' ? 'The model took too long to answer.' : `Could not reach ${who}.`
+    await rec({ ok: false, error: reason, reply })
+    return { ok: false, reason }
+  }
+  if (reply.kind === 'rejected') {
+    const reason = `${who} said no (${reply.status}): ${reply.message}`
+    await rec({ ok: false, error: reason, reply })
     return { ok: false, reason }
   }
 
-  const data = (await res.json().catch(() => null)) as Completion | null
-  const usage = data?.usage
-  const costUsd = Number(usage?.cost ?? 0) || 0
-  const tokens = { prompt: usage?.prompt_tokens ?? 0, completion: usage?.completion_tokens ?? 0 }
-
-  if (!res.ok || !data || data.error) {
-    const reason = `OpenRouter said no (${res.status}): ${data?.error?.message ?? res.statusText}`
-    await record(db, input, started, { ok: false, error: reason, costUsd, tokens })
-    return { ok: false, reason }
-  }
-
-  const choice = data.choices?.[0]
-  const text = (choice?.message?.content ?? '').trim()
-  const model = data.model ?? input.model
-
-  if (!text) {
+  const answered = reply.model || model
+  if (!reply.text) {
     const reason = 'The model answered with nothing.'
-    await record(db, input, started, { ok: false, error: reason, costUsd, tokens, model })
+    await rec({ ok: false, error: reason, reply, model: answered })
     return { ok: false, reason }
   }
-  if (choice?.finish_reason === 'length') {
+  if (reply.finish === 'length') {
     const reason = 'The answer was cut off before it finished. Nothing was changed.'
-    await record(db, input, started, { ok: false, error: reason, costUsd, tokens, model })
+    await rec({ ok: false, error: reason, reply, model: answered })
+    return { ok: false, reason }
+  }
+  if (reply.finish === 'refusal') {
+    const reason = 'The model declined to answer. Nothing was changed.'
+    await rec({ ok: false, error: reason, reply, model: answered })
     return { ok: false, reason }
   }
 
   let json: unknown = null
   if (input.schema) {
-    json = parseJson(text)
+    json = parseJson(reply.text)
     if (json === null) {
       const reason = 'The model answered, but not in the shape asked for.'
-      await record(db, input, started, { ok: false, error: reason, costUsd, tokens, model })
+      await rec({ ok: false, error: reason, reply, model: answered })
       return { ok: false, reason }
     }
   }
 
-  await record(db, input, started, { ok: true, costUsd, tokens, model })
-  return { ok: true, text, json, model, costUsd }
+  const costUsd = await rec({ ok: true, reply, model: answered })
+  return { ok: true, text: reply.text, json, model: answered, costUsd }
+}
+
+function providerTitle(name: string): string {
+  return ({ openrouter: 'OpenRouter', anthropic: 'Anthropic', openai: 'OpenAI' } as Record<string, string>)[name] ?? name
 }
 
 /** Strict JSON first; then the outermost object, for a reply wrapped in a fence. */
@@ -240,39 +198,47 @@ function parseJson(text: string): unknown {
   }
 }
 
+interface Receipt {
+  ok: boolean
+  error?: string
+  reply: AiReply
+  model?: string
+}
+
+/** Writes the ledger row and returns the cost it recorded. */
 async function record(
   db: Db,
-  input: CallInput,
+  task: AiTask,
+  provider: 'openrouter' | 'anthropic' | 'openai' | 'fake',
+  model: string,
   started: number,
-  r: {
-    ok: boolean
-    error?: string
-    costUsd?: number
-    tokens?: { prompt: number; completion: number }
-    model?: string
-  },
-): Promise<void> {
+  r: Receipt,
+): Promise<number> {
+  const usage = 'usage' in r.reply ? r.reply.usage : null
+  const promptTokens = usage?.promptTokens ?? 0
+  const completionTokens = usage?.completionTokens ?? 0
+  const answered = r.model ?? model
+  // Reported beats estimated. No usage at all (a timeout) is a free call.
+  const reported = usage?.costUsd ?? null
+  const estimated = Boolean(usage) && reported === null
+  const costUsd = reported ?? (estimated ? estimateCost(answered, promptTokens, completionTokens) : null) ?? 0
   try {
     await db.insert(aiCalls).values({
-      task: input.label,
-      model: r.model ?? input.model,
-      promptTokens: r.tokens?.prompt ?? 0,
-      completionTokens: r.tokens?.completion ?? 0,
-      costUsd: r.costUsd ?? 0,
+      task,
+      model: answered,
+      promptTokens,
+      completionTokens,
+      costUsd,
       ok: r.ok,
       error: r.error ?? null,
       durationMs: Date.now() - started,
+      provider,
+      costEstimated: estimated,
       createdAt: new Date(),
     })
   } catch {
     // The call already happened. Losing its receipt is bad; failing the
     // operator's request over it would be worse.
   }
-}
-
-interface Completion {
-  model?: string
-  choices?: { message?: { content?: string | null }; finish_reason?: string | null }[]
-  usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number }
-  error?: { message?: string; code?: number }
+  return costUsd
 }

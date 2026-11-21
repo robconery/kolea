@@ -23,6 +23,14 @@ import {
   setTagRuleActive,
   tagCounts,
 } from '../core/tagging.ts'
+import {
+  type CustomField,
+  FIELD_OPS,
+  type RawCondition,
+  checkConditions,
+  listFields,
+  opLabel,
+} from '../core/fields.ts'
 import { listOffers } from '../core/purchases.ts'
 import { getDb } from '../db/index.ts'
 import {
@@ -333,10 +341,11 @@ tagging.post('/tag-rules/:id/delete', async (c) => {
 
 tagging.get('/segments', async (c) => {
   const db = getDb(c.env)
-  const [rows, allTags, allOffers] = await Promise.all([
+  const [rows, allTags, allOffers, allFields] = await Promise.all([
     listSegments(db),
     db.select().from(tags).orderBy(asc(tags.name)).all(),
     listOffers(db),
+    listFields(db),
   ])
   const sized = await Promise.all(
     rows.map(async (s) => ({ ...s, size: await countSegment(db, s.rule) })),
@@ -384,7 +393,7 @@ tagging.get('/segments', async (c) => {
                         {s.name}
                       </a>
                     </td>
-                    <td class="faint">{describeRule(s.rule, allTags, allOffers)}</td>
+                    <td class="faint">{describeRule(s.rule, allTags, allOffers, allFields)}</td>
                     <td class="num">{s.size}</td>
                     <td style="text-align:right">
                       <form method="post" action={`/segments/${s.id}/delete`}>
@@ -401,6 +410,36 @@ tagging.get('/segments', async (c) => {
     </Layout>,
   )
 })
+
+/**
+ * The custom-field rows off the segment form: parallel `cond_key` / `cond_op` /
+ * `cond_value` lists, one per row, blank rows skipped. Unvalidated — the route
+ * hands these to `checkConditions`, which types them against the definitions.
+ */
+function readConditions(form: FormData): RawCondition[] {
+  const keys = form.getAll('cond_key').map(String)
+  const ops = form.getAll('cond_op').map(String)
+  const values = form.getAll('cond_value').map(String)
+  return keys.flatMap((key, i) =>
+    key.trim() ? [{ key, op: ops[i] ?? '', value: values[i] ?? '' }] : [],
+  )
+}
+
+/**
+ * Read the whole rule off the form, conditions validated. On a bad condition
+ * the caller gets the reasons and saves nothing — a half-applied rule is a
+ * different audience from the one the operator wrote.
+ */
+async function readRuleChecked(
+  db: ReturnType<typeof getDb>,
+  form: FormData,
+): Promise<{ ok: true; rule: SegmentRule } | { ok: false; error: string }> {
+  const rule = readRule(form)
+  const checked = await checkConditions(db, readConditions(form))
+  if (!checked.ok) return { ok: false, error: `Not saved: ${checked.errors.join('; ')}.` }
+  if (checked.conditions.length) rule.conditions = checked.conditions
+  return { ok: true, rule }
+}
 
 /** Read a rule off the segment form. Absent fields stay absent, never `[]`. */
 function readRule(form: FormData): SegmentRule {
@@ -478,18 +517,31 @@ const asDateValue = (ms?: number) => (ms ? new Date(ms).toISOString().slice(0, 1
 
 const asDollars = (cents?: number) => (typeof cents === 'number' ? String(cents / 100) : '')
 
+/** Rows shown in the custom-field section: every condition, plus two blanks to add with. */
+const conditionRows = (rule: SegmentRule) => [
+  ...(rule.conditions ?? []).map((c) => ({
+    key: c.key,
+    op: c.op,
+    value: c.value === undefined ? '' : c.value === true ? 'yes' : c.value === false ? 'no' : String(c.value),
+  })),
+  { key: '', op: 'equals', value: '' },
+  { key: '', op: 'equals', value: '' },
+]
+
 const SegmentForm = ({
   action,
   name,
   rule,
   allTags,
   allOffers,
+  allFields,
 }: {
   action: string
   name: string
   rule: SegmentRule
   allTags: Tag[]
   allOffers: Offer[]
+  allFields: CustomField[]
 }) => (
   <form method="post" action={action}>
     <div class="field">
@@ -550,6 +602,49 @@ const SegmentForm = ({
         <input type="date" name="joinedBefore" value={asDateValue(rule.joinedBefore)} />
       </div>
     </div>
+
+    <h3 style="margin:26px 0 4px">Custom fields</h3>
+    {allFields.length === 0 ? (
+      <p class="faint" style="margin:0 0 14px">
+        No custom fields yet. <a href="/fields">Add one</a> to ask about a plan, a renewal date, a
+        seat count.
+      </p>
+    ) : (
+      <>
+        <p class="faint" style="margin:0 0 14px">
+          Every row must hold. Leave the field empty to skip a row. “Is not” includes people
+          with no value at all. Dates as YYYY-MM-DD, yes/no fields as yes or no.
+        </p>
+        {conditionRows(rule).map((row) => (
+          <div class="row">
+            <div class="field">
+              <select name="cond_key">
+                <option value="" selected={row.key === ''}>
+                  —
+                </option>
+                {allFields.map((f) => (
+                  <option value={f.key} selected={row.key === f.key}>
+                    {f.label} ({f.type})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div class="field">
+              <select name="cond_op">
+                {FIELD_OPS.map((op) => (
+                  <option value={op} selected={row.op === op}>
+                    {opLabel(op)}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div class="field">
+              <input type="text" name="cond_value" value={row.value} placeholder="value" />
+            </div>
+          </div>
+        ))}
+      </>
+    )}
 
     <h3 style="margin:26px 0 4px">What they've bought</h3>
     <p class="faint" style="margin:0 0 14px">
@@ -698,9 +793,10 @@ const SegmentForm = ({
 
 tagging.get('/segments/new', async (c) => {
   const db = getDb(c.env)
-  const [allTags, allOffers] = await Promise.all([
+  const [allTags, allOffers, allFields] = await Promise.all([
     db.select().from(tags).orderBy(asc(tags.name)).all(),
     listOffers(db),
+    listFields(db),
   ])
 
   // `?bought=<slug>` seeds the form from the store page's "Segment" button, so
@@ -723,7 +819,14 @@ tagging.get('/segments/new', async (c) => {
             Unsubscribed, bounced and complained people are never in a segment; that's not a rule
             you get to write.
           </div>
-          <SegmentForm action="/segments" name="" rule={seed} allTags={allTags} allOffers={allOffers} />
+          <SegmentForm
+            action="/segments"
+            name=""
+            rule={seed}
+            allTags={allTags}
+            allOffers={allOffers}
+            allFields={allFields}
+          />
         </div>
       </div>
     </Layout>,
@@ -735,7 +838,9 @@ tagging.post('/segments', async (c) => {
   const form = await c.req.formData()
   const name = String(form.get('name') ?? '').trim()
   if (!name) return c.redirect('/segments?flash=A segment needs a name.&kind=warn')
-  const id = await createSegment(db, name, readRule(form))
+  const read = await readRuleChecked(db, form)
+  if (!read.ok) return c.redirect(`/segments?flash=${encodeURIComponent(read.error)}&kind=warn`)
+  const id = await createSegment(db, name, read.rule)
   return c.redirect(`/segments/${id}?flash=Segment saved.`)
 })
 
@@ -745,9 +850,10 @@ tagging.get('/segments/:id', async (c) => {
   const seg = await getSegment(db, id)
   if (!seg) return c.notFound()
 
-  const [allTags, allOffers] = await Promise.all([
+  const [allTags, allOffers, allFields] = await Promise.all([
     db.select().from(tags).orderBy(asc(tags.name)).all(),
     listOffers(db),
+    listFields(db),
   ])
   const size = await countSegment(db, seg.rule)
   const sample = await resolveSegment(db, seg.rule, 0, 25)
@@ -758,7 +864,7 @@ tagging.get('/segments/:id', async (c) => {
         <div>
           <h1>{seg.name}</h1>
           <div class="sub">
-            {describeRule(seg.rule, allTags, allOffers)} · {size} {size === 1 ? 'person' : 'people'}
+            {describeRule(seg.rule, allTags, allOffers, allFields)} · {size} {size === 1 ? 'person' : 'people'}
           </div>
         </div>
       </div>
@@ -777,6 +883,7 @@ tagging.get('/segments/:id', async (c) => {
             rule={seg.rule}
             allTags={allTags}
             allOffers={allOffers}
+            allFields={allFields}
           />
         </div>
       </div>
@@ -821,7 +928,9 @@ tagging.post('/segments/:id', async (c) => {
   const name = String(form.get('name') ?? '').trim()
   if (!name) return c.redirect(`/segments/${id}?flash=A segment needs a name.&kind=warn`)
 
-  await updateSegment(db, id, name, readRule(form))
+  const read = await readRuleChecked(db, form)
+  if (!read.ok) return c.redirect(`/segments/${id}?flash=${encodeURIComponent(read.error)}&kind=warn`)
+  await updateSegment(db, id, name, read.rule)
   // Broadcasts copied this rule when they were composed; they keep what they had.
   return c.redirect(`/segments/${id}?flash=Saved. Broadcasts already composed keep their own copy.`)
 })

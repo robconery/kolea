@@ -1,8 +1,9 @@
 import type { McpServer } from '@modelcontextprotocol/server'
 import * as z from 'zod/v4'
-import { PROFILE_ICONS, ProfileLink, SOCIAL, WhatIDoItem, readProfile, validateProfile } from '../../core/site-profile.ts'
-import { getSiteSettings, saveSiteSettings, type SiteSettingsPatch } from '../../core/site-settings.ts'
-import { type Ctx, defineTool, fail, ok } from '../kit.ts'
+import { PROFILE_ICONS, ProfileLink, SOCIAL, WhatIDoItem, readProfile } from '../../core/site-profile.ts'
+import { applySiteUpdate, getSiteSettings } from '../../core/site-settings.ts'
+import { switchTheme, themeSummaries } from '../../core/theme/store.ts'
+import { type Ctx, defineTool, fail, failed, ok } from '../kit.ts'
 
 /**
  * Who the site is and who writes it — the same data as the admin's Site
@@ -61,35 +62,39 @@ export function registerSite(server: McpServer, ctx: Ctx): void {
       }),
     },
     async (input) => {
-      const current = await getSiteSettings(ctx.db)
-      const profile = readProfile(current?.profile)
-      const unknown = Object.keys(input.social ?? {}).filter((k) => !SOCIAL.some((n) => n.key === k))
-      if (unknown.length) return fail(`Unknown social key(s): ${unknown.join(', ')}. Use: ${SOCIAL.map((n) => n.key).join(', ')}.`)
-      const checked = validateProfile({
-        lede: input.lede ?? profile.lede,
-        what_i_do: input.what_i_do ?? profile.what_i_do,
-        links: input.links ?? profile.links,
-        // Merged key by key: setting GitHub never clears LinkedIn.
-        social: { ...profile.social, ...(input.social ?? {}) },
-      })
-      if (!checked.ok) return fail(checked.error)
+      const r = await applySiteUpdate(ctx.db, input)
+      if (!r.ok) return fail(r.reason)
+      return ok({ saved: true, profile: r.profile })
+    },
+  )
 
-      const blank = (v: string | undefined) => (v === undefined ? undefined : v.trim() || null)
-      const patch: SiteSettingsPatch = { profile: checked.profile }
-      if (input.title !== undefined) patch.title = blank(input.title)
-      if (input.tagline !== undefined) patch.tagline = blank(input.tagline)
-      if (input.logoUrl !== undefined) patch.logoUrl = blank(input.logoUrl)
-      if (input.authorName !== undefined) patch.authorName = blank(input.authorName)
-      if (input.authorPhotoUrl !== undefined) patch.authorPhotoUrl = blank(input.authorPhotoUrl)
-      if (input.shortBio !== undefined) patch.shortBio = blank(input.shortBio)
-      if (input.longBioMarkdown !== undefined) {
-        // Markdown replaces the rich-text version outright; two bodies that
-        // disagree would leave /about showing whichever one wins.
-        patch.longBioMd = blank(input.longBioMarkdown)
-        patch.longBioJson = null
-      }
-      const saved = await saveSiteSettings(ctx.db, patch)
-      return ok({ saved: true, profile: readProfile(saved.profile) })
+  defineTool(
+    server,
+    ctx,
+    'theme_list',
+    {
+      description:
+        "The public site's themes, built-ins first, and which one readers see now (`live`). With no theme switched on, the default built-in is live.",
+      inputSchema: z.object({}),
+      annotations: { readOnlyHint: true },
+    },
+    async () => ok(await themeSummaries(ctx.db)),
+  )
+
+  defineTool(
+    server,
+    ctx,
+    'theme_activate',
+    {
+      description:
+        'Make one theme live on the public site, and every other not. Instant and reversible: switch back the same way. Sends nothing. Ids come from theme_list.',
+      inputSchema: z.object({ id: z.number().int() }),
+      annotations: { idempotentHint: true },
+    },
+    async ({ id }) => {
+      const r = await switchTheme(ctx.db, id)
+      if (!r.ok) return failed(r, 'List them with theme_list.')
+      return ok({ live: r.name, themes: await themeSummaries(ctx.db) })
     },
   )
 }

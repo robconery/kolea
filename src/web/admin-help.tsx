@@ -609,7 +609,10 @@ then  tag them <tag>`}</Code>
                   <span class="pill warn">bearer</span>
                 </td>
                 <td class="muted">
-                  Transactional mail. Takes <span class="mono">idempotency_key</span>.
+                  Transactional mail: a <span class="mono">subject</span> and{' '}
+                  <span class="mono">body</span>, or a stored <span class="mono">template</span>{' '}
+                  slug with <span class="mono">variables</span>. Takes{' '}
+                  <span class="mono">idempotency_key</span>.
                 </td>
               </tr>
               <tr>
@@ -618,6 +621,13 @@ then  tag them <tag>`}</Code>
                   <span class="pill warn">signed</span>
                 </td>
                 <td class="muted">Delivery, bounce and complaint events from the provider.</td>
+              </tr>
+              <tr>
+                <td class="mono">POST /webhooks/mailgun</td>
+                <td>
+                  <span class="pill warn">signed</span>
+                </td>
+                <td class="muted">The same events, when Mailgun is the provider.</td>
               </tr>
               <tr>
                 <td class="mono">GET /p/:token</td>
@@ -639,8 +649,8 @@ then  tag them <tag>`}</Code>
         <div class="card-b">
           <p class="faint">
             Bearer keys live in the <span class="mono">api_keys</span> table; only the hash is
-            stored, so a leaked database can't be used to post as you. ⚠️ There's no key-management
-            UI yet.
+            stored, so a leaked database can't be used to post as you. Make and revoke them on{' '}
+            <a href="/settings/agents">Agents &amp; keys</a>.
           </p>
         </div>
       </div>

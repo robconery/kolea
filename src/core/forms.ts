@@ -1,14 +1,27 @@
-import { and, asc, count, eq, sql } from 'drizzle-orm'
+import { and, asc, count, desc, eq, inArray, isNotNull, isNull, like, notInArray, or, sql } from 'drizzle-orm'
 import type { Db } from '../db/index.ts'
-import { type DocNode, campaigns, formTags, forms, messages, sequences, tags } from '../db/schema.ts'
+import {
+  type DocNode,
+  campaigns,
+  formConfirmations,
+  formTags,
+  forms,
+  messages,
+  sequences,
+  subscribers,
+  tags,
+} from '../db/schema.ts'
+import { OUTCOME_UNKNOWN } from '../providers/types.ts'
 import type { Env } from '../types.ts'
 import { logActivity } from './activity.ts'
+import { clearPrunedMarker } from './consent.ts'
 import { recordTouch } from './campaigns.ts'
 import { grantDownload } from './downloads.ts'
-import { normalizeEmail, slugify } from './ids.ts'
+import { isValidEmail, normalizeEmail, randomToken, slugify } from './ids.ts'
 import { docIsEmpty } from './render-doc.ts'
 import { dispatch } from './sending.ts'
 import { enroll } from './sequences.ts'
+import { updateFieldValues } from './fields.ts'
 import { upsertSubscriber } from './subscribers.ts'
 
 // ───────────────────────────────────────────────── reading
@@ -33,7 +46,9 @@ export async function formDeliveryCount(db: Db, formId: number): Promise<number>
   const row = await db
     .select({ n: count() })
     .from(messages)
-    .where(and(eq(messages.formId, formId), eq(messages.status, 'sent')))
+    // `form` only: a double opt-in confirmation carries the form id too, and a
+    // confirmation is not the reply.
+    .where(and(eq(messages.formId, formId), eq(messages.kind, 'form'), eq(messages.status, 'sent')))
     .get()
   return row?.n ?? 0
 }
@@ -202,6 +217,12 @@ export interface FormInput {
   redirectUrl?: string | null
   successMessage?: string
   isActive?: boolean
+  /**
+   * New forms default to on. On update, leaving it out keeps
+   * what the form has: switching confirmation off is never a side effect of
+   * saving some other field.
+   */
+  doubleOptIn?: boolean
   tagIds?: number[]
   // ── The reply and its file are NOT here. They are written only by
   // `setFormReply` and the upload endpoint, so saving a form's settings can
@@ -219,6 +240,7 @@ export async function createForm(db: Db, input: FormInput): Promise<number> {
       redirectUrl: input.redirectUrl ?? null,
       successMessage: input.successMessage || "You're subscribed. Thanks!",
       isActive: input.isActive ?? true,
+      doubleOptIn: input.doubleOptIn ?? true,
       createdAt: new Date(),
     })
     .returning({ id: forms.id })
@@ -239,6 +261,7 @@ export async function updateForm(db: Db, id: number, input: FormInput): Promise<
       redirectUrl: input.redirectUrl ?? null,
       successMessage: input.successMessage || "You're subscribed. Thanks!",
       isActive: input.isActive ?? true,
+      ...(input.doubleOptIn === undefined ? {} : { doubleOptIn: input.doubleOptIn }),
     })
     .where(eq(forms.id, id))
   await setFormTags(db, id, input.tagIds ?? [])
@@ -287,6 +310,13 @@ export interface SubmitInput {
   name?: string | null
   /** Honeypot. Any value at all means a bot filled a field a human can't see. */
   trap?: string | null
+  /**
+   * Everything else the form posted. Only keys that name a custom field are
+   * kept (allowlisted by definition); unknown keys are ignored, values that
+   * don't fit their type are dropped, and a blank never clears a stored value —
+   * a signup should not fail, or erase anything, over an optional extra.
+   */
+  fields?: Record<string, unknown>
 }
 
 export type SubmitStatus =
@@ -300,6 +330,11 @@ export type SubmitStatus =
 export interface SubmitResult {
   status: SubmitStatus
   subscriberId?: number
+  /**
+   * A double opt-in form: nothing has happened yet but the confirmation mail.
+   * Tags, the sequence and the reply all wait for the click.
+   */
+  pending?: boolean
   /** Whether this submission started the form's sequence. */
   enrolled?: boolean
   /** Whether the reply — the one carrying the file — was queued by this submission. */
@@ -423,6 +458,8 @@ export async function submitForm(
     return { status: 'inactive_form', message: 'This form is closed.' }
   }
 
+  if (form.doubleOptIn) return await submitPending(env, db, form, input)
+
   const { outcome, id } = await upsertSubscriber(db, {
     email: input.email,
     name: input.name ?? null,
@@ -431,6 +468,12 @@ export async function submitForm(
   })
   if (outcome === 'invalid' || !id) {
     return { status: 'invalid_email', message: 'That email address looks wrong.' }
+  }
+  // Signing up again themselves spends a clean-up's `pruned` marker.
+  await clearPrunedMarker(db, input.email)
+
+  if (input.fields && Object.keys(input.fields).length) {
+    await updateFieldValues(db, id, input.fields, { unknown: 'ignore', blank: 'ignore' })
   }
 
   // ⭐ "How they got in", recorded against the form itself rather than inferred
@@ -448,9 +491,36 @@ export async function submitForm(
     meta: { formId: form.id, formSlug: form.slug, formName: form.name, outcome },
   })
 
+  const { enrolled, delivered } = await joinThrough(env, db, form, {
+    id,
+    email: normalizeEmail(input.email),
+  })
+  await countSubmit(db, form.id)
+
+  return {
+    status: 'ok',
+    subscriberId: id,
+    enrolled,
+    delivered,
+    message: form.successMessage,
+    redirectUrl: form.redirectUrl,
+  }
+}
+
+/**
+ * What a signup sets going once the person is on the list with their tags:
+ * the campaign touch, the form's sequence, the reply. Shared by the single
+ * opt-in submit and the double opt-in click, so the two can never drift.
+ */
+async function joinThrough(
+  env: Env,
+  db: Db,
+  form: typeof forms.$inferSelect,
+  subscriber: { id: number; email: string },
+): Promise<{ enrolled: boolean; delivered: boolean }> {
   if (form.campaignId) {
     await recordTouch(db, {
-      subscriberId: id,
+      subscriberId: subscriber.id,
       campaignId: form.campaignId,
       sourceKind: 'form',
       sourceId: form.id,
@@ -459,7 +529,7 @@ export async function submitForm(
 
   let enrolled = false
   if (form.sequenceId) {
-    const result = await enroll(db, form.sequenceId, id)
+    const result = await enroll(db, form.sequenceId, subscriber.id)
     // `already` counts: the caller asked whether this person is now in the
     // sequence, not whether this particular call was the one that put them
     // there. A `subscribe` trigger often gets there a millisecond earlier.
@@ -469,20 +539,504 @@ export async function submitForm(
   // Fulfillment last, and only after the person exists: everything above is a
   // database write we can repeat, and this is the one step that leaves the
   // building.
-  const delivery = await deliver(env, db, form, { id, email: normalizeEmail(input.email) })
+  const delivery = await deliver(env, db, form, subscriber)
+  return { enrolled, delivered: delivery === 'queued' }
+}
 
-  // Counters live in D1 because Workers logs are gone within the week.
+/** Counters live in D1 because Workers logs are gone within the week. */
+async function countSubmit(db: Db, formId: number): Promise<void> {
   await db
     .update(forms)
     .set({ submitCount: sql`${forms.submitCount} + 1`, lastSubmittedAt: new Date() })
-    .where(eq(forms.id, form.id))
+    .where(eq(forms.id, formId))
+}
+
+// ───────────────────────────────────────────────── double opt-in
+
+/** How long a confirmation link works. */
+export const CONFIRM_TTL_MS = 7 * 86_400_000
+/**
+ * No second confirmation for the same form to one address inside this gap.
+ * Per (address, form): a reader signing up on two forms a minute apart is two
+ * requests, and the second link must reach them. The daily cap below is per
+ * address, across every form, and is what stops a mail-bomb.
+ */
+export const CONFIRM_MIN_GAP_MS = 10 * 60_000
+/** And no more than this many in any 24 hours. The mail-bomb cap. */
+export const CONFIRM_MAX_PER_DAY = 3
+
+/** What the browser is told after a double opt-in submit. */
+export const CONFIRM_PROMPT = 'Almost done. Check your inbox for a link to confirm your subscription.'
+
+export function confirmPath(slug: string, token: string): string {
+  return `/f/${encodeURIComponent(slug)}/confirm/${token}`
+}
+
+export type ConfirmationMail =
+  /** A confirmation was queued. It may still be refused at send time (suppressed). */
+  | 'queued'
+  /** One went to this address too recently. The open link in it still works. */
+  | 'throttled'
+
+/**
+ * ⭐ A submit to a double opt-in form.
+ *
+ * The person is created `pending` if they are new and left exactly as they are
+ * if not: an `active` subscriber is never downgraded, an `unsubscribed` one is
+ * never promoted, a buyer on file stays a buyer on file. Nothing that can start
+ * mail runs (no tags, so no `tag_added` sequence; no subscribe sequences; no
+ * form sequence; no reply), because the submitter has not yet proved the
+ * address is theirs. One confirmation mail goes out, throttled per address
+ * and form (and capped per address per day).
+ */
+async function submitPending(
+  env: Env,
+  db: Db,
+  form: typeof forms.$inferSelect,
+  input: SubmitInput,
+): Promise<SubmitResult> {
+  const email = normalizeEmail(input.email)
+  if (!isValidEmail(email)) {
+    return { status: 'invalid_email', message: 'That email address looks wrong.' }
+  }
+
+  let person = await db
+    .select({ id: subscribers.id })
+    .from(subscribers)
+    .where(eq(subscribers.email, email))
+    .get()
+  let outcome: 'created' | 'existing' = 'existing'
+  if (!person) {
+    // `pending`, so no welcome series, no broadcast, nothing until the click.
+    // No tags here either: a tag can start a `tag_added` sequence.
+    const created = await upsertSubscriber(db, {
+      email,
+      name: input.name ?? null,
+      source: `form:${form.slug}`,
+      status: 'pending',
+      triggerSubscribeSequences: false,
+    })
+    if (!created.id) return { status: 'invalid_email', message: 'That email address looks wrong.' }
+    person = { id: created.id }
+    outcome = 'created'
+    // Field values ride along on a NEW pending person only. On someone already
+    // on the list they wait like everything else: a stranger can type any
+    // address, and must not be able to rewrite another person's data.
+    if (input.fields && Object.keys(input.fields).length) {
+      await updateFieldValues(db, created.id, input.fields, { unknown: 'ignore', blank: 'ignore' })
+    }
+  }
+
+  const mail = await requestConfirmation(env, db, form, { id: person.id, email })
+
+  await logActivity(db, {
+    type: 'form_submitted',
+    subscriberId: person.id,
+    campaignId: form.campaignId,
+    sequenceId: form.sequenceId,
+    meta: {
+      formId: form.id,
+      formSlug: form.slug,
+      formName: form.name,
+      outcome,
+      doubleOptIn: true,
+      confirmation: mail,
+    },
+  })
+  await countSubmit(db, form.id)
 
   return {
     status: 'ok',
-    subscriberId: id,
+    subscriberId: person.id,
+    pending: true,
+    enrolled: false,
+    delivered: false,
+    message: CONFIRM_PROMPT,
+    redirectUrl: form.redirectUrl,
+  }
+}
+
+/**
+ * Open (or reuse) this person's confirmation for this form, and mail the link
+ * unless one went to the address too recently.
+ *
+ * The mail is a `messages` row of kind `confirmation`, sent down the ordinary
+ * path, so the consent check happens immediately before the provider call and
+ * a suppressed address ends as a visible `suppressed` row, never a send.
+ */
+async function requestConfirmation(
+  env: Env,
+  db: Db,
+  form: typeof forms.$inferSelect,
+  subscriber: { id: number; email: string },
+): Promise<ConfirmationMail> {
+  const now = Date.now()
+
+  // Reuse an open one, so every copy of the mail carries a link that works.
+  let open = await db
+    .select({ id: formConfirmations.id, token: formConfirmations.token })
+    .from(formConfirmations)
+    .where(
+      and(
+        eq(formConfirmations.formId, form.id),
+        eq(formConfirmations.subscriberId, subscriber.id),
+        eq(formConfirmations.status, 'pending'),
+        sql`${formConfirmations.expiresAt} > ${now}`,
+      ),
+    )
+    .orderBy(sql`${formConfirmations.id} desc`)
+    .get()
+  if (!open) {
+    const inserted = await db
+      .insert(formConfirmations)
+      .values({
+        formId: form.id,
+        subscriberId: subscriber.id,
+        token: randomToken(),
+        status: 'pending',
+        createdAt: new Date(now),
+        expiresAt: new Date(now + CONFIRM_TTL_MS),
+      })
+      .returning({ id: formConfirmations.id, token: formConfirmations.token })
+    open = inserted[0]!
+  }
+
+  // ⭐ The mail-bomb throttle. Counted from `messages`, which records every
+  // confirmation whatever became of it, so a suppressed one counts too. The
+  // daily count is per address across all forms; the short gap is per form, so
+  // form B's confirmation is not swallowed because form A's just went.
+  const recent = (await db.all(sql`
+    select count(*) as n,
+      max(case when form_id = ${form.id} then created_at end) as last
+    from messages
+    where subscriber_id = ${subscriber.id} and kind = 'confirmation'
+      and created_at > ${now - 86_400_000}
+  `)) as { n: number; last: number | null }[]
+  const n = Number(recent[0]?.n ?? 0)
+  const last = recent[0]?.last == null ? null : Number(recent[0].last)
+  if (n >= CONFIRM_MAX_PER_DAY || (last !== null && now - last < CONFIRM_MIN_GAP_MS)) {
+    return 'throttled'
+  }
+
+  const url = `${env.PUBLIC_URL}${confirmPath(form.slug, open.token)}`
+  const who = env.FROM_NAME || 'this list'
+  let messageId: number
+  try {
+    const inserted = await db
+      .insert(messages)
+      .values({
+        subscriberId: subscriber.id,
+        kind: 'confirmation',
+        // Provenance only. `formDeliveryCount` and the grant lookup both read
+        // kind `form`, so this never counts as, or renders like, the reply.
+        formId: form.id,
+        toEmail: subscriber.email,
+        subject: `Confirm your subscription to ${who}`,
+        bodyJson: confirmationDoc(who, form.name, url),
+        bodyMd: confirmationText(who, form.name, url),
+        status: 'queued',
+        idempotencyKey: `confirm:${open.id}:${now}`,
+        createdAt: new Date(now),
+      })
+      .returning({ id: messages.id })
+    messageId = inserted[0]!.id
+  } catch {
+    // Two submits in the same millisecond: the other one is sending it.
+    return 'throttled'
+  }
+
+  try {
+    await dispatch(env, db, [messageId])
+  } catch {
+    // Same reasoning as the reply: the row exists and `health` reports anything
+    // left `queued`. Losing the signup over a queue hiccup is the worse outcome.
+  }
+  return 'queued'
+}
+
+function paragraph(text: string): DocNode {
+  return { type: 'paragraph', content: [{ type: 'text', text }] }
+}
+
+function confirmationDoc(who: string, formName: string, url: string): DocNode {
+  return {
+    type: 'doc',
+    content: [
+      paragraph(`Please confirm you asked to hear from ${who}.`),
+      paragraph(`Someone, hopefully you, signed up with this address through “${formName}”.`),
+      {
+        type: 'emailButton',
+        attrs: { href: url, align: 'left' },
+        content: [{ type: 'text', text: 'Yes, subscribe me' }],
+      },
+      paragraph("If it wasn't you, ignore this email. You won't hear from us again."),
+    ],
+  }
+}
+
+function confirmationText(who: string, formName: string, url: string): string {
+  return [
+    `Please confirm you asked to hear from ${who}.`,
+    `Someone, hopefully you, signed up with this address through “${formName}”.`,
+    `[Yes, subscribe me](${url})`,
+    "If it wasn't you, ignore this email. You won't hear from us again.",
+  ].join('\n\n')
+}
+
+export type ConfirmationState = 'pending' | 'confirmed' | 'expired' | 'unknown'
+
+async function findConfirmation(db: Db, slug: string, token: string) {
+  if (!/^[a-z0-9]{16,64}$/.test(token)) return undefined
+  return await db
+    .select({ confirmation: formConfirmations, form: forms })
+    .from(formConfirmations)
+    .innerJoin(forms, eq(forms.id, formConfirmations.formId))
+    .where(and(eq(formConfirmations.token, token), eq(forms.slug, slug)))
+    .get()
+}
+
+function stateOf(c: typeof formConfirmations.$inferSelect, now: number): ConfirmationState {
+  if (c.status === 'confirmed') return 'confirmed'
+  return c.expiresAt.getTime() <= now ? 'expired' : 'pending'
+}
+
+/**
+ * What the link's page shows before the click. Read-only on purpose: mail
+ * scanners fetch every link in a message, so the GET must change nothing and
+ * only the button on the page (a POST) confirms.
+ */
+export async function lookupConfirmation(
+  db: Db,
+  slug: string,
+  token: string,
+): Promise<{ state: ConfirmationState; formName?: string }> {
+  const row = await findConfirmation(db, slug, token)
+  if (!row) return { state: 'unknown' }
+  return { state: stateOf(row.confirmation, Date.now()), formName: row.form.name }
+}
+
+export interface ConfirmResult {
+  /** `already` is a second click on a link that worked the first time. */
+  status: 'confirmed' | 'already' | 'expired' | 'unknown'
+  subscriberId?: number
+  /** The person's status afterwards. `unsubscribed` stays `unsubscribed`. */
+  subscriberStatus?: string
+  /** For the "you're still off the newsletter" line on the page. */
+  unsubToken?: string
+  enrolled?: boolean
+  delivered?: boolean
+  message?: string
+  redirectUrl?: string | null
+}
+
+/**
+ * ⭐ The click. Runs what a single opt-in submit runs, now that the person has
+ * shown the address is theirs: `pending` becomes `active` with `confirmed_at`
+ * (and the subscribe sequences fire, through `upsertSubscriber`'s promotion,
+ * the one place that rule lives), the form's tags land, then the campaign
+ * touch, the form's sequence and the reply.
+ *
+ * Only `pending` is promoted. Somebody `unsubscribed` who clicks gets the
+ * form's tags, sequence and file, because they asked for those, and stays off
+ * the newsletter: only the preference center returns somebody who left (and
+ * the page links them there).
+ *
+ * Idempotent: the row is claimed with a conditional update, so a double click
+ * runs the effects once.
+ */
+export async function confirmSignup(
+  env: Env,
+  db: Db,
+  slug: string,
+  token: string,
+): Promise<ConfirmResult> {
+  const row = await findConfirmation(db, slug, token)
+  if (!row) return { status: 'unknown' }
+  const { confirmation, form } = row
+  const now = Date.now()
+
+  const state = stateOf(confirmation, now)
+  if (state === 'expired') return { status: 'expired' }
+
+  const claimed =
+    state === 'pending'
+      ? await db
+          .update(formConfirmations)
+          .set({ status: 'confirmed', confirmedAt: new Date(now) })
+          .where(and(eq(formConfirmations.id, confirmation.id), eq(formConfirmations.status, 'pending')))
+          .returning({ id: formConfirmations.id })
+      : []
+
+  const person = await db
+    .select()
+    .from(subscribers)
+    .where(eq(subscribers.id, confirmation.subscriberId))
+    .get()
+  if (!person) return { status: 'unknown' }
+
+  if (claimed.length === 0) {
+    return {
+      status: 'already',
+      subscriberId: person.id,
+      subscriberStatus: person.status,
+      unsubToken: person.unsubToken,
+      message: form.successMessage,
+      redirectUrl: form.redirectUrl,
+    }
+  }
+
+  // Asking for `active` promotes `pending` and nothing else (SPEC 1.2), adds
+  // the form's tags, and fires the subscribe sequences only on that promotion.
+  await upsertSubscriber(db, {
+    email: person.email,
+    source: `form:${form.slug}`,
+    tagIds: await formTagIds(db, form.id),
+    status: 'active',
+    // The one caller allowed past an open confirmation: this is the click.
+    viaConfirmation: true,
+  })
+  await clearPrunedMarker(db, person.email)
+  await db
+    .update(subscribers)
+    .set({ confirmedAt: new Date(now) })
+    .where(
+      and(
+        eq(subscribers.id, person.id),
+        eq(subscribers.status, 'active'),
+        sql`${subscribers.confirmedAt} is null`,
+      ),
+    )
+
+  const { enrolled, delivered } = await joinThrough(env, db, form, {
+    id: person.id,
+    email: person.email,
+  })
+
+  const after = await db
+    .select({ status: subscribers.status })
+    .from(subscribers)
+    .where(eq(subscribers.id, person.id))
+    .get()
+
+  return {
+    status: 'confirmed',
+    subscriberId: person.id,
+    subscriberStatus: after?.status ?? person.status,
+    unsubToken: person.unsubToken,
     enrolled,
-    delivered: delivery === 'queued',
+    delivered,
     message: form.successMessage,
     redirectUrl: form.redirectUrl,
   }
+}
+
+// ───────────────────────────────────────────────── replies that failed
+
+export interface FailedReply {
+  messageId: number
+  subscriberId: number
+  email: string
+  failedAt: Date
+  error: string | null
+}
+
+/**
+ * A real reply's idempotency key, `form:<form>:<subscriber>:<day>`. Preview
+ * copies are `kind: 'form'` too, but keyed `preview:…`, and a failed test send
+ * to the operator is not somebody's missing download.
+ */
+const REPLY_KEY = (formId: number) => `form:${formId}:%`
+
+/**
+ * The people whose reply from this form failed and never went since.
+ *
+ * One row per person, their latest failure. Left out, so a resend can never
+ * be their second copy or reach someone who should not get it:
+ *  - anyone with a reply from this form that is `sent` or still `queued`, on
+ *    any day (a failure on Monday and a re-submit that worked on Tuesday);
+ *  - a row the provider accepted (`provider_message_id`), whatever its status;
+ *  - anyone with a failure whose outcome is unknown (`outcome unknown`): it may
+ *    have reached them, so a resend could be their second copy;
+ *  - anyone no longer `active`: unsubscribed, bounced or complained since.
+ *    The first try follows the transactional rule — someone who left still
+ *    gets the file they asked for at that moment — but a resend is the
+ *    operator's act days later, and the rule there is "still on the list".
+ */
+export async function failedReplies(db: Db, formId: number): Promise<FailedReply[]> {
+  // "Went, or may have": a failure whose outcome is unknown may be in their
+  // inbox, so it counts as a copy they could already have. So does one the
+  // provider accepted and later refused. Neither is resent from here; both are
+  // on the Undelivered screen under "check before sending".
+  const went = db
+    .select({ id: messages.subscriberId })
+    .from(messages)
+    .where(
+      and(
+        eq(messages.kind, 'form'),
+        eq(messages.formId, formId),
+        like(messages.idempotencyKey, REPLY_KEY(formId)),
+        or(
+          inArray(messages.status, ['sent', 'queued']),
+          isNotNull(messages.providerMessageId),
+          like(messages.error, `${OUTCOME_UNKNOWN}%`),
+        ),
+      ),
+    )
+
+  const rows = await db
+    .select({
+      messageId: messages.id,
+      subscriberId: messages.subscriberId,
+      email: subscribers.email,
+      failedAt: messages.createdAt,
+      error: messages.error,
+    })
+    .from(messages)
+    .innerJoin(subscribers, eq(subscribers.id, messages.subscriberId))
+    .where(
+      and(
+        eq(messages.kind, 'form'),
+        eq(messages.formId, formId),
+        like(messages.idempotencyKey, REPLY_KEY(formId)),
+        eq(messages.status, 'failed'),
+        isNull(messages.providerMessageId),
+        eq(subscribers.status, 'active'),
+        notInArray(messages.subscriberId, went),
+      ),
+    )
+    .orderBy(desc(messages.createdAt), desc(messages.id))
+    .limit(1000)
+    .all()
+
+  const seen = new Set<number>()
+  return rows.filter((r) => (seen.has(r.subscriberId) ? false : (seen.add(r.subscriberId), true)))
+}
+
+/**
+ * Send each failed reply again, once per person.
+ *
+ * The same row goes back to `queued` — no new message, so the per-day
+ * idempotency key still holds — and through `dispatch`, so the send path
+ * re-checks consent immediately before the provider call exactly as on the
+ * first try. The flip is guarded on `status = 'failed'`, which makes a double
+ * click (or two agents) harmless: the second call finds nothing failed.
+ *
+ * What goes out is the reply as it was when they asked for it (the body is
+ * snapshotted on the row), with their own download link merged in at send.
+ */
+export async function resendFailedReplies(env: Env, db: Db, formId: number): Promise<FailedReply[]> {
+  const rows = await failedReplies(db, formId)
+  const ids = rows.map((r) => r.messageId)
+  const flipped: number[] = []
+  for (let i = 0; i < ids.length; i += 90) {
+    const done = await db
+      .update(messages)
+      .set({ status: 'queued', error: null })
+      .where(and(inArray(messages.id, ids.slice(i, i + 90)), eq(messages.status, 'failed')))
+      .returning({ id: messages.id })
+    flipped.push(...done.map((d) => d.id))
+  }
+  if (flipped.length) await dispatch(env, db, flipped)
+  const queued = new Set(flipped)
+  return rows.filter((r) => queued.has(r.messageId))
 }

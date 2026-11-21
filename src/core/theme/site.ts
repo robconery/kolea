@@ -21,8 +21,10 @@ import {
   postPath,
   shareOnXUrl,
 } from '../posts.ts'
+import { type ViewerKind, decideAccess, ghostVisibility, teaserHtml } from '../member-access.ts'
 import { renderPostHtml } from '../render-web.ts'
 import { escapeHtml } from '../text.ts'
+import { wall } from '../testimonials.ts'
 import { helpers } from './helpers.ts'
 import { Renderer, safe } from './interpreter.ts'
 import type {
@@ -165,7 +167,7 @@ export function ghostTag(tag: PostTag, posts = 0): GhostTag {
     visibility: 'public',
     accent_color: null,
     meta_title: null,
-    meta_description: null,
+    meta_description: tag.description,
     count: { posts },
     hue: hueForTag(tag.id),
     hue_cool: coolHueForTag(tag.id),
@@ -192,7 +194,15 @@ export function ghostAuthor(cfg: SiteConfig, posts = 0): GhostAuthor {
   }
 }
 
-export function ghostPost(post: Post, tags: PostTag[], cfg: SiteConfig): GhostPost {
+/**
+ * A post in Ghost's shape. `viewer` decides whether `html` is the body or the
+ * teaser (core/member-access.ts). It defaults to `anonymous` on purpose: every
+ * caller but the post page renders something cached for everyone — listings,
+ * the front page, `{{#get}}`, next/prev — so a gated body can never reach one
+ * of them by a caller forgetting to pass a viewer.
+ */
+export function ghostPost(post: Post, tags: PostTag[], cfg: SiteConfig, viewer: ViewerKind = 'anonymous'): GhostPost {
+  const decision = decideAccess(viewer, post.accessLevel)
   const author = ghostAuthor(cfg)
   const gTags = tags.map((t) => ghostTag(t))
   const url = postPath(post.slug, tags[0]?.slug)
@@ -217,8 +227,8 @@ export function ghostPost(post: Post, tags: PostTag[], cfg: SiteConfig): GhostPo
     feature_image_caption: caption,
     featured: false,
     page: false,
-    visibility: 'public',
-    access: true,
+    visibility: ghostVisibility(post.accessLevel),
+    access: decision === 'full',
     comments: false,
     published_at: published,
     updated_at: published,
@@ -240,7 +250,11 @@ export function ghostPost(post: Post, tags: PostTag[], cfg: SiteConfig): GhostPo
   // The body and its reading time are rendered on first read, not up front:
   // an archive page of twelve cards reads neither.
   let html: string | null = null
-  const body = () => (html ??= renderPostHtml({ json: post.bodyJson, md: post.bodyMd }))
+  const body = () =>
+    (html ??=
+      decision === 'full'
+        ? renderPostHtml({ json: post.bodyJson, md: post.bodyMd })
+        : teaserHtml({ level: post.accessLevel, slug: post.slug, excerpt: post.excerpt }))
   Object.defineProperty(out, 'html', { enumerable: true, get: body })
   Object.defineProperty(out, 'reading_time', {
     enumerable: true,
@@ -704,9 +718,14 @@ export async function renderAuthor(req: SiteRequest, slug: string, page: number)
   })
 }
 
-export async function renderPost(req: SiteRequest, post: Post, tags: PostTag[]): Promise<Rendered> {
+export async function renderPost(
+  req: SiteRequest,
+  post: Post,
+  tags: PostTag[],
+  viewer: ViewerKind = 'anonymous',
+): Promise<Rendered> {
   const { cfg } = req
-  const gp = ghostPost(post, tags, cfg)
+  const gp = ghostPost(post, tags, cfg, viewer)
   return render(req, {
     templates: [`post-${post.slug}`, 'post'],
     contexts: ['post'],
@@ -793,6 +812,67 @@ export async function renderSubscribe(req: SiteRequest): Promise<Rendered> {
     root: { post: syntheticPage('Subscribe', html, '/subscribe', cfg) },
     meta: {
       title: `Subscribe · ${cfg.title}`,
+      description: cfg.tagline || null,
+      image: null,
+      type: 'website',
+      publishedAt: null,
+      noindex: false,
+    },
+  })
+}
+
+/**
+ * A page the site makes itself (the store's offer pages, its return and cancel
+ * pages), rendered through the theme's `page` template like `/subscribe`, so
+ * every theme dresses it without knowing it exists. `html` is trusted markup
+ * the caller has already escaped.
+ */
+export async function renderSitePage(
+  req: SiteRequest,
+  page: { title: string; html: string; path: string; description?: string | null; noindex?: boolean; status?: number },
+): Promise<Rendered> {
+  const { cfg } = req
+  return render(req, {
+    templates: ['page', 'post'],
+    contexts: ['page'],
+    root: { post: syntheticPage(page.title, page.html, page.path, cfg) },
+    meta: {
+      title: `${page.title} · ${cfg.title}`,
+      description: page.description ?? null,
+      image: null,
+      type: 'website',
+      publishedAt: null,
+      noindex: page.noindex ?? false,
+    },
+    status: page.status,
+  })
+}
+
+/**
+ * `/testimonials`: the wall. Only what the writer allowed and the operator
+ * approved (`core/testimonials.ts` `wall`), every word escaped, no address.
+ */
+export async function renderTestimonials(req: SiteRequest): Promise<Rendered> {
+  const { cfg } = req
+  const e = escapeHtml
+  const cards = await wall(req.db)
+  const html = cards.length
+    ? cards
+        .map(
+          (t) =>
+            `<blockquote class="kolea-testimonial">${t.body
+              .split(/\n{2,}/)
+              .map((p) => `<p>${e(p).replace(/\n/g, '<br />')}</p>`)
+              .join('')}<footer>${e(t.displayName)}</footer></blockquote>`,
+        )
+        .join('')
+    : '<p>Nothing here yet.</p>'
+  return render(req, {
+    templates: ['testimonials', 'page', 'post'],
+    contexts: ['page'],
+    root: { post: syntheticPage('What readers say', html, '/testimonials', cfg) },
+    meta: {
+      title: `What readers say · ${cfg.title}`,
       description: cfg.tagline || null,
       image: null,
       type: 'website',

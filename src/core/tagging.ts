@@ -33,7 +33,8 @@ export async function applyTagRules(
   meta: Record<string, unknown> = {},
 ): Promise<number> {
   // 'failed' is a send outcome, not something a person did — never taggable.
-  if (type === 'failed') return 0
+  // 'unsubscribe' is a consent change, and never routed here (core/events.ts).
+  if (type === 'failed' || type === 'unsubscribe') return 0
 
   const rules = await db
     .select()

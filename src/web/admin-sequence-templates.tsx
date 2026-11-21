@@ -21,7 +21,7 @@ import {
   updateTemplate,
 } from '../core/sequence-templates/index.ts'
 import type { SequenceTrigger } from '../core/sequences.ts'
-import { aiConfigured, modelFor, modelLabel } from '../core/ai/openrouter.ts'
+import { aiReady, modelFor, modelLabel } from '../core/ai/openrouter.ts'
 import { draftSequence, writeDraftIntoSequence } from '../core/ai/sequence-draft.ts'
 import { listTags } from '../core/tagging.ts'
 import { getDb } from '../db/index.ts'
@@ -355,7 +355,7 @@ sequenceTemplatesAdmin.get(`${BASE}/:slug`, async (c) => {
   const days = templateSchedule(t.steps)
   const here = `${BASE}/${t.slug}`
   // The drafting model's name, or null to hide the pitch box entirely.
-  const ai = aiConfigured(c.env) ? modelLabel(modelFor(c.env, 'sequence')) : null
+  const ai = (await aiReady(c.env, db)) ? modelLabel(await modelFor(c.env, db, 'sequence-mail')) : null
 
   return c.html(
     <Layout title={t.name} nav="tpl">
@@ -568,7 +568,7 @@ sequenceTemplatesAdmin.post(`${BASE}/:slug/use`, async (c) => {
   // The sequence exists either way. A draft that fails leaves the template's
   // own scaffolding in place, which is exactly what "no draft" would have been.
   const brief = String(form.get('brief') ?? '').trim()
-  if (String(form.get('draft') ?? '') === '1' && aiConfigured(c.env)) {
+  if (String(form.get('draft') ?? '') === '1' && (await aiReady(c.env, getDb(c.env)))) {
     const flash = await draftInto(c.env, slug, result.id, brief, String(form.get('name') ?? ''))
     return c.redirect(flashTo(`/sequences/${result.id}`, flash.msg, flash.kind))
   }
@@ -829,6 +829,6 @@ async function draftInto(
     ? ` ${result.skipped} ${result.skipped === 1 ? 'mail' : 'mails'} could not be drafted and kept the template text.`
     : ''
   return {
-    msg: `Created, paused, and drafted with ${modelLabel(modelFor(env, 'sequence'))} (${cost}). Every mail opens with an [[ AI draft ]] line: rewrite the mail in your own words, then delete that line. It can't go live until you do.${missed}`,
+    msg: `Created, paused, and drafted with ${modelLabel(result.model)} (${cost}). Every mail opens with an [[ AI draft ]] line: rewrite the mail in your own words, then delete that line. It can't go live until you do.${missed}`,
   }
 }

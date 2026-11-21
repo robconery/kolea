@@ -1,10 +1,14 @@
 import { eq } from 'drizzle-orm'
-import { randomToken, sha256 } from '../core/ids.ts'
+import { randomToken, sha256 } from './ids.ts'
 import type { Db } from '../db/index.ts'
 import { preflightTokens } from '../db/schema.ts'
-import type { Env } from '../types.ts'
 
-export type PreflightKind = 'broadcast_send' | 'sequence_activate'
+export type PreflightKind =
+  | 'broadcast_send'
+  | 'broadcast_resume'
+  | 'sequence_activate'
+  | 'undelivered_send_again'
+  | 'form_resend_replies'
 
 /** Long enough that a preview can be read; short enough that a stale plan dies. */
 const TTL_MS = 10 * 60 * 1000
@@ -88,14 +92,3 @@ export async function consumePreflight(
 
   return { ok: true, recipientCount: row.recipientCount }
 }
-
-/**
- * The kill switch. Off by default in production, so an agent that finds a way
- * past everything else still cannot put mail on the wire until you flip a var.
- */
-export function sendingAllowed(env: Env): boolean {
-  return env.MCP_ALLOW_SEND === 'true'
-}
-
-export const SEND_DISABLED =
-  'Sending via MCP is switched off (MCP_ALLOW_SEND is not "true"). Everything else still works — the operator has to enable it in the Worker config.'
