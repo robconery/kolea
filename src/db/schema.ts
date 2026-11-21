@@ -3285,3 +3285,49 @@ export const memberSubscriptions = sqliteTable(
 
 export type MemberSubscription = typeof memberSubscriptions.$inferSelect
 export type PremiumCheckout = typeof premiumCheckouts.$inferSelect
+
+// ─────────────────────────────────────────────────────────── onboarding
+
+/**
+ * The first-run checklist's steps, in the order the checklist asks them (Kōlea
+ * SPEC 21.4, ported without the hosted steps: no account, email verification,
+ * AI key or pitch). Kept here, beside the table that names them, so the enum on
+ * the column and the order on the screen cannot drift apart.
+ */
+export const ONBOARDING_STEPS = ['sender', 'domain', 'site', 'audience', 'welcome', 'broadcast'] as const
+export type OnboardingStepId = (typeof ONBOARDING_STEPS)[number]
+
+/**
+ * ⭐ What the operator said about an onboarding step that the data cannot say.
+ *
+ * Progress is *derived*, not stored: a step is done because a domain verified,
+ * a form exists, a subscribe sequence exists (`core/onboarding.ts`). This table
+ * only holds the two things no other row can: a "later" (`skipped`) and an
+ * explicit no (`declined`, the public site only, the way Kōlea allows it). There
+ * is deliberately no `done` outcome: a step marked done by hand while the real
+ * state disagrees would tick a box over a domain that does not send.
+ *
+ * Facts win over this row. A domain added after its step was skipped shows as
+ * waiting, not skipped, without anyone deleting the row. One row per step (the
+ * step is the key); a later decision replaces the earlier one, and "undo" deletes it.
+ */
+export const onboardingSteps = sqliteTable('onboarding_steps', {
+  step: text('step', { enum: ONBOARDING_STEPS }).primaryKey(),
+  outcome: text('outcome', { enum: ['skipped', 'declined'] }).notNull(),
+  decidedAt: ts('decided_at').notNull(),
+})
+
+export type OnboardingStepRow = typeof onboardingSteps.$inferSelect
+
+/**
+ * The checklist itself. Exactly one row (`id = 1`), created the first time the
+ * operator dismisses it; no row means "never dismissed", so a fresh install shows
+ * the checklist without a seed step. `dismissed_at` null after a row exists means
+ * the operator brought it back. Dismissing hides it from the dashboard only: the
+ * `/onboarding` page always answers, and nothing about a step changes.
+ */
+export const onboarding = sqliteTable('onboarding', {
+  id: integer('id').primaryKey(),
+  dismissedAt: ts('dismissed_at'),
+  updatedAt: ts('updated_at').notNull(),
+})
