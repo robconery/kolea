@@ -4,7 +4,7 @@ import type { Db } from '../db/index.ts'
 import { preflightTokens } from '../db/schema.ts'
 import type { Env } from '../types.ts'
 
-export type PreflightKind = 'broadcast_send' | 'sequence_activate'
+export type PreflightKind = 'broadcast_send' | 'sequence_activate' | 'undelivered_send_again'
 
 /** Long enough that a preview can be read; short enough that a stale plan dies. */
 const TTL_MS = 10 * 60 * 1000

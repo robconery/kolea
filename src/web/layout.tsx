@@ -911,6 +911,8 @@ const ICONS: Record<string, string> = {
   /* Two sheets, one behind the other: a copy waiting to be made. */
   tpl: 'M8.2 7.4h10.2v12.8H8.2V7.4ZM5.6 16.6V3.8h10.2M11 11.6h4.6M11 14.8h3',
   out: 'M4 13.6h4.2l1.3 2.5h5l1.3-2.5H20M6.5 4.8h11l2.5 8.8v5.6H4v-5.6l2.5-8.8Z',
+  /* An envelope with a way back: sent, didn't land, goes again. */
+  undel: 'M4 7.5h16v10H4v-10Zm0 0 8 5.5 8-5.5M15.5 3.8l-2 2 2 2M13.5 5.8h4a2.5 2.5 0 0 1 0 5',
   /* A sheet with a filled line and an arrow leaving it: fill this in, get that back. */
   forms: 'M6.2 3.8h11.6v16.4H6.2V3.8Zm2.8 4.2h6M9 11.2h3.2M14.8 12.6v5m0 0 2-2m-2 2-2-2',
   camp: 'M12 3.6a8.4 8.4 0 1 0 0 16.8 8.4 8.4 0 0 0 0-16.8Zm0 4.6a3.8 3.8 0 1 0 0 7.6 3.8 3.8 0 0 0 0-7.6Zm0 3.3a.5.5 0 1 0 0 1 .5.5 0 0 0 0-1Z',
@@ -979,6 +981,9 @@ const NAV: ({ grp: string } | { href: string; key: string; label: string })[] = 
   // a library you come back to, not a step inside "new sequence".
   { href: '/sequences/templates', key: 'tpl', label: 'Templates' },
   { href: '/outbox', key: 'out', label: 'Outbox' },
+  // Under the Outbox: the other half of "where did my mail go". Mail that
+  // failed is never dropped; this is the visible way to send it again.
+  { href: '/undelivered', key: 'undel', label: 'Undelivered' },
   // ⭐ Analytics follows the mail it measures. Six slots rather than
   // one-with-tabs because each is a different question, and burying five of
   // them behind a tab strip is how a measurement tool goes unread.
