@@ -17,7 +17,8 @@ import { clearFeatureImage, postPath, publishPost, setFeatureImage, setPostFeatu
 import { ACCESS_LEVELS, LEVEL_LABEL, isAccessLevel } from '../core/member-access.ts'
 import { postPlainText } from '../core/render-web.ts'
 import { type Photo, searchPhotos, triggerDownload, unsplashConfigured } from '../core/unsplash.ts'
-import { modelLabel } from '../core/ai/openrouter.ts'
+import { aiReady, modelLabel } from '../core/ai/openrouter.ts'
+import { type Target, latestDone, reviewOf } from '../core/council.ts'
 import { resolveAi } from '../core/ai/settings.ts'
 import { countSegment, describeRule, listSegments } from '../core/segments.ts'
 import {
@@ -84,6 +85,48 @@ async function composeAi(env: Env, db: Db, context: string): Promise<ComposeAi |
     context,
   }
 }
+
+// ───────────────────────────────────────────────── the reader council
+
+interface CouncilGlance {
+  verdict: string | null
+  split: 'divides' | 'safe' | null
+}
+
+/** What the side column says about the council: null hides it (AI off). */
+async function councilSide(env: Env, db: Db, target: Target): Promise<CouncilGlance | null> {
+  if (!(await aiReady(env, db))) return null
+  const last = await latestDone(db, target)
+  const review = last ? reviewOf(last) : null
+  return { verdict: review?.verdict ?? null, split: review?.split ?? null }
+}
+
+/**
+ * "Ask the council" in an editor's side column. A named submit in the
+ * composer's form: the draft is saved first, then the review desk opens. It
+ * never calls a model by itself; the desk has the button that does.
+ */
+const CouncilSide: FC<{ review: CouncilGlance | null }> = ({ review }) =>
+  review ? (
+    <div class="side-sec" data-test="council-side">
+      <h3>Reader council</h3>
+      <p class="faint" style="margin:0 0 10px">
+        A fan, a skeptic and someone in between read your draft, then an editor says what to keep and what to cut.
+        Advice only.
+      </p>
+      {review.verdict ? (
+        <p style="margin:0 0 10px">
+          <span class={review.split === 'divides' ? 'pill ok' : 'pill warn'}>
+            {review.split === 'divides' ? 'Divides the room' : 'Plays it safe'}
+          </span>{' '}
+          <span class="faint">{review.verdict}</span>
+        </p>
+      ) : null}
+      <button class="btn sm" name="council" value="1" data-test="ask-council">
+        {review.verdict ? 'Open the review' : 'Ask the council'}
+      </button>
+    </div>
+  ) : null
 
 // ───────────────────────────────────────────────── audience picking
 
@@ -539,6 +582,7 @@ mail.get('/broadcasts/:id', async (c) => {
                 </p>
               </div>
             ) : null}
+            <CouncilSide review={await councilSide(c.env, db, { kind: 'broadcast', id })} />
             <div class="side-sec">
               <h3>Writing</h3>
               <EditorHint />
@@ -1200,6 +1244,8 @@ mail.post('/broadcasts/:id/edit', async (c) => {
     )
   }
   if (String(form.get('send') ?? '') === '1') return c.redirect(`/broadcasts/${id}/send`)
+  // "Ask the council" is a submit in this form, so the council reads what is on screen.
+  if (String(form.get('council') ?? '') === '1') return c.redirect(`/broadcasts/${id}/council`)
   return c.redirect(`/broadcasts/${id}?flash=Saved.`)
 })
 
@@ -2389,6 +2435,7 @@ mail.get('/sequences/:id/steps/:stepId', async (c) => {
             <h3>All steps</h3>
             <StepNav seqId={id} steps={siblings} current={stepId} />
           </div>
+          <CouncilSide review={await councilSide(c.env, db, { kind: 'step', id: stepId })} />
           <div class="side-sec">
             <h3>Writing</h3>
             <EditorHint />
@@ -2481,6 +2528,7 @@ mail.post('/sequences/:id/steps/:stepId', async (c) => {
     })
     return c.redirect(`/sequences/${id}/steps/${stepId}${q}`)
   }
+  if (String(form.get('council') ?? '') === '1') return c.redirect(`/sequences/${id}/steps/${stepId}/council`)
 
   return c.redirect(`/sequences/${id}/steps/${stepId}?flash=Saved.`)
 })

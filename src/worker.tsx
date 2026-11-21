@@ -48,6 +48,7 @@ import { mediaAdmin } from './web/admin-media.tsx'
 import { sequenceTemplatesAdmin } from './web/admin-sequence-templates.tsx'
 import { aiAdmin } from './web/admin-ai.ts'
 import { aiSettingsAdmin } from './web/admin-ai-settings.tsx'
+import { councilAdmin } from './web/admin-council.tsx'
 import { agentsAdmin } from './web/admin-agents.tsx'
 import { store } from './web/admin-store.tsx'
 import { tagging } from './web/admin-tags.tsx'
@@ -190,6 +191,8 @@ app.route('/', fieldsAdmin)
 // The composer's writing help. JSON-only, operator-only, writes no mail.
 app.route('/', aiAdmin)
 app.route('/', aiSettingsAdmin)
+// The reader council's review desk. Advisory: reads drafts, never changes or sends them.
+app.route('/', councilAdmin)
 app.route('/', store)
 // The public site's look. Operator-only like everything below `requireOperator`;
 // the site itself is a separate app, reached by hostname.

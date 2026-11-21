@@ -330,6 +330,13 @@
       "when": 1795250242704,
       "tag": "0046_fair_magus",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "6",
+      "when": 1795250396730,
+      "tag": "0047_sharp_purple_man",
+      "breakpoints": true
     }
   ]
 }
