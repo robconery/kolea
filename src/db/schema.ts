@@ -984,6 +984,50 @@ export const purchaseTemplates = sqliteTable(
   (t) => [uniqueIndex('purchase_templates_offer_slug_key').on(t.offerSlug)],
 )
 
+/**
+ * ⭐ A stored transactional mail: the receipt, the password reset, the "your
+ * export is ready" note another app sends through `POST /api/send` by naming
+ * `template: "<slug>"` and filling `{{variables}}`, instead of shipping the whole
+ * subject and body on every call (Kōlea SPEC 13.1).
+ *
+ * Not a purchase template and not a sequence template. Purchase mail is keyed by
+ * offer sku and sent by the operator on a sale; a sequence template is a recipe
+ * for building a sequence. This one is keyed by a slug a *caller* hard-codes.
+ *
+ * `slug` is set once, from the name (or given at create), and never follows a
+ * rename: another application's code has it baked in, and a rename that moved it
+ * would break that app's mail without either side noticing until a customer
+ * asked where their receipt went.
+ *
+ * The body is the composer's json/markdown pair, read the way every other body
+ * is (json wins). It is **copied onto the message, variables already filled,
+ * when a request is accepted** — so editing or deleting a template never
+ * rewrites what already went out (invariant 9). Deleting one is therefore
+ * allowed; the messages it produced keep their snapshot and `template_slug`.
+ *
+ * `is_active` is the off switch: a request naming an inactive template is
+ * refused (422) rather than sent, and the caller is told so. Never silently
+ * dropped — the refusal is the caller's to see and retry.
+ */
+export const transactionalTemplates = sqliteTable(
+  'transactional_templates',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    /** What `POST /api/send` names. Lowercase, dashes; set once, never renamed. */
+    slug: text('slug').notNull(),
+    /** What the operator calls it. Never shown to a recipient. */
+    name: text('name').notNull(),
+    /** May carry `{{variables}}`; filled as plain text at accept time. */
+    subject: text('subject').notNull(),
+    bodyJson: text('body_json', { mode: 'json' }).$type<DocNode | null>(),
+    bodyMd: text('body_md'),
+    isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
+    createdAt: ts('created_at').notNull(),
+    updatedAt: ts('updated_at'),
+  },
+  (t) => [uniqueIndex('transactional_templates_slug_key').on(t.slug)],
+)
+
 export const messages = sqliteTable(
   'messages',
   {
@@ -1048,6 +1092,13 @@ export const messages = sqliteTable(
      * against `download_grants` because that token never expires.
      */
     extras: text('extras', { mode: 'json' }).$type<MergeExtras | null>(),
+    /**
+     * The transactional template a `POST /api/send` named, when it named one.
+     * A slug, not a foreign key, on purpose: deleting the template must leave
+     * the record of which template produced this mail (invariant 7), and the
+     * body itself is already snapshotted above, so nothing here is read back.
+     */
+    templateSlug: text('template_slug'),
     status: text('status', { enum: ['queued', 'sent', 'failed', 'suppressed'] })
       .notNull()
       .default('queued'),
@@ -1066,6 +1117,11 @@ export const messages = sqliteTable(
     // "Has this sale already been thanked?" — asked before every purchase send.
     index('messages_sale_idx').on(t.saleId),
     index('messages_status_idx').on(t.status),
+    // "How much mail went out from this template?" — asked before a delete.
+    // Partial, because all but a sliver of messages name no template.
+    index('messages_template_slug_idx')
+      .on(t.templateSlug)
+      .where(sql`template_slug is not null`),
     uniqueIndex('messages_idempotency_key')
       .on(t.idempotencyKey)
       .where(sql`idempotency_key is not null`),
@@ -1360,6 +1416,7 @@ export const media = sqliteTable(
 
 export type Media = typeof media.$inferSelect
 export type Subscriber = typeof subscribers.$inferSelect
+export type TransactionalTemplate = typeof transactionalTemplates.$inferSelect
 export type Tag = typeof tags.$inferSelect
 export type Segment = typeof segments.$inferSelect
 export type TagRule = typeof tagRules.$inferSelect

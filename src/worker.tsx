@@ -23,6 +23,7 @@ import { audience } from './web/admin-audience.tsx'
 import { campaignsAdmin } from './web/admin-campaigns.tsx'
 import { conversionsAdmin } from './web/admin-conversions.tsx'
 import { purchaseMailAdmin } from './web/admin-purchase-mail.tsx'
+import { transactionalAdmin } from './web/admin-transactional.tsx'
 import { goalsAdmin } from './web/admin-goals.tsx'
 import { help } from './web/admin-help.tsx'
 import { mail } from './web/admin-mail.tsx'
@@ -127,6 +128,7 @@ app.route('/', mail)
 // Ahead of `campaignsAdmin`, which owns `/sales`, so `/sales/:id/thanks` is
 // matched by the router that implements it rather than by anything broader.
 app.route('/', purchaseMailAdmin)
+app.route('/', transactionalAdmin)
 app.route('/', campaignsAdmin)
 app.route('/', conversionsAdmin)
 app.route('/', goalsAdmin)

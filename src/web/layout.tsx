@@ -910,6 +910,8 @@ const ICONS: Record<string, string> = {
   seq: 'M5.4 6.6h6.2a3.1 3.1 0 0 1 0 6.2H9a3.1 3.1 0 0 0 0 6.2h6.6M14.6 16.6l2.6 2.4-2.6 2.4M14.6 4.2 17.2 6.6l-2.6 2.4',
   /* Two sheets, one behind the other: a copy waiting to be made. */
   tpl: 'M8.2 7.4h10.2v12.8H8.2V7.4ZM5.6 16.6V3.8h10.2M11 11.6h4.6M11 14.8h3',
+  /* A sheet with a brace in it: a stored mail with a blank another program fills. */
+  txn: 'M6.2 3.8h11.6v16.4H6.2V3.8Zm4.4 5c-1 0-1.4.5-1.4 1.3v.9c0 .6-.3 1-.9 1 .6 0 .9.4.9 1v.9c0 .8.4 1.3 1.4 1.3m2.8-6.4c1 0 1.4.5 1.4 1.3v.9c0 .6.3 1 .9 1-.6 0-.9.4-.9 1v.9c0 .8-.4 1.3-1.4 1.3',
   out: 'M4 13.6h4.2l1.3 2.5h5l1.3-2.5H20M6.5 4.8h11l2.5 8.8v5.6H4v-5.6l2.5-8.8Z',
   /* A sheet with a filled line and an arrow leaving it: fill this in, get that back. */
   forms: 'M6.2 3.8h11.6v16.4H6.2V3.8Zm2.8 4.2h6M9 11.2h3.2M14.8 12.6v5m0 0 2-2m-2 2-2-2',
@@ -978,6 +980,9 @@ const NAV: ({ grp: string } | { href: string; key: string; label: string })[] = 
   // Directly under Sequences: a template is where a sequence starts, and it is
   // a library you come back to, not a step inside "new sequence".
   { href: '/sequences/templates', key: 'tpl', label: 'Templates' },
+  // Mail another app sends by naming a slug. Beside the Outbox, which is where
+  // the result of every one of those calls shows up.
+  { href: '/transactional', key: 'txn', label: 'Transactional' },
   { href: '/outbox', key: 'out', label: 'Outbox' },
   // ⭐ Analytics follows the mail it measures. Six slots rather than
   // one-with-tabs because each is a different question, and burying five of

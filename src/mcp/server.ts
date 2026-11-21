@@ -18,6 +18,7 @@ import { registerSegments } from './tools/segments.ts'
 import { registerSequences } from './tools/sequences.ts'
 import { registerStripe } from './tools/stripe.ts'
 import { registerTags } from './tools/tags.ts'
+import { registerTransactional } from './tools/transactional.ts'
 
 /**
  * Constant-time string compare.
@@ -84,6 +85,7 @@ export async function handleMcp(
     registerPosts(server, ctx)
     registerSite(server, ctx)
     registerSales(server, ctx)
+    registerTransactional(server, ctx)
     registerStripe(server, ctx)
     registerDeliverability(server, ctx)
     registerOps(server, ctx)
