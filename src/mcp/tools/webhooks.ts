@@ -1,6 +1,6 @@
 import type { McpServer } from '@modelcontextprotocol/server'
 import * as z from 'zod/v4'
-import { SENSITIVE_DISABLED, agentsMaySensitive } from '../../core/sensitive.ts'
+import { AGENT_SENSITIVE_OFF, agentSensitiveAllowed } from '../../core/agents.ts'
 import {
   WEBHOOK_EVENTS,
   type WebhookEndpointView,
@@ -17,7 +17,7 @@ import { type Ctx, clampLimit, defineTool, fail, ok } from '../kit.ts'
 /**
  * Outbound webhooks (Kōlea SPEC 20.2): Kōlea's five tool names. The writes are
  * sensitive — they decide where subscriber data is POSTed — so they refuse
- * unless `agentsMaySensitive(env)` says yes, on top of the admin-key gate every
+ * unless `agentSensitiveAllowed(db)` (the on-screen switch) says yes, on top of the admin-key gate every
  * MCP call already passed.
  */
 
@@ -89,7 +89,7 @@ export function registerWebhooks(server: McpServer, ctx: Ctx): void {
       annotations: { destructiveHint: false, idempotentHint: false },
     },
     async ({ url, events, description }) => {
-      if (!agentsMaySensitive(ctx.env)) return fail(SENSITIVE_DISABLED)
+      if (!(await agentSensitiveAllowed(ctx.db))) return fail(AGENT_SENSITIVE_OFF)
       const result = await createWebhookEndpoint(ctx.db, { url, events, description })
       if (!result.ok) return fail(result.reason, 'Fix the input and call webhook_create again.')
       return ok({ ...view(result.endpoint), secret: result.secret })
@@ -113,7 +113,7 @@ export function registerWebhooks(server: McpServer, ctx: Ctx): void {
       annotations: { idempotentHint: true },
     },
     async ({ id, ...patch }) => {
-      if (!agentsMaySensitive(ctx.env)) return fail(SENSITIVE_DISABLED)
+      if (!(await agentSensitiveAllowed(ctx.db))) return fail(AGENT_SENSITIVE_OFF)
       const result = await updateWebhookEndpoint(ctx.db, id, patch)
       if (!result.ok) return fail(result.reason, 'webhook_list shows the endpoints and their ids.')
       return ok(view(result.endpoint))
@@ -134,7 +134,7 @@ export function registerWebhooks(server: McpServer, ctx: Ctx): void {
       annotations: { destructiveHint: true },
     },
     async ({ id, confirm_url }) => {
-      if (!agentsMaySensitive(ctx.env)) return fail(SENSITIVE_DISABLED)
+      if (!(await agentSensitiveAllowed(ctx.db))) return fail(AGENT_SENSITIVE_OFF)
       const endpoint = await getWebhookEndpoint(ctx.db, id)
       if (!endpoint) return fail(`no webhook endpoint #${id}`, 'webhook_list shows the endpoints and their ids.')
       if (confirm_url !== endpoint.url) return fail(`confirm_url must be exactly "${endpoint.url}".`)

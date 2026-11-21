@@ -102,9 +102,10 @@
 		// consent arrives by exactly the same path as a signup from anywhere else.
 		"SITE_FORM_SLUG": "newsletter",
 		// Local only: bypasses the Cloudflare Access check. Never set in production.
-		"DEV_AUTH_BYPASS": "true"
-		// Agent sending is a switch in the admin (System > Agents & keys), off
-		// until you turn it on. `MCP_ALLOW_SEND: "false"` here would force it off.
+		"DEV_AUTH_BYPASS": "true",
+		// Locally the provider is "console", so an MCP send lands in the Outbox
+		// rather than in anyone's inbox — safe to leave on for development.
+		"MCP_ALLOW_SEND": "true"
 	},
 	// `wrangler deploy --env production` turns the bypass off and takes the admin
 	// console back behind Cloudflare Access. The top-level vars above are dev-only;
@@ -202,10 +203,10 @@
 				// Admin console identity. Both are required: `web/auth.ts` fails closed
 				// and refuses everyone if either is missing.
 				"CF_ACCESS_TEAM_DOMAIN": "bigmachine.cloudflareaccess.com",
-				"CF_ACCESS_AUD": "c9e5e713caf22211b5575bbf43294596c7677c642821925936954e275fcb9824"
-				// Agent sending is the switch on System > Agents & keys, stored in D1
-				// and off until flipped there. Add "MCP_ALLOW_SEND": "false" to force
-				// it off whatever the switch says (core/agents.ts).
+				"CF_ACCESS_AUD": "c9e5e713caf22211b5575bbf43294596c7677c642821925936954e275fcb9824",
+				// Off by default: MCP can read and draft everything, but cannot put
+				// mail on the wire until this is "true". A var, not a secret.
+				"MCP_ALLOW_SEND": "false"
 			}
 		}
 	}

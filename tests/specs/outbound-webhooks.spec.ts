@@ -8,6 +8,7 @@
 // inside consent changes, so it must never be able to fail or slow them, and a
 // narrow consent action (leaving one sequence) must never be reported as a
 // wide one (leaving the newsletter).
+import { setAgentSwitches } from '../../src/core/agents.ts'
 import { beforeAll, describe, expect, it } from 'bun:test'
 import { eq } from 'drizzle-orm'
 import { createApiKey } from '../../src/core/api-keys.ts'
@@ -468,14 +469,15 @@ describe('Feature: the operator tells other systems what happens on the list', (
       const args = { url: 'https://hooks.example.com/agent', events: ['subscribed'] }
       refused = await call(world, token, 'webhook_create', args)
 
-      allowedWorld = createWorld({ MCP_PATH_SECRET: 's3cret', MCP_ALLOW_SENSITIVE: 'true' })
+      allowedWorld = createWorld({ MCP_PATH_SECRET: 's3cret' })
+      await setAgentSwitches(allowedWorld.db, { allowSensitive: true })
       const allowed = await createApiKey(allowedWorld.db, 'agent', 'admin')
       created = JSON.parse(await call(allowedWorld, allowed.token, 'webhook_create', args))
       listed = JSON.parse(await call(allowedWorld, allowed.token, 'webhook_list', {}))
     })
 
     it('refuses webhook_create until sensitive changes are switched on', () => {
-      expect(refused).toContain('MCP_ALLOW_SENSITIVE')
+      expect(refused).toContain('Sensitive changes')
     })
 
     it('creates it once they are, returning the secret', () => {
