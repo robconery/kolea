@@ -880,6 +880,8 @@ export async function confirmSignup(
     source: `form:${form.slug}`,
     tagIds: await formTagIds(db, form.id),
     status: 'active',
+    // The one caller allowed past an open confirmation: this is the click.
+    viaConfirmation: true,
   })
   await db
     .update(subscribers)

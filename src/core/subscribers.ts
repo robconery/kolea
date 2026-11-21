@@ -1,6 +1,6 @@
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, eq, gt, inArray } from 'drizzle-orm'
 import type { Db } from '../db/index.ts'
-import { subscriberTags, subscribers, tags } from '../db/schema.ts'
+import { formConfirmations, subscriberTags, subscribers, tags } from '../db/schema.ts'
 import { logActivity } from './activity.ts'
 import {
   type FieldChanges,
@@ -39,6 +39,20 @@ export interface UpsertInput {
    * not joined the newsletter should have.
    */
   status?: 'pending' | 'active'
+  /**
+   * Whether an existing `pending` person may be promoted to `active` by this
+   * call when it asks for `active`. Defaults to true. A CSV import passes
+   * false: a file is not the person asking, and `pending` includes somebody
+   * who has not yet clicked a double opt-in link.
+   */
+  promotePending?: boolean
+  /**
+   * Set only by the double opt-in click (`confirmSignup`). Every other caller
+   * is refused the promotion while the person has an open confirmation: they
+   * were asked to prove the address is theirs, and a public `/subscribe`, an
+   * MCP upsert or a single opt-in form must not answer that for them.
+   */
+  viaConfirmation?: boolean
 }
 
 /** `promoted` is an `updated` that also flipped `pending` → `active`. */
@@ -76,7 +90,14 @@ export async function upsertSubscriber(
     //
     // Guarded on `pending` alone: `unsubscribed`, `bounced` and `complained`
     // are never walked back by this path, whatever the caller asks for.
-    const promoting = existing.status === 'pending' && wantedStatus === 'active'
+    //
+    // ⭐ And never past an open double opt-in: somebody who was sent a
+    // confirmation link becomes `active` by clicking it, from nowhere else.
+    const promoting =
+      existing.status === 'pending' &&
+      wantedStatus === 'active' &&
+      input.promotePending !== false &&
+      (input.viaConfirmation === true || !(await hasOpenConfirmation(db, existing.id)))
     if (promoting) {
       await db
         .update(subscribers)
@@ -166,6 +187,22 @@ export async function upsertSubscriber(
   return { outcome: 'created', id }
 }
 
+/** An unconfirmed, unexpired double opt-in confirmation for this person, on any form. */
+async function hasOpenConfirmation(db: Db, subscriberId: number): Promise<boolean> {
+  const row = await db
+    .select({ id: formConfirmations.id })
+    .from(formConfirmations)
+    .where(
+      and(
+        eq(formConfirmations.subscriberId, subscriberId),
+        eq(formConfirmations.status, 'pending'),
+        gt(formConfirmations.expiresAt, new Date()),
+      ),
+    )
+    .get()
+  return Boolean(row)
+}
+
 /**
  * Tag someone. Idempotent — an already-present tag is skipped, which is what
  * keeps a `tag_added` sequence from re-firing every time a rule matches again.
@@ -249,11 +286,23 @@ export async function findOrCreateTag(db: Db, name: string): Promise<number> {
   return inserted[0]!.id
 }
 
+/**
+ * Data rows one `importCsv` call works through. Each row costs a handful of
+ * queries (the upsert, its tags, its fields), and D1 allows 1,000 per
+ * invocation, so a 13k-row paste must not be one call. Same cap as the sales
+ * import. Rows past it are reported, never half-written or a 500.
+ */
+export const IMPORT_ROW_LIMIT = 100
+
 export interface ImportReport {
   created: number
   updated: number
   invalid: number
   rows: number
+  /** Data rows past IMPORT_ROW_LIMIT, untouched. Import them in a later call. */
+  notProcessed: number
+  /** The 1-based data row the next call should start from, or null when none were left. */
+  firstUnprocessedRow: number | null
   /** Custom-field columns the header matched, by key. */
   fieldColumns: string[]
   /**
@@ -277,6 +326,9 @@ export interface ImportReport {
  * `upsertSubscriber`, so filling a field can't start a sequence. A blank cell
  * leaves a stored value alone: an export with an empty column must not wipe
  * what the list already knows.
+ *
+ * At most IMPORT_ROW_LIMIT data rows per call; the rest are counted in
+ * `notProcessed` and left for the next call.
  */
 export async function importCsv(db: Db, csv: string): Promise<ImportReport> {
   const lines = csv.split(/\r?\n/).filter((l) => l.trim().length > 0)
@@ -285,6 +337,8 @@ export async function importCsv(db: Db, csv: string): Promise<ImportReport> {
     updated: 0,
     invalid: 0,
     rows: 0,
+    notProcessed: 0,
+    firstUnprocessedRow: null,
     fieldColumns: [],
     fieldErrors: [],
   }
@@ -307,7 +361,13 @@ export async function importCsv(db: Db, csv: string): Promise<ImportReport> {
   })
   report.fieldColumns = fieldCols.map((c) => c.key)
 
-  for (const line of lines.slice(1)) {
+  const data = lines.slice(1)
+  if (data.length > IMPORT_ROW_LIMIT) {
+    report.notProcessed = data.length - IMPORT_ROW_LIMIT
+    report.firstUnprocessedRow = IMPORT_ROW_LIMIT + 1
+  }
+
+  for (const line of data.slice(0, IMPORT_ROW_LIMIT)) {
     report.rows++
     const cells = splitCsvLine(line)
     const email = cells[emailIdx]?.trim()
@@ -327,11 +387,16 @@ export async function importCsv(db: Db, csv: string): Promise<ImportReport> {
     // ⭐ Invariant 5: a bulk import must never start mail. No subscribe
     // sequences, and the tags are written straight to the junction rather than
     // through `addTags`, which would fire `tag_added` sequences and exits.
+    //
+    // ⭐ And it never promotes anybody: a `pending` person (a buyer on file, or
+    // somebody who has not clicked their double opt-in link yet) stays pending.
+    // New people still arrive `active`, as before.
     const { outcome, id } = await upsertSubscriber(db, {
       email,
       name: nameIdx >= 0 ? (cells[nameIdx]?.trim() ?? null) : null,
       source: 'import',
       triggerSubscribeSequences: false,
+      promotePending: false,
     })
     if (id && outcome !== 'invalid' && tagIds.length) {
       const now = new Date()

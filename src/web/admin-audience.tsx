@@ -6,7 +6,7 @@ import { preferencesFor } from '../core/consent.ts'
 import { fieldsOf, updateFieldValues } from '../core/fields.ts'
 import { purchasesForEmail, statsForEmail } from '../core/purchases.ts'
 import { salesForSubscriber } from '../core/sales.ts'
-import { addTags, findOrCreateTag, importCsv, removeTag, upsertSubscriber } from '../core/subscribers.ts'
+import { IMPORT_ROW_LIMIT, addTags, findOrCreateTag, importCsv, removeTag, upsertSubscriber } from '../core/subscribers.ts'
 import { getDb } from '../db/index.ts'
 import { messages, subscriberTags, subscribers, tags } from '../db/schema.ts'
 import type { Env } from '../types.ts'
@@ -292,7 +292,10 @@ audience.post('/subscribers/import', async (c) => {
         .map((e) => `row ${e.row} ${e.field} ${e.error}`)
         .join('; ')}${report.fieldErrors.length > 5 ? '; …' : ''}.`
     : ''
-  const msg = `Imported: ${report.created} created, ${report.updated} updated, ${report.invalid} invalid (${report.rows} rows).${rejected}`
+  const rest = report.notProcessed
+    ? ` ${report.notProcessed} more ${report.notProcessed === 1 ? 'row was' : 'rows were'} not processed: import at most ${IMPORT_ROW_LIMIT} at a time, starting again from row ${report.firstUnprocessedRow}.`
+    : ''
+  const msg = `Imported: ${report.created} created, ${report.updated} updated, ${report.invalid} invalid (${report.rows} rows).${rejected}${rest}`
   return c.redirect(`/subscribers?flash=${encodeURIComponent(msg)}`)
 })
 
