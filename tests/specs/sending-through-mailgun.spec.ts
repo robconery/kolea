@@ -16,7 +16,8 @@ import type { Message, Subscriber } from '../../src/db/schema.ts'
 import { events, messages, suppressions } from '../../src/db/schema.ts'
 import { type Fetch, MailgunProvider } from '../../src/providers/mailgun.ts'
 import type { OutgoingEmail, SendResult } from '../../src/providers/types.ts'
-import { aBroadcast, aPerson, reload } from '../support/factories.ts'
+import { enroll } from '../../src/core/sequences.ts'
+import { aBroadcast, aPerson, aSequence, enrollmentOf, reload } from '../support/factories.ts'
 import { MAILGUN_SIGNING_KEY, mailgunEvent, signMailgunWebhook } from '../support/mailgun.ts'
 import { createWorld, type World } from '../support/world.ts'
 
@@ -263,28 +264,37 @@ describe('Feature: Mailgun is the provider', () => {
   })
 
   describe('Scenario: the reader unsubscribed through Mailgun', () => {
-    // Mailgun refuses that address from now on. Leaving them `active` would mean
-    // every later send failing quietly at the provider.
+    // ⭐ Invariant 2: a provider-side unsubscribe is not one of the three
+    // causes of "off everything". It is the newsletter, and only that. If
+    // Mailgun then refuses other mail, that is a visible failure, not a
+    // silent drop (see mail-that-may-already-have-gone).
     let world: World
     let after: Subscriber
+    let enrollment: string | undefined
 
     beforeAll(async () => {
       world = aMailgunWorld()
       const sent = await aSentMessageTo(world, 'leaving@example.test')
+      const seq = await aSequence(world, { steps: [{ subject: 'Lesson one' }] })
+      await enroll(world.db, seq.id, sent.person.id)
       await postMailgun(
         world,
         await signMailgunWebhook(mailgunEvent(sent.message.providerMessageId!, 'unsubscribed')),
       )
       after = await reload(world, sent.person)
+      enrollment = (await enrollmentOf(world, sent.person, seq.id))?.status
     })
 
-    it('takes them off everything', async () => {
-      const row = await world.db.select().from(suppressions).get()
-      expect(row?.reason).toBe('unsubscribed_all')
+    it('⭐ writes no suppression', async () => {
+      expect(await suppressionCount(world)).toBe(0)
     })
 
-    it('marks them unsubscribed', () => {
+    it('marks them unsubscribed from the newsletter', () => {
       expect(after.status).toBe('unsubscribed')
+    })
+
+    it('⭐ leaves their sequence running', () => {
+      expect(enrollment).toBe('active')
     })
 
     it('charges the unsubscribe to the mail', async () => {

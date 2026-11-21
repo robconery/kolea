@@ -1,7 +1,8 @@
-import { and, count, eq, inArray } from 'drizzle-orm'
+import { and, count, eq, gt, inArray } from 'drizzle-orm'
 import type { Db } from '../db/index.ts'
-import { sales, subscriberTags, subscribers, tags } from '../db/schema.ts'
+import { formConfirmations, sales, subscriberTags, subscribers, tags } from '../db/schema.ts'
 import { logActivity } from './activity.ts'
+import { isPrunedIn, loadConsentSnapshot } from './consent.ts'
 import {
   type FieldChanges,
   type FieldType,
@@ -38,8 +39,26 @@ export interface UpsertInput {
    * to broadcasts (`core/segments.ts` filters on `active`) but still reachable by
    * sequences and transactional mail, which is exactly the shape a buyer who has
    * not joined the newsletter should have.
+   *
+   * `unsubscribed`, `bounced` and `complained` are for a CSV import bringing
+   * somebody back in the state the file says (a clean-up backup), only ever
+   * narrower than `active`. They arrive with nothing fired and no webhook.
    */
-  status?: 'pending' | 'active'
+  status?: 'pending' | 'active' | 'unsubscribed' | 'bounced' | 'complained'
+  /**
+   * Whether an existing `pending` person may be promoted to `active` by this
+   * call when it asks for `active`. Defaults to true. A CSV import passes
+   * false: a file is not the person asking, and `pending` includes somebody
+   * who has not yet clicked a double opt-in link.
+   */
+  promotePending?: boolean
+  /**
+   * Set only by the double opt-in click (`confirmSignup`). Every other caller
+   * is refused the promotion while the person has an open confirmation: they
+   * were asked to prove the address is theirs, and a public `/subscribe`, an
+   * MCP upsert or a single opt-in form must not answer that for them.
+   */
+  viaConfirmation?: boolean
 }
 
 /** `promoted` is an `updated` that also flipped `pending` → `active`. */
@@ -77,7 +96,14 @@ export async function upsertSubscriber(
     //
     // Guarded on `pending` alone: `unsubscribed`, `bounced` and `complained`
     // are never walked back by this path, whatever the caller asks for.
-    const promoting = existing.status === 'pending' && wantedStatus === 'active'
+    //
+    // ⭐ And never past an open double opt-in: somebody who was sent a
+    // confirmation link becomes `active` by clicking it, from nowhere else.
+    const promoting =
+      existing.status === 'pending' &&
+      wantedStatus === 'active' &&
+      input.promotePending !== false &&
+      (input.viaConfirmation === true || !(await hasOpenConfirmation(db, existing.id)))
     if (promoting) {
       await db
         .update(subscribers)
@@ -128,6 +154,7 @@ export async function upsertSubscriber(
       source: input.source ?? null,
       unsubToken: randomToken(),
       createdAt: new Date(),
+      unsubscribedAt: wantedStatus === 'unsubscribed' ? new Date() : null,
     })
     .returning({ id: subscribers.id })
 
@@ -136,11 +163,14 @@ export async function upsertSubscriber(
   // `pending` is "we have their address, they did not ask for mail" — a buyer on
   // file. Logging it as `subscribed` would inflate every growth chart with people
   // who never joined, so it gets its own type and stays out of the joined count.
+  // Somebody restored from a file already off the list is history: `imported`.
+  const arrival =
+    wantedStatus === 'active' ? 'subscribed' : wantedStatus === 'pending' ? 'pending_added' : 'imported'
   await logActivity(db, {
-    type: wantedStatus === 'active' ? 'subscribed' : 'pending_added',
+    type: arrival,
     subscriberId: id,
-    meta: { email, origin: input.source ?? null },
-    dedupeKey: `${wantedStatus === 'active' ? 'subscribed' : 'pending'}:${id}`,
+    meta: { email, origin: input.source ?? null, ...(arrival === 'imported' ? { status: wantedStatus } : {}) },
+    dedupeKey: `${arrival === 'subscribed' ? 'subscribed' : arrival === 'pending_added' ? 'pending' : 'imported'}:${id}`,
   })
 
   // A CSV import is history, not news (Kōlea SPEC 20.2): it emits nothing.
@@ -165,6 +195,22 @@ export async function upsertSubscriber(
   }
 
   return { outcome: 'created', id }
+}
+
+/** An unconfirmed, unexpired double opt-in confirmation for this person, on any form. */
+async function hasOpenConfirmation(db: Db, subscriberId: number): Promise<boolean> {
+  const row = await db
+    .select({ id: formConfirmations.id })
+    .from(formConfirmations)
+    .where(
+      and(
+        eq(formConfirmations.subscriberId, subscriberId),
+        eq(formConfirmations.status, 'pending'),
+        gt(formConfirmations.expiresAt, new Date()),
+      ),
+    )
+    .get()
+  return Boolean(row)
 }
 
 /**
@@ -290,11 +336,23 @@ export async function findOrCreateTag(db: Db, name: string): Promise<number> {
   return inserted[0]!.id
 }
 
+/**
+ * Data rows one `importCsv` call works through. Each row costs a handful of
+ * queries (the upsert, its tags, its fields), and D1 allows 1,000 per
+ * invocation, so a 13k-row paste must not be one call. Same cap as the sales
+ * import. Rows past it are reported, never half-written or a 500.
+ */
+export const IMPORT_ROW_LIMIT = 100
+
 export interface ImportReport {
   created: number
   updated: number
   invalid: number
   rows: number
+  /** Data rows past IMPORT_ROW_LIMIT, untouched. Import them in a later call. */
+  notProcessed: number
+  /** The 1-based data row the next call should start from, or null when none were left. */
+  firstUnprocessedRow: number | null
   /** Custom-field columns the header matched, by key. */
   fieldColumns: string[]
   /**
@@ -318,6 +376,14 @@ export interface ImportReport {
  * `upsertSubscriber`, so filling a field can't start a sequence. A blank cell
  * leaves a stored value alone: an export with an empty column must not wipe
  * what the list already knows.
+ *
+ * At most IMPORT_ROW_LIMIT data rows per call; the rest are counted in
+ * `notProcessed` and left for the next call.
+ *
+ * An optional `status` column is honoured only in the narrowing direction
+ * (`pending`, `unsubscribed`, `bounced`, `complained`), which is what lets the
+ * clean-up backup restore people as they were. An address a clean-up left a
+ * `pruned` marker on comes back `unsubscribed`.
  */
 export async function importCsv(db: Db, csv: string): Promise<ImportReport> {
   const lines = csv.split(/\r?\n/).filter((l) => l.trim().length > 0)
@@ -326,6 +392,8 @@ export async function importCsv(db: Db, csv: string): Promise<ImportReport> {
     updated: 0,
     invalid: 0,
     rows: 0,
+    notProcessed: 0,
+    firstUnprocessedRow: null,
     fieldColumns: [],
     fieldErrors: [],
   }
@@ -335,27 +403,50 @@ export async function importCsv(db: Db, csv: string): Promise<ImportReport> {
   const emailIdx = header.indexOf('email')
   const nameIdx = header.indexOf('name')
   const tagsIdx = header.indexOf('tags')
+  const statusIdx = header.indexOf('status')
   if (emailIdx === -1) return report
 
   // One read of the definitions for the whole file.
   const types = await fieldTypes(db)
   const fieldCols: { idx: number; key: string; type: FieldType }[] = []
   header.forEach((h, idx) => {
-    if (idx === emailIdx || idx === nameIdx || idx === tagsIdx) return
+    if (idx === emailIdx || idx === nameIdx || idx === tagsIdx || idx === statusIdx) return
     const key = types.has(h) ? h : keyFor(h)
     const type = types.get(key)
     if (type && !fieldCols.some((c) => c.key === key)) fieldCols.push({ idx, key, type })
   })
   report.fieldColumns = fieldCols.map((c) => c.key)
 
-  for (const line of lines.slice(1)) {
+  const data = lines.slice(1)
+  if (data.length > IMPORT_ROW_LIMIT) {
+    report.notProcessed = data.length - IMPORT_ROW_LIMIT
+    report.firstUnprocessedRow = IMPORT_ROW_LIMIT + 1
+  }
+
+  const page = data.slice(0, IMPORT_ROW_LIMIT).map(splitCsvLine)
+  // One read for the page: who a clean-up left a `pruned` marker for. They
+  // left the newsletter before they were deleted, so a file must not bring
+  // them back to it: they arrive `unsubscribed`.
+  const snapshot = await loadConsentSnapshot(
+    db,
+    page.map((cells) => cells[emailIdx]?.trim() ?? '').filter(Boolean),
+  )
+
+  for (const cells of page) {
     report.rows++
-    const cells = splitCsvLine(line)
     const email = cells[emailIdx]?.trim()
     if (!email) {
       report.invalid++
       continue
     }
+
+    // ⭐ A `status` column only ever narrows (invariant 3): `unsubscribed`,
+    // `pending`, `bounced` and `complained` stay so, and nothing in a file
+    // makes anybody `active` who is not already.
+    const said = narrowingStatus(statusIdx >= 0 ? cells[statusIdx] : undefined)
+    const pruned = isPrunedIn(snapshot, email)
+    const forNew: NonNullable<UpsertInput['status']> =
+      pruned && (said === null || said === 'pending') ? 'unsubscribed' : (said ?? 'active')
 
     const tagIds: number[] = []
     const rawTags = tagsIdx >= 0 ? cells[tagsIdx] : undefined
@@ -368,12 +459,21 @@ export async function importCsv(db: Db, csv: string): Promise<ImportReport> {
     // ⭐ Invariant 5: a bulk import must never start mail. No subscribe
     // sequences, and the tags are written straight to the junction rather than
     // through `addTags`, which would fire `tag_added` sequences and exits.
+    //
+    // ⭐ And it never promotes anybody: a `pending` person (a buyer on file, or
+    // somebody who has not clicked their double opt-in link yet) stays pending.
+    // New people still arrive `active`, as before.
     const { outcome, id } = await upsertSubscriber(db, {
       email,
       name: nameIdx >= 0 ? (cells[nameIdx]?.trim() ?? null) : null,
       source: 'import',
+      status: forNew,
       triggerSubscribeSequences: false,
+      promotePending: false,
     })
+    if (id && outcome !== 'created' && outcome !== 'invalid' && said && said !== 'pending') {
+      await narrowExisting(db, id, said)
+    }
     if (id && outcome !== 'invalid' && tagIds.length) {
       const now = new Date()
       await db
@@ -400,6 +500,32 @@ export async function importCsv(db: Db, csv: string): Promise<ImportReport> {
   }
 
   return report
+}
+
+const NARROWING = ['pending', 'unsubscribed', 'bounced', 'complained'] as const
+type Narrowing = (typeof NARROWING)[number]
+
+/** A `status` cell, when it names something narrower than `active`. Anything else is ignored. */
+function narrowingStatus(raw: string | undefined): Narrowing | null {
+  const v = raw?.trim().toLowerCase() ?? ''
+  return (NARROWING as readonly string[]).includes(v) ? (v as Narrowing) : null
+}
+
+/**
+ * The file says somebody already here has left (or their address is dead).
+ * Only `active` and `pending` move, as the importers do it; `unsubscribed`,
+ * `bounced` and `complained` are never overwritten. No suppression, no
+ * webhook: an import is history, not news, and a file is not a fourth cause of
+ * "off everything" (invariant 2).
+ */
+async function narrowExisting(db: Db, id: number, status: Exclude<Narrowing, 'pending'>): Promise<void> {
+  const moved = await db
+    .update(subscribers)
+    .set({ status, ...(status === 'unsubscribed' ? { unsubscribedAt: new Date() } : {}) })
+    .where(and(eq(subscribers.id, id), inArray(subscribers.status, ['active', 'pending'])))
+    .returning({ id: subscribers.id })
+  if (moved.length === 0) return
+  await logActivity(db, { type: status, subscriberId: id, source: 'import', meta: { via: 'csv' } })
 }
 
 export function splitCsvLine(line: string): string[] {

@@ -91,7 +91,7 @@ const SWITCHES: { field: keyof AgentSwitches; name: 'send' | 'sensitive'; title:
     field: 'allowSensitive',
     name: 'sensitive',
     title: 'Agents may make sensitive changes',
-    body: 'subscriber_delete, suppression_remove, subscriber_import_csv and apikey_create. An agent reads text strangers wrote, and that text can steer it, so changes that mail someone who left or hand out lasting access wait for this.',
+    body: 'subscriber_delete, suppression_remove, subscriber_import_csv, sequence_rejoin_person and apikey_create. An agent reads text strangers wrote, and that text can steer it, so changes that mail someone who left or hand out lasting access wait for this.',
   },
 ]
 

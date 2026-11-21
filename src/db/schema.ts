@@ -1808,7 +1808,9 @@ export const preflightTokens = sqliteTable(
     id: integer('id').primaryKey({ autoIncrement: true }),
     tokenHash: text('token_hash').notNull(),
     // TS-level enum only (no CHECK), so a new kind needs no migration.
-    kind: text('kind', { enum: ['broadcast_send', 'sequence_activate', 'undelivered_send_again'] }).notNull(),
+    kind: text('kind', {
+      enum: ['broadcast_send', 'broadcast_resume', 'sequence_activate', 'undelivered_send_again', 'form_resend_replies'],
+    }).notNull(),
     targetId: integer('target_id').notNull(),
     /** Hash of the previewed subject + body + audience rule. */
     digest: text('digest').notNull(),

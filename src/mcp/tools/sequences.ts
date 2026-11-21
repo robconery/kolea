@@ -1,7 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/server'
 import { eq } from 'drizzle-orm'
 import * as z from 'zod/v4'
-import { agentSendAllowed, agentSendRefusal } from '../../core/agents.ts'
+import { AGENT_SENSITIVE_OFF, agentSendAllowed, agentSendRefusal, agentSensitiveAllowed } from '../../core/agents.ts'
 import { leaveSequence, rejoinSequence } from '../../core/consent.ts'
 import { normalizeEmail } from '../../core/ids.ts'
 import { mdToDoc } from '../../core/md-to-doc.ts'
@@ -463,15 +463,23 @@ export function registerSequences(server: McpServer, ctx: Ctx): void {
     'sequence_rejoin_person',
     {
       description:
-        'Clear a subscriber’s opt-out from one sequence, at their explicit request. Do not use this to override somebody who left.',
+        'OVERRIDES THE PERSON’S CHOICE: deletes their opt-out from one sequence, so sequence_enroll can put them back in it. Leaving a sequence is a standing preference that only the subscriber undoes, from the preference center link in any mail they get; prefer pointing them there. Use this only when they asked you, in writing, to be put back. Refused unless the operator has turned on sensitive changes for agents (System > Agents & keys).',
       inputSchema: z.object({
         sequence_id: z.number().int(),
         subscriber_id: z.number().int(),
       }),
+      annotations: { destructiveHint: true },
     },
     async ({ sequence_id, subscriber_id }) => {
+      // ⭐ The operator side undoing somebody's opt-out is exactly what the
+      // Consent rules say only the subscriber may do, so it is a sensitive
+      // change: off unless the operator switched those on.
+      if (!(await agentSensitiveAllowed(ctx.db))) return fail(AGENT_SENSITIVE_OFF)
       await rejoinSequence(ctx.db, subscriber_id, sequence_id)
-      return ok({ rejoined: true })
+      return ok({
+        rejoined: true,
+        note: 'Their opt-out is gone. This overrode their choice; nothing was enrolled or sent.',
+      })
     },
   )
 

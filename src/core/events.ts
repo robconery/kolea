@@ -1,10 +1,10 @@
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import type { Db } from '../db/index.ts'
 import { events, messages, subscribers } from '../db/schema.ts'
 import type { ProviderEvent } from '../providers/types.ts'
 import { logActivity } from './activity.ts'
 import { touchFromMessage } from './campaigns.ts'
-import { suppressAddress, unsubscribeAll } from './consent.ts'
+import { leaveBroadcasts, suppressAddress } from './consent.ts'
 import { classifyOpen } from './machine-opens.ts'
 import { applyTagRules } from './tagging.ts'
 import { emitWebhook, subscriberPayload } from './webhooks.ts'
@@ -116,6 +116,10 @@ export async function applyProviderEvent(db: Db, ev: ProviderEvent): Promise<voi
 
   await recordEvent(db, msg.id, ev.type, ev.meta ?? {}, ev.dedupeKey)
 
+  if (ev.type === 'failed' || (ev.type === 'bounce' && !ev.hardBounce && ev.permanent)) {
+    await markRefused(db, msg.id, ev)
+  }
+
   if (ev.type === 'bounce' && ev.hardBounce) {
     await suppressAddress(db, msg.toEmail, 'hard_bounce')
     await db
@@ -136,17 +140,46 @@ export async function applyProviderEvent(db: Db, ev: ProviderEvent): Promise<voi
 }
 
 /**
+ * ⭐ The provider took the mail, then refused it for good (a `rejected`, or a
+ * permanent failure that is not a dead mailbox). Left `sent`, it would be mail
+ * silently dropped: nothing would ever show it did not arrive.
+ *
+ * It becomes `failed` with the provider's reason, which puts it on the
+ * Undelivered screen under "check before sending" (it has a provider id, so no
+ * bulk resend ever claims it: the provider refused it, and sending it again
+ * blind is only worth doing once whatever refused it is fixed). No consent
+ * changes. Guarded on `sent`, so a replay, or a late event about mail already
+ * sent again, changes nothing.
+ */
+async function markRefused(db: Db, messageId: number, ev: ProviderEvent): Promise<void> {
+  const meta = ev.meta ?? {}
+  const why = [meta.reason, meta.message].filter((v) => typeof v === 'string' && v).join(': ')
+  await db
+    .update(messages)
+    .set({ status: 'failed', error: `refused by the provider after accepting it${why ? ` (${why})` : ''}`.slice(0, 500) })
+    .where(and(eq(messages.id, messageId), eq(messages.status, 'sent')))
+}
+
+/**
  * The provider says the reader asked it to stop (Mailgun's own unsubscribe list).
  *
- * The provider will refuse that address from now on whatever we think, so the
- * honest reading is "off everything": the same suppression the reader's own
- * "unsubscribe from everything" writes. Keeping them `active` here would mean
- * every later send quietly fails at the provider — mail silently dropped.
+ * ⭐ Broadcast scope, and nothing wider. Only the reader's own "unsubscribe
+ * from everything", a hard bounce or a complaint may write a suppression
+ * (invariant 2), and a provider-side unsubscribe is none of those: it most
+ * often comes from a List-Unsubscribe on a newsletter. So it is exactly what
+ * the preference center's newsletter unsubscribe does: `unsubscribed`, no
+ * suppression, sequences untouched.
+ *
+ * Nothing is silently dropped by not going wider: if the provider then refuses
+ * a sequence step or a receipt to that address, that refusal arrives as a
+ * permanent failure, the message is marked `failed`, and it shows on the
+ * Undelivered screen (`markRefused`).
  *
  * Like the preference centre's unsubscribe, it skips tag rules and attribution
  * (`recordEvent`): it is a consent change, not engagement. The event row is the
- * countable mark, and its dedupe key makes a replay change nothing. A person
- * already bounced or complained keeps that status; they are suppressed already.
+ * countable mark, and its dedupe key makes a replay change nothing. Only
+ * `active` and `pending` move (`leaveBroadcasts`); a person already
+ * unsubscribed, bounced or complained is left as they are.
  */
 async function applyProviderUnsubscribe(
   db: Db,
@@ -159,20 +192,14 @@ async function applyProviderUnsubscribe(
       messageId: msg.id,
       type: 'unsubscribe',
       occurredAt: ev.occurredAt,
-      meta: { ...(ev.meta ?? {}), action: 'all' },
+      meta: { ...(ev.meta ?? {}), action: 'broadcast' },
       dedupeKey: ev.dedupeKey ?? null,
     })
     .onConflictDoNothing()
     .returning({ id: events.id })
   if (inserted.length === 0) return
 
-  const sub = await db
-    .select({ status: subscribers.status })
-    .from(subscribers)
-    .where(eq(subscribers.id, msg.subscriberId))
-    .get()
-  if (!sub || sub.status === 'bounced' || sub.status === 'complained') return
-  await unsubscribeAll(db, msg.subscriberId, msg.toEmail)
+  await leaveBroadcasts(db, msg.subscriberId)
 }
 
 /**

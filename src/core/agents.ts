@@ -75,4 +75,4 @@ export function agentSendRefusal(env: Pick<Env, 'MCP_ALLOW_SEND'>): string {
 }
 
 export const AGENT_SENSITIVE_OFF =
-  'Sensitive changes (deleting people, removing suppressions, importing lists, minting keys) are switched off for agents. The operator can turn them on in the admin under System > Agents & keys.'
+  'Sensitive changes (deleting people, removing suppressions, importing lists, minting keys, undoing somebody\'s sequence opt-out) are switched off for agents. The operator can turn them on in the admin under System > Agents & keys.'

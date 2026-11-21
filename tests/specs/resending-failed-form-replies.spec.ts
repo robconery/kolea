@@ -137,7 +137,11 @@ describe('Feature: sending a failed form reply again', () => {
       listed = await agent.call('form_resend_replies', { id: formId })
       await w.settle()
       mailsAfterListing = (await w.outbox()).length
-      sent = await agent.call('form_resend_replies', { id: formId, send: true })
+      sent = await agent.call('form_resend_replies', {
+        id: formId,
+        send: true,
+        preflight_token: listed.json?.preflight_token,
+      })
       await w.settle()
     })
 
@@ -196,7 +200,8 @@ describe('Feature: sending a failed form reply again', () => {
       const formId = await aToolkitForm(w)
       const failed = await aFailedReply(w, 'gone@example.test')
       await w.db.update(subscribers).set({ status: 'unsubscribed' }).where(eq(subscribers.id, failed.subscriberId))
-      reply = await (await agentFor(w)).call('form_resend_replies', { id: formId, send: true })
+      reply = await (await agentFor(w)).call('form_resend_replies', { id: formId })
+      await w.post(`/forms/${formId}/resend-replies`, { confirm: 'resend' })
       await w.settle()
     })
 
@@ -205,7 +210,7 @@ describe('Feature: sending a failed form reply again', () => {
     })
 
     it('is not counted', () => {
-      expect(reply.json?.queued).toBe(0)
+      expect(reply.json?.wouldSend).toBe(0)
     })
   })
 
@@ -274,6 +279,56 @@ describe('Feature: sending a failed form reply again', () => {
 
     it('⭐ sends nothing', async () => {
       expect(await mailsTo(w, 'stray@example.test')).toBe(0)
+    })
+  })
+
+  describe('Scenario: an agent asks to send without listing first', () => {
+    // The same guard as every other MCP send: no preflight token, no mail.
+    let w: World
+    let reply: ToolReply
+
+    beforeAll(async () => {
+      w = formWorld()
+      const formId = await aToolkitForm(w)
+      await aFailedReply(w, 'blind@example.test')
+      reply = await (await agentFor(w)).call('form_resend_replies', { id: formId, send: true })
+      await w.settle()
+    })
+
+    it('is refused for want of a preflight token', () => {
+      expect(reply.text).toContain('no preflight token')
+    })
+
+    it('⭐ sends nothing', async () => {
+      expect(await mailsTo(w, 'blind@example.test')).toBe(0)
+    })
+  })
+
+  describe('Scenario: another reply fails between the listing and the send', () => {
+    let w: World
+    let reply: ToolReply
+
+    beforeAll(async () => {
+      w = formWorld()
+      const formId = await aToolkitForm(w)
+      await aFailedReply(w, 'first@example.test')
+      const agent = await agentFor(w)
+      const listed = await agent.call('form_resend_replies', { id: formId })
+      await aFailedReply(w, 'second@example.test')
+      reply = await agent.call('form_resend_replies', {
+        id: formId,
+        send: true,
+        preflight_token: listed.json?.preflight_token,
+      })
+      await w.settle()
+    })
+
+    it('is refused: the set is not the one that was listed', () => {
+      expect(reply.isError).toBe(true)
+    })
+
+    it('⭐ sends nothing', async () => {
+      expect((await w.outbox()).length).toBe(0)
     })
   })
 

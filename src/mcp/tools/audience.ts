@@ -293,7 +293,7 @@ export function registerAudience(server: McpServer, ctx: Ctx): void {
     'subscriber_import_csv',
     {
       description:
-        'Bulk import from CSV text with an `email` column (optional `name`, `tags`, and any column whose header is a custom field key). Returns a per-row report; a field value that does not fit its type is left out and listed in `fieldErrors`, and the person is still imported. Refused unless the operator has turned on sensitive changes for agents (System > Agents & keys).',
+        'Bulk import from CSV text with an `email` column (optional `name`, `tags`, and any column whose header is a custom field key). Returns a per-row report; a field value that does not fit its type is left out and listed in `fieldErrors`, and the person is still imported. At most 100 data rows per call: the rest are counted in `notProcessed` and `firstUnprocessedRow` says where the next call should start. Never promotes an existing `pending` person to active. Refused unless the operator has turned on sensitive changes for agents (System > Agents & keys).',
       inputSchema: z.object({
         csv: z.string().describe('Raw CSV including the header row'),
       }),

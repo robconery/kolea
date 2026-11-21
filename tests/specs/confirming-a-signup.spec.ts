@@ -15,6 +15,7 @@ import { beforeAll, describe, expect, it } from 'bun:test'
 import { and, eq } from 'drizzle-orm'
 import { unsubscribeAll, unsubscribeBroadcasts } from '../../src/core/consent.ts'
 import { createForm, getForm, setFormReply } from '../../src/core/forms.ts'
+import { importCsv } from '../../src/core/subscribers.ts'
 import {
   activities,
   formConfirmations,
@@ -422,6 +423,78 @@ describe('Feature: confirming a signup', () => {
 
     it('puts the same working link in every copy', () => {
       expect(links.size).toBe(1)
+    })
+  })
+
+  describe('Scenario: the address is also posted to the public subscribe endpoint before the click', () => {
+    // ⭐ Only the click confirms. A public `/subscribe`, an import or an MCP
+    // upsert must not answer the double opt-in on the person's behalf.
+    let s: Setup
+    const email = 'notyet@example.test'
+    let afterSubscribe: string
+    let afterImport: string
+    let afterClick: string
+
+    beforeAll(async () => {
+      s = await aConfirmingForm()
+      await s.world.post('/f/toolkit', { email })
+      await s.world.post('/subscribe', { email })
+      afterSubscribe = (await personByEmail(s.world, email)).status
+      await importCsv(s.world.db, `email\n${email}`)
+      afterImport = (await personByEmail(s.world, email)).status
+      await s.world.post(await confirmLink(s.world, email), {})
+      afterClick = (await personByEmail(s.world, email)).status
+    })
+
+    it('⭐ leaves them pending after the public subscribe', () => {
+      expect(afterSubscribe).toBe('pending')
+    })
+
+    it('⭐ leaves them pending after an import', () => {
+      expect(afterImport).toBe('pending')
+    })
+
+    it('still lets the click make them active', () => {
+      expect(afterClick).toBe('active')
+    })
+  })
+
+  describe('Scenario: they asked on two confirming forms and click one', () => {
+    let s: Setup
+    const email = 'two@example.test'
+    let status: string
+
+    beforeAll(async () => {
+      s = await aConfirmingForm()
+      await createForm(s.world.db, { name: 'Second', slug: 'second', doubleOptIn: true })
+      await s.world.post('/f/toolkit', { email })
+      await s.world.post('/f/second', { email })
+      await s.world.post(await confirmLink(s.world, email), {})
+      status = (await personByEmail(s.world, email)).status
+    })
+
+    it('makes them active although the other link is still open', () => {
+      expect(status).toBe('active')
+    })
+  })
+
+  describe('Scenario: a reader signs up on two confirming forms a minute apart', () => {
+    // The short gap is per form. Form B's link must not be swallowed because
+    // form A's just went; the daily cap is still per address.
+    let s: Setup
+    const email = 'both@example.test'
+    let confirmations: number
+
+    beforeAll(async () => {
+      s = await aConfirmingForm()
+      await createForm(s.world.db, { name: 'Second', slug: 'second', doubleOptIn: true })
+      await s.world.post('/f/toolkit', { email })
+      await s.world.post('/f/second', { email })
+      confirmations = (await subjectsTo(s.world, email)).length
+    })
+
+    it('sends a confirmation for each form', () => {
+      expect(confirmations).toBe(2)
     })
   })
 

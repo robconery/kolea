@@ -33,6 +33,13 @@ export interface SaleInput {
   attribution?: 'auto' | 'explicit'
   /** `subscribers.source` for a buyer created by this sale. Defaults to `sale`. */
   buyerSource?: string
+  /**
+   * Whether to tell webhook receivers (`purchased`). Defaults to true. A
+   * history import passes false: a 2019 sale is history, not news, and a
+   * receiver acting on `purchased` (a fulfilment, a thank-you) must not fire
+   * for it (Kōlea SPEC 20.2, the same rule the CSV list import follows).
+   */
+  emitWebhooks?: boolean
 }
 
 export type SaleStatus = 'recorded' | 'refunded' | 'duplicate' | 'invalid_email' | 'invalid_amount'
@@ -210,7 +217,7 @@ export async function recordSale(db: Db, input: SaleInput): Promise<SaleResult> 
   })
 
   // A sale that arrives already refunded is history, not a purchase.
-  if (!wantsRefund) {
+  if (!wantsRefund && input.emitWebhooks !== false) {
     await emitWebhook(
       db,
       'purchased',

@@ -16,6 +16,7 @@ import {
 } from '../../core/forms.ts'
 import { type Ctx, defineTool, fail, ok } from '../kit.ts'
 import { agentSendAllowed, agentSendRefusal } from '../../core/agents.ts'
+import { consumePreflight, digestOf, mintPreflight } from '../../core/preflight.ts'
 
 export function registerForms(server: McpServer, ctx: Ctx): void {
   defineTool(
@@ -234,23 +235,42 @@ export function registerForms(server: McpServer, ctx: Ctx): void {
     'form_resend_replies',
     {
       description:
-        "The people whose reply (the lead-magnet mail) from this form failed and never went since, and who are still on the list. By default it only LISTS them (who, when, why). With send: true it sends the reply to each of them once: anyone who has since received it, or has unsubscribed, bounced or complained, is left out, and consent is checked again just before the provider call. Fix whatever made them fail first (see health).",
+        "The people whose reply (the lead-magnet mail) from this form failed and never went since, and who are still on the list. By default it only LISTS them (who, when, why) and returns a single-use preflight_token (10 minutes) bound to exactly that set. With send: true and that token it sends the reply to each of them once; if anyone was added to or dropped from the set since the listing, the token is refused and you list again. Anyone who has since received it, may have received it (an unknown outcome), or has unsubscribed, bounced or complained is left out, and consent is checked again just before the provider call. Fix whatever made them fail first (see health).",
       inputSchema: z.object({
         id: z.number().int().describe('The form'),
-        send: z.boolean().optional().describe('false (the default) only lists who would get it.'),
+        send: z.boolean().optional().describe('false (the default) only lists who would get it, and mints the token.'),
+        preflight_token: z.string().optional().describe('Required with send: true. From the listing call.'),
       }),
       annotations: { destructiveHint: true, idempotentHint: true },
     },
-    async ({ id, send }) => {
+    async ({ id, send, preflight_token }) => {
       if (!(await getForm(ctx.db, id))) return fail('No such form.', 'List them with form_list.')
       const people = (rows: Awaited<ReturnType<typeof failedReplies>>) =>
         rows.map((r) => ({ email: r.email, failedAt: r.failedAt, error: r.error }))
+      const digest = async (rows: Awaited<ReturnType<typeof failedReplies>>) =>
+        await digestOf(['form_resend_replies', id, rows.map((r) => r.messageId)])
 
       if (send !== true) {
         const rows = await failedReplies(ctx.db, id)
-        return ok({ sent: false, wouldSend: rows.length, people: people(rows) })
+        if (rows.length === 0) return ok({ sent: false, wouldSend: 0, people: [] })
+        const { token, expiresAt } = await mintPreflight(ctx.db, 'form_resend_replies', id, await digest(rows), rows.length)
+        return ok({ sent: false, wouldSend: rows.length, people: people(rows), preflight_token: token, expiresAt })
       }
       if (!(await agentSendAllowed(ctx.env, ctx.db))) return fail(agentSendRefusal(ctx.env))
+
+      const check = await consumePreflight(
+        ctx.db,
+        'form_resend_replies',
+        id,
+        await digest(await failedReplies(ctx.db, id)),
+        preflight_token ?? '',
+      )
+      if (!check.ok) {
+        return fail(
+          `Refusing to send: ${check.reason}.`,
+          `Call form_resend_replies({ id: ${id} }) to list them, then pass the preflight_token it returns with send: true.`,
+        )
+      }
       const rows = await resendFailedReplies(ctx.env, ctx.db, id)
       return ok({ sent: true, queued: rows.length, people: people(rows) })
     },

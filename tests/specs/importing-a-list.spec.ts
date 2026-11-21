@@ -184,6 +184,55 @@ describe('Feature: importing a list of people', () => {
     })
   })
 
+  describe('Scenario: an import that contains a buyer we only have on file', () => {
+    // ⭐ `pending` is "did not ask for mail" (a buyer, or an unconfirmed double
+    // opt-in). A file is not the person asking, so it never promotes them.
+    let world: World
+    let status: string | undefined
+    let report: ImportReport
+
+    beforeAll(async () => {
+      world = createWorld()
+      await upsertSubscriber(world.db, { email: 'buyer@example.test', status: 'pending' })
+      report = await importCsv(world.db, [header, 'buyer@example.test,A Buyer,'].join('\n'))
+      status = (await world.db.select().from(subscribers).get())?.status
+    })
+
+    it('⭐ leaves them pending', () => {
+      expect(status).toBe('pending')
+    })
+
+    it('counts them as updated', () => {
+      expect(report.updated).toBe(1)
+    })
+  })
+
+  describe('Scenario: a paste longer than one import takes', () => {
+    // D1 allows 1,000 queries per invocation. The rest is reported, never a 500.
+    let world: World
+    let report: ImportReport
+    let people: number | undefined
+
+    beforeAll(async () => {
+      world = createWorld()
+      const rows = Array.from({ length: 105 }, (_, i) => `p${i}@example.test,P ${i},`)
+      report = await importCsv(world.db, [header, ...rows].join('\n'))
+      people = (await world.db.select({ n: count() }).from(subscribers).get())?.n
+    })
+
+    it('imports the first hundred', () => {
+      expect(people).toBe(100)
+    })
+
+    it('reports the rest as not processed', () => {
+      expect(report.notProcessed).toBe(5)
+    })
+
+    it('says where to start the next import', () => {
+      expect(report.firstUnprocessedRow).toBe(101)
+    })
+  })
+
   describe('Scenario: a malformed row in the middle of the file', () => {
     let world: World
     let report: ImportReport

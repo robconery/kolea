@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, isNull, like, notInArray, sql } from 'drizzle-orm'
+import { and, asc, count, desc, eq, inArray, isNotNull, isNull, like, notInArray, or, sql } from 'drizzle-orm'
 import type { Db } from '../db/index.ts'
 import {
   type DocNode,
@@ -11,8 +11,10 @@ import {
   subscribers,
   tags,
 } from '../db/schema.ts'
+import { OUTCOME_UNKNOWN } from '../providers/types.ts'
 import type { Env } from '../types.ts'
 import { logActivity } from './activity.ts'
+import { clearPrunedMarker } from './consent.ts'
 import { recordTouch } from './campaigns.ts'
 import { grantDownload } from './downloads.ts'
 import { isValidEmail, normalizeEmail, randomToken, slugify } from './ids.ts'
@@ -467,6 +469,8 @@ export async function submitForm(
   if (outcome === 'invalid' || !id) {
     return { status: 'invalid_email', message: 'That email address looks wrong.' }
   }
+  // Signing up again themselves spends a clean-up's `pruned` marker.
+  await clearPrunedMarker(db, input.email)
 
   if (input.fields && Object.keys(input.fields).length) {
     await updateFieldValues(db, id, input.fields, { unknown: 'ignore', blank: 'ignore' })
@@ -551,7 +555,12 @@ async function countSubmit(db: Db, formId: number): Promise<void> {
 
 /** How long a confirmation link works. Kōlea's number. */
 export const CONFIRM_TTL_MS = 7 * 86_400_000
-/** No second confirmation to one address inside this gap, whichever form asked. */
+/**
+ * No second confirmation for the same form to one address inside this gap.
+ * Per (address, form): a reader signing up on two forms a minute apart is two
+ * requests, and the second link must reach them. The daily cap below is per
+ * address, across every form, and is what stops a mail-bomb.
+ */
 export const CONFIRM_MIN_GAP_MS = 10 * 60_000
 /** And no more than this many in any 24 hours. Kōlea's mail-bomb cap. */
 export const CONFIRM_MAX_PER_DAY = 3
@@ -577,7 +586,8 @@ export type ConfirmationMail =
  * never promoted, a buyer on file stays a buyer on file. Nothing that can start
  * mail runs (no tags, so no `tag_added` sequence; no subscribe sequences; no
  * form sequence; no reply), because the submitter has not yet proved the
- * address is theirs. One confirmation mail goes out, throttled per address.
+ * address is theirs. One confirmation mail goes out, throttled per address
+ * and form (and capped per address per day).
  */
 async function submitPending(
   env: Env,
@@ -692,9 +702,12 @@ async function requestConfirmation(
   }
 
   // ⭐ The mail-bomb throttle. Counted from `messages`, which records every
-  // confirmation whatever became of it, so a suppressed one counts too.
+  // confirmation whatever became of it, so a suppressed one counts too. The
+  // daily count is per address across all forms; the short gap is per form, so
+  // form B's confirmation is not swallowed because form A's just went.
   const recent = (await db.all(sql`
-    select count(*) as n, max(created_at) as last
+    select count(*) as n,
+      max(case when form_id = ${form.id} then created_at end) as last
     from messages
     where subscriber_id = ${subscriber.id} and kind = 'confirmation'
       and created_at > ${now - 86_400_000}
@@ -879,7 +892,10 @@ export async function confirmSignup(
     source: `form:${form.slug}`,
     tagIds: await formTagIds(db, form.id),
     status: 'active',
+    // The one caller allowed past an open confirmation: this is the click.
+    viaConfirmation: true,
   })
+  await clearPrunedMarker(db, person.email)
   await db
     .update(subscribers)
     .set({ confirmedAt: new Date(now) })
@@ -939,12 +955,18 @@ const REPLY_KEY = (formId: number) => `form:${formId}:%`
  *  - anyone with a reply from this form that is `sent` or still `queued`, on
  *    any day (a failure on Monday and a re-submit that worked on Tuesday);
  *  - a row the provider accepted (`provider_message_id`), whatever its status;
+ *  - anyone with a failure whose outcome is unknown (`outcome unknown`): it may
+ *    have reached them, so a resend could be their second copy;
  *  - anyone no longer `active`: unsubscribed, bounced or complained since.
  *    The first try follows the transactional rule — someone who left still
  *    gets the file they asked for at that moment — but a resend is the
  *    operator's act days later, and Kōlea's rule there is "still on the list".
  */
 export async function failedReplies(db: Db, formId: number): Promise<FailedReply[]> {
+  // "Went, or may have": a failure whose outcome is unknown may be in their
+  // inbox, so it counts as a copy they could already have. So does one the
+  // provider accepted and later refused. Neither is resent from here; both are
+  // on the Undelivered screen under "check before sending".
   const went = db
     .select({ id: messages.subscriberId })
     .from(messages)
@@ -953,7 +975,11 @@ export async function failedReplies(db: Db, formId: number): Promise<FailedReply
         eq(messages.kind, 'form'),
         eq(messages.formId, formId),
         like(messages.idempotencyKey, REPLY_KEY(formId)),
-        inArray(messages.status, ['sent', 'queued']),
+        or(
+          inArray(messages.status, ['sent', 'queued']),
+          isNotNull(messages.providerMessageId),
+          like(messages.error, `${OUTCOME_UNKNOWN}%`),
+        ),
       ),
     )
 

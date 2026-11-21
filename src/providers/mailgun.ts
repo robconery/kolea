@@ -1,4 +1,4 @@
-import type { EmailProvider, OutgoingEmail, ProviderEvent, SendResult } from './types.ts'
+import { type EmailProvider, OUTCOME_UNKNOWN, type OutgoingEmail, type ProviderEvent, type SendResult } from './types.ts'
 
 /**
  * Mailgun, over plain `fetch`: one form-encoded `POST /v3/<domain>/messages`
@@ -107,16 +107,23 @@ export class MailgunProvider implements EmailProvider {
       // it fails visibly instead, for the operator to resend once they've looked.
       return {
         ok: false,
-        error: `mailgun: outcome unknown, not retried (${String(err).slice(0, 200)})`,
+        error: `${OUTCOME_UNKNOWN}: mailgun connection dropped, not retried (${String(err).slice(0, 200)})`,
         retryable: false,
+        outcomeUnknown: true,
       }
     }
 
     if (res.ok) {
       const body = (await res.json().catch(() => ({}))) as { id?: string }
       if (body.id) return { ok: true, providerMessageId: bareId(body.id) }
-      // A 2xx with no id: Mailgun may well be sending it. Not a refusal to retry.
-      return { ok: false, error: `mailgun ${res.status}: accepted without an id`, retryable: false }
+      // A 2xx with no id: Mailgun may well be sending it. Not a refusal to retry,
+      // and not something to send again without looking.
+      return {
+        ok: false,
+        error: `${OUTCOME_UNKNOWN}: mailgun ${res.status} accepted it without an id`,
+        retryable: false,
+        outcomeUnknown: true,
+      }
     }
 
     const text = await res.text().catch(() => res.statusText)
@@ -226,12 +233,15 @@ export async function hmacSha256Hex(key: string, message: string): Promise<strin
  *
  * - `delivered` → delivered
  * - `failed` permanent, mailbox dead → hard bounce (suppresses)
- * - `failed` permanent, anything else, or temporary → soft bounce (countable, changes no consent)
+ * - `failed` permanent, anything else → soft bounce flagged `permanent`: changes
+ *   no consent, but the message is marked failed so it shows on Undelivered
+ * - `failed` temporary → soft bounce (countable, changes nothing; Mailgun retries)
  * - `complained` → complaint (suppresses)
- * - `unsubscribed` → unsubscribe (off everything: Mailgun will refuse that
- *   address from this domain from now on, so pretending otherwise would be mail
- *   silently dropped)
- * - `rejected` → failed (Mailgun would not take it at all)
+ * - `unsubscribed` → unsubscribe (off the newsletter only; consent is scoped,
+ *   and a later send Mailgun refuses comes back as a permanent failure that
+ *   shows on Undelivered)
+ * - `rejected` → failed (Mailgun would not take it at all; the message is
+ *   marked failed, and listed on Undelivered to check before sending)
  * - `opened` / `clicked` → ignored; tracking is ours, and this would double it
  */
 function toProviderEvent(data: MailgunEventData | undefined): ProviderEvent | null {
@@ -262,13 +272,15 @@ function toProviderEvent(data: MailgunEventData | undefined): ProviderEvent | nu
     case 'rejected':
       return { ...base, type: 'failed', meta }
     case 'failed': {
-      const hard =
-        data.severity === 'permanent' &&
-        (HARD_REASONS.has(data.reason ?? '') || status['bounce-type'] === 'hard')
+      const permanent = data.severity === 'permanent'
+      const hard = permanent && (HARD_REASONS.has(data.reason ?? '') || status['bounce-type'] === 'hard')
       return {
         ...base,
         type: 'bounce',
         hardBounce: hard,
+        // A permanent failure that is not a dead mailbox: Mailgun has stopped
+        // trying, so the reader never got it, and the message has to say so.
+        ...(permanent && !hard ? { permanent: true } : {}),
         meta: { ...meta, severity: data.severity ?? 'unknown' },
       }
     }

@@ -195,7 +195,8 @@ export async function importSales(db: Db, csv: string): Promise<SaleImportReport
     }
 
     // ⚠️ No tagNames, no endSequenceSlug: those are the two inputs on a sale that
-    // can put mail in an inbox, and an import never passes them.
+    // can put mail in an inbox, and an import never passes them. Nor does it
+    // emit webhooks: a receiver must not fulfil a sale from years ago.
     const result = await recordSale(db, {
       email: row.email,
       amountCents: row.amountCents,
@@ -207,6 +208,8 @@ export async function importSales(db: Db, csv: string): Promise<SaleImportReport
       attribution: 'explicit',
       buyerSource: 'sale-import',
       meta: { source: 'import' },
+      // History, not news: no `purchased` webhook for a sale from 2019.
+      emitWebhooks: false,
     })
 
     if (result.status === 'recorded') {
