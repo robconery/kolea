@@ -8,7 +8,8 @@ import { count, eq } from 'drizzle-orm'
 import { createCampaign, recordTouch } from '../../src/core/campaigns.ts'
 import { type SaleImportReport, importSales, parseAmountCents } from '../../src/core/sale-import.ts'
 import { unsubscribeBroadcasts } from '../../src/core/consent.ts'
-import { sales, sequenceEnrollments, subscribers } from '../../src/db/schema.ts'
+import { createWebhookEndpoint } from '../../src/core/webhooks.ts'
+import { sales, sequenceEnrollments, subscribers, webhookDeliveries } from '../../src/db/schema.ts'
 import { aPerson, aSequence } from '../support/factories.ts'
 import { createWorld, type World } from '../support/world.ts'
 
@@ -99,6 +100,23 @@ describe('Feature: importing past sales', () => {
 
     it('sends nobody any mail', async () => {
       expect((await world.outbox()).length).toBe(0)
+    })
+  })
+
+  describe('Scenario: a webhook receiver is listening when past sales are imported', () => {
+    // History, not news: a receiver that fulfils on `purchased` must not
+    // ship a 2021 order again.
+    let deliveries: number
+
+    beforeAll(async () => {
+      const world = createWorld()
+      await createWebhookEndpoint(world.db, { url: 'https://hooks.example.com/kolea', events: ['purchased'] })
+      await upload(world, FILE)
+      deliveries = (await world.db.select().from(webhookDeliveries).all()).length
+    })
+
+    it('⭐ emits no purchased webhook', () => {
+      expect(deliveries).toBe(0)
     })
   })
 
