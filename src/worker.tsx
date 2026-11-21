@@ -9,6 +9,7 @@ import { salesApi } from './api/sales.ts'
 import { withActivitySource } from './core/activity.ts'
 import { sendBroadcastNow } from './core/broadcasts.ts'
 import { checkDueDomains } from './core/domains.ts'
+import { advanceImports } from './core/importers/runs.ts'
 import { sendMessages } from './core/sending.ts'
 import { tickSequences } from './core/sequences.ts'
 import { syncStripeCatalog } from './core/stripe-catalog.ts'
@@ -37,6 +38,7 @@ import { testimonialsAdmin } from './web/admin-testimonials.tsx'
 import { testimonialForm } from './web/testimonial-form.tsx'
 import { goalsAdmin } from './web/admin-goals.tsx'
 import { help } from './web/admin-help.tsx'
+import { importsAdmin } from './web/admin-imports.tsx'
 import { mail } from './web/admin-mail.tsx'
 import { mediaAdmin } from './web/admin-media.tsx'
 import { sequenceTemplatesAdmin } from './web/admin-sequence-templates.tsx'
@@ -154,6 +156,8 @@ app.route('/', admin)
 // Before `audience`, whose `/subscribers/:id` would claim `/subscribers/clean-up`.
 app.route('/', cleanupAdmin)
 app.route('/', audience)
+// Ahead of nothing in particular: `/imports` is its own prefix.
+app.route('/', importsAdmin)
 // Read-only by construction — see the header note in `web/admin-analytics.tsx`.
 // The sequence screens come first so `/analytics/sequences/:id` is matched by
 // its own router rather than swallowed by anything broader.
@@ -291,6 +295,18 @@ export default {
           await deliverDueWebhooks(env, db)
         } catch {
           /* recorded on the delivery rows */
+        }
+        // One page of a background import (Kit, Ghost, Mailchimp, Drip), but
+        // only in a minute with no broadcast to push: a send page spends most
+        // of the 1,000-query budget, and mail outranks migration. The import
+        // just resumes from its cursor next minute. A failure is already a
+        // row on `import_runs`, so it must not take the tick down with it.
+        if (due.length === 0) {
+          try {
+            await advanceImports(env, db)
+          } catch {
+            /* recorded on import_runs where it could be; retried next tick */
+          }
         }
       }),
     )

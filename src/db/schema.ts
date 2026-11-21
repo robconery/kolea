@@ -361,6 +361,12 @@ export const broadcasts = sqliteTable(
     importedUnsubscribed: integer('imported_unsubscribed'),
     /** Provenance, so an imported figure can always be labelled as one in the UI. */
     importedFrom: text('imported_from'),
+    /** The other tool's own id for this mail (a Kit broadcast id, a Ghost post id).
+        Set by the background importers (`core/importers/`) so a second run of the
+        same import finds it and copies nothing twice. Null for everything written
+        here, and for the one-off Kit archive, which predates it — the importer
+        also matches on subject + sent_at for exactly that reason. */
+    importedSourceId: text('imported_source_id'),
 
     // ── Published to the web (the public site at `SITE_URL`).
     //
@@ -435,6 +441,9 @@ export const broadcasts = sqliteTable(
     // SQLite treats NULLs as distinct in a unique index, so every unpublished
     // broadcast keeps a null slug without colliding with the others.
     uniqueIndex('broadcasts_slug_key').on(t.slug),
+    // One local row per mail in the other tool. NULLs are distinct, so every
+    // broadcast written here (source id null) is untouched by this.
+    uniqueIndex('broadcasts_imported_source_key').on(t.importedFrom, t.importedSourceId),
     // The public index page's only query: newest published first.
     index('broadcasts_published_at_idx').on(t.publishedAt),
   ],
@@ -491,8 +500,14 @@ export const sequences = sqliteTable(
     importedUnsubscribed: integer('imported_unsubscribed'),
     /** Provenance, so an imported figure can always be labelled as one. */
     importedFrom: text('imported_from'),
+    /** The other tool's id for this sequence. Same contract as
+        `broadcasts.importedSourceId`. */
+    importedSourceId: text('imported_source_id'),
   },
-  (t) => [uniqueIndex('sequences_slug_key').on(t.slug)],
+  (t) => [
+    uniqueIndex('sequences_slug_key').on(t.slug),
+    uniqueIndex('sequences_imported_source_key').on(t.importedFrom, t.importedSourceId),
+  ],
 )
 
 export const sequenceSteps = sqliteTable(
@@ -1828,6 +1843,88 @@ export const syncRuns = sqliteTable(
   },
   (t) => [index('sync_runs_kind_started_idx').on(t.kind, t.startedAt)],
 )
+
+// ─────────────────────────────────────────────────────────── importers
+
+/** The tools the background importers read from. One adapter each, in `providers/importers/`. */
+export const IMPORT_SOURCES = ['kit', 'ghost', 'mailchimp', 'drip'] as const
+export type ImportSourceId = (typeof IMPORT_SOURCES)[number]
+
+/** The run's lifecycle. Only `core/importers/runs.ts` `nextImportStatus()` moves it. */
+export const IMPORT_STATUSES = ['queued', 'running', 'completed', 'failed', 'cancelled'] as const
+export type ImportStatus = (typeof IMPORT_STATUSES)[number]
+
+/** A line for the report: something the run left behind or did on purpose, counted. */
+export interface ImportNote {
+  key: string
+  count: number
+  message: string
+}
+
+/**
+ * One run of an importer from another tool (Kit, Ghost, Mailchimp, Drip).
+ *
+ * ⭐ The run holds no state in memory. The minutely cron reads this row, asks the
+ * source for exactly one page at `(phase, cursor)`, writes that page, and writes
+ * the next `(phase, cursor)` back here — so a run survives a deploy, a crash or a
+ * week of nobody looking, and resumes on the exact page. A page re-read after a
+ * crash between "write rows" and "write cursor" is harmless: every write it
+ * makes is idempotent (unique email, `ON CONFLICT DO NOTHING` on tags and
+ * suppressions, `imported_source_id` on content).
+ *
+ * The page is deliberately small. D1 allows 1,000 queries per invocation and the
+ * same tick also drives sequences; the cron skips the import step altogether in
+ * a minute that has a broadcast to push, because mail outranks migration.
+ *
+ * `credentials` is the operator's API key for the other tool, as JSON. It is
+ * never selected by a screen (see `importRunColumns`), never echoed back, and
+ * set to NULL the moment the run reaches any terminal status — a finished
+ * import keeps no key to a system we are leaving.
+ */
+export const importRuns = sqliteTable(
+  'import_runs',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    source: text('source', { enum: IMPORT_SOURCES }).notNull(),
+    status: text('status', { enum: IMPORT_STATUSES }).notNull().default('queued'),
+    /** What the operator typed that is safe to show: a Ghost URL, a Mailchimp list id, a Drip account id. */
+    settings: text('settings', { mode: 'json' }).notNull().$type<Record<string, string>>().default({}),
+    /** Secret. NULL once the run ends. Never selected for display. */
+    credentials: text('credentials'),
+    /** The phase being read (`subscribers`, `broadcasts`, …). Null once done. */
+    phase: text('phase'),
+    /** The source's own cursor within `phase` — Kit's `end_cursor`, a page number,
+        an offset. Opaque to everything but that source's adapter. Null = first page. */
+    cursor: text('cursor'),
+    phasesDone: integer('phases_done').notNull().default(0),
+    phasesTotal: integer('phases_total').notNull().default(0),
+    pages: integer('pages').notNull().default(0),
+    /** New rows: people, broadcasts, sequences. */
+    created: integer('created').notNull().default(0),
+    /** People already here who matched — gained tags, a name, or a narrower status. */
+    updated: integer('updated').notNull().default(0),
+    /** Read and deliberately not written: unknown status, suppressed here, drafts, already imported. */
+    skipped: integer('skipped').notNull().default(0),
+    /** Addresses that cannot be stored. */
+    invalid: integer('invalid').notNull().default(0),
+    /** The same numbers by entity — tags, taggings, suppressions, sequence_steps… */
+    detail: text('detail', { mode: 'json' }).notNull().$type<Record<string, number>>().default({}),
+    notes: text('notes', { mode: 'json' }).notNull().$type<ImportNote[]>().default([]),
+    /** The most recent failure, readable by a person. Kept after a later page succeeds. */
+    lastError: text('last_error'),
+    /** Consecutive failed pages. Three in a row and the run fails for good. */
+    failures: integer('failures').notNull().default(0),
+    /** A lease, so two overlapping cron invocations never read the same page twice. */
+    lockedUntil: ts('locked_until'),
+    createdAt: ts('created_at').notNull(),
+    startedAt: ts('started_at'),
+    finishedAt: ts('finished_at'),
+    updatedAt: ts('updated_at').notNull(),
+  },
+  (t) => [index('import_runs_status_idx').on(t.status, t.createdAt)],
+)
+
+export type ImportRun = typeof importRuns.$inferSelect
 
 // Local-development only: the `console` provider writes fully rendered mail here
 // instead of sending it, so the Outbox screen can show exactly what would have gone

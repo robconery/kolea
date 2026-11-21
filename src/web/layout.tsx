@@ -907,6 +907,8 @@ const ICONS: Record<string, string> = {
   tags: 'M9.4 4.4 7.6 19.6M16.4 4.4l-1.8 15.2M4.8 8.8h15M4 15.2h15',
   /* Two overlapping circles: a segment is the part of the list that satisfies
      more than one thing at once. */
+  /* An arrow coming down into a tray: a list arriving from elsewhere. */
+  imp: 'M12 4v10m-4-4 4 4 4-4M4.8 14.4v4.8h14.4v-4.8',
   segs: 'M9.6 19a7 7 0 1 0 0-14 7 7 0 0 0 0 14Zm4.8 0a7 7 0 1 0 0-14 7 7 0 0 0 0 14Z',
   /* A card with labelled lines: the facts a person carries. */
   fields: 'M4.6 5.4h14.8v13.2H4.6zM7.8 9.4h2.4M12.6 9.4h3.6M7.8 12.6h2.4M12.6 12.6h3.6M7.8 15.6h2.4',
@@ -989,6 +991,8 @@ const NAV: ({ grp: string } | { href: string; key: string; label: string })[] = 
   // Next to Segments because that is where a field earns its keep: a value
   // nobody can ask a question of is a value nobody needed to store.
   { href: '/fields', key: 'fields', label: 'Custom fields' },
+  // Kit, Ghost, Mailchimp, Drip: bringing a list in is an audience act.
+  { href: '/imports', key: 'imp', label: 'Imports' },
   // ⭐ Mail sits directly under the audience: who is on the list, then what
   // goes out to them — the two screens used every day, at the top.
   { grp: 'Mail' },
