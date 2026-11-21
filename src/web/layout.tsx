@@ -897,6 +897,8 @@ const ICONS: Record<string, string> = {
   site: 'M12 11.2a3.4 3.4 0 1 0 0-6.8 3.4 3.4 0 0 0 0 6.8ZM5.6 19.6c.8-3.4 3.4-5.4 6.4-5.4s5.6 2 6.4 5.4',
   /* A page with a layout on it: header bar, a column, a block. */
   theme: 'M4.4 4.4h15.2v15.2H4.4zM4.4 8.6h15.2M8.8 8.6v11M11.6 12h5.2M11.6 15.4h3.6',
+  /* A folder tab: pages filed under a heading. */
+  topics: 'M3.8 6.2h5.8l1.8 2h8.8v11H3.8V6.2ZM3.8 10.6h16.4',
   /* A heartbeat trace. The feed is a pulse — the one screen that shows the list
      as something moving rather than something counted. */
   act: 'M3.2 12.4h4l2.2-6 3.4 12.4 2.4-8.2 1.7 4.6h4.4',
@@ -1014,6 +1016,8 @@ const NAV: ({ grp: string } | { href: string; key: string; label: string })[] = 
   { grp: 'System' },
   { href: '/site', key: 'site', label: 'Profile' },
   { href: '/themes', key: 'theme', label: 'Themes' },
+  // Beside Themes: both are the public site, and topics organise its pages.
+  { href: '/topics', key: 'topics', label: 'Topics' },
   { href: '/consent', key: 'cons', label: 'Consent' },
   { href: '/settings', key: 'set', label: 'Settings' },
   { href: '/help', key: 'help', label: 'Help' },

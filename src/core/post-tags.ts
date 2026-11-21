@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, isNotNull } from 'drizzle-orm'
+import { and, asc, count, desc, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm'
 import type { Db } from '../db/index.ts'
 import { broadcastPostTags, broadcasts, postTags, type PostTag } from '../db/schema.ts'
 import { slugify } from './ids.ts'
@@ -49,12 +49,30 @@ export function tagSlug(name: string): string {
   return RESERVED_TAG_SLUGS.has(base) ? `${base}-tag` : base
 }
 
-/** Case- and spacing-insensitive: "AI", "ai" and " Ai " are one tag. */
+/** Trimmed, inner whitespace collapsed: the form a topic name is stored in. */
+function cleanName(name: string): string {
+  return name.trim().replace(/\s+/g, ' ')
+}
+
+/**
+ * Case- and spacing-insensitive: "AI", "ai" and " Ai " are one tag.
+ *
+ * Matched by slug first, then by name: a topic renamed on the Topics screen
+ * keeps its slug (it is a URL), so "Machine learning" may live at `/ai`, and
+ * tagging a post "Machine learning" must find that topic rather than mint a
+ * second one at `/machine-learning`.
+ */
 export async function findOrCreatePostTag(db: Db, name: string): Promise<PostTag | null> {
-  const clean = name.trim().replace(/\s+/g, ' ')
+  const clean = cleanName(name)
   const slug = tagSlug(clean)
   if (!slug) return null
-  const existing = await db.select().from(postTags).where(eq(postTags.slug, slug)).get()
+  const existing =
+    (await db.select().from(postTags).where(eq(postTags.slug, slug)).get()) ??
+    (await db
+      .select()
+      .from(postTags)
+      .where(sql`lower(${postTags.name}) = ${clean.toLowerCase()}`)
+      .get())
   if (existing) return existing
   return db.insert(postTags).values({ slug, name: clean, createdAt: new Date() }).returning().get()
 }
@@ -133,7 +151,7 @@ export async function listPublicTags(db: Db, limit = 100): Promise<TagWithCount[
   return rows.map((r) => ({ ...r.tag, posts: r.posts }))
 }
 
-/** Every post tag, with its published-post count, for the admin. */
+/** Every post tag, by name. Counts are `listTopics`. */
 export async function listAllPostTags(db: Db): Promise<PostTag[]> {
   return db.select().from(postTags).orderBy(asc(postTags.name)).all()
 }
@@ -173,4 +191,89 @@ export async function setHomeTopics(db: Db, ids: number[]): Promise<void> {
       .set({ showOnHome: true })
       .where(inArray(postTags.id, ids.slice(i, i + 90)))
   }
+}
+
+// ─────────────────────────────────────────────────── managing topics
+
+export interface Topic extends PostTag {
+  /** Published posts under it. The public site only shows a topic with at least one. */
+  published: number
+  /** Every broadcast carrying it, published or not. */
+  tagged: number
+}
+
+/**
+ * Every topic with its counts, for the Topics screen and `topic_list`. Two
+ * grouped queries whatever the number of topics.
+ */
+export async function listTopics(db: Db): Promise<Topic[]> {
+  const all = await listAllPostTags(db)
+  const tagged = await db
+    .select({ id: broadcastPostTags.postTagId, n: count() })
+    .from(broadcastPostTags)
+    .groupBy(broadcastPostTags.postTagId)
+    .all()
+  const published = await db
+    .select({ id: broadcastPostTags.postTagId, n: count() })
+    .from(broadcastPostTags)
+    .innerJoin(broadcasts, eq(broadcasts.id, broadcastPostTags.broadcastId))
+    .where(isNotNull(broadcasts.publishedAt))
+    .groupBy(broadcastPostTags.postTagId)
+    .all()
+  const t = new Map(tagged.map((r) => [r.id, r.n]))
+  const p = new Map(published.map((r) => [r.id, r.n]))
+  return all.map((tag) => ({ ...tag, published: p.get(tag.id) ?? 0, tagged: t.get(tag.id) ?? 0 }))
+}
+
+export interface TopicPatch {
+  name?: string
+  /** Empty clears it. Shown on the topic's archive page and as its meta description. */
+  description?: string | null
+  showOnHome?: boolean
+}
+
+/**
+ * Edit a topic's name, description, or front-page shelf.
+ *
+ * The slug never changes: it is the first segment of every post URL under the
+ * topic, and those URLs are in mail that has already gone out. A rename that
+ * would collide with another topic — same name, or a name whose slug is
+ * another topic's — is refused, because tagging a post with that name would
+ * then reach the other one.
+ */
+export async function updateTopic(
+  db: Db,
+  id: number,
+  patch: TopicPatch,
+): Promise<{ ok: true; topic: PostTag } | { ok: false; reason: string }> {
+  const topic = await db.select().from(postTags).where(eq(postTags.id, id)).get()
+  if (!topic) return { ok: false, reason: 'no such topic' }
+
+  const set: Partial<typeof postTags.$inferInsert> = {}
+  if (patch.name !== undefined) {
+    const name = cleanName(patch.name)
+    if (!name || !tagSlug(name)) return { ok: false, reason: 'a topic needs a name' }
+    if (name.length > 80) return { ok: false, reason: 'that name is longer than 80 characters' }
+    const clash = await db
+      .select({ name: postTags.name })
+      .from(postTags)
+      .where(
+        and(
+          ne(postTags.id, id),
+          sql`(lower(${postTags.name}) = ${name.toLowerCase()} or ${postTags.slug} = ${tagSlug(name)})`,
+        ),
+      )
+      .get()
+    if (clash) return { ok: false, reason: `another topic, “${clash.name}”, already goes by that name` }
+    set.name = name
+  }
+  if (patch.description !== undefined) {
+    const d = (patch.description ?? '').trim()
+    if (d.length > 500) return { ok: false, reason: 'that description is longer than 500 characters' }
+    set.description = d || null
+  }
+  if (patch.showOnHome !== undefined) set.showOnHome = patch.showOnHome
+
+  if (Object.keys(set).length) await db.update(postTags).set(set).where(eq(postTags.id, id))
+  return { ok: true, topic: (await db.select().from(postTags).where(eq(postTags.id, id)).get())! }
 }

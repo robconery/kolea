@@ -1,6 +1,6 @@
 import type { McpServer } from '@modelcontextprotocol/server'
 import * as z from 'zod/v4'
-import { setPostTags, tagsForPost, tagsForPosts } from '../../core/post-tags.ts'
+import { getPostTagBySlug, listTopics, setPostTags, tagsForPost, tagsForPosts, updateTopic } from '../../core/post-tags.ts'
 import {
   getPostBySlug,
   listPosts,
@@ -12,7 +12,7 @@ import {
   updatePostMeta,
 } from '../../core/posts.ts'
 import { renderPostHtml } from '../../core/render-web.ts'
-import { type Ctx, defineTool, fail, ok } from '../kit.ts'
+import { type Ctx, defineTool, fail, failed, ok } from '../kit.ts'
 
 /**
  * The public site's tools.
@@ -177,6 +177,62 @@ export function registerPosts(server: McpServer, ctx: Ctx): void {
 
       await unpublishPost(ctx.db, broadcastId)
       return ok({ published: false, slug: before.slug, subject: before.subject })
+    },
+  )
+
+  defineTool(
+    server,
+    ctx,
+    'topic_list',
+    {
+      description:
+        "The public site's topics (post tags — never subscriber tags), by name: slug (the URL segment, which never changes), description, whether it has a shelf on the front page, and how many posts carry it (`published` live, `tagged` in all). A topic shows on the site only once it has a published post.",
+      inputSchema: z.object({}),
+      annotations: { readOnlyHint: true },
+    },
+    async () =>
+      ok(
+        (await listTopics(ctx.db)).map((t) => ({
+          id: t.id,
+          slug: t.slug,
+          name: t.name,
+          description: t.description,
+          showOnHome: t.showOnHome,
+          published: t.published,
+          tagged: t.tagged,
+          url: t.published ? `${origin()}/${t.slug}` : null,
+        })),
+      ),
+  )
+
+  defineTool(
+    server,
+    ctx,
+    'topic_update',
+    {
+      description:
+        "Edit a topic, found by slug (or id): its display name, its description (shown on the topic's archive page and as its meta description; \"\" clears it), and show_on_home (a shelf of its newest posts on the front page). The slug never changes, so no URL breaks. Topics are created by tagging posts (post_publish / post_update). Sends nothing.",
+      inputSchema: z.object({
+        slug: z.string().optional(),
+        id: z.number().int().optional(),
+        name: z.string().min(1).max(80).optional(),
+        description: z.string().max(500).optional(),
+        show_on_home: z.boolean().optional(),
+      }),
+      annotations: { idempotentHint: true },
+    },
+    async ({ slug, id, name, description, show_on_home }) => {
+      const topicId = id ?? (slug ? (await getPostTagBySlug(ctx.db, slug))?.id : undefined)
+      if (!topicId) return fail('No such topic.', 'List them with topic_list.')
+      const r = await updateTopic(ctx.db, topicId, { name, description, showOnHome: show_on_home })
+      if (!r.ok) return failed(r)
+      return ok({
+        id: r.topic.id,
+        slug: r.topic.slug,
+        name: r.topic.name,
+        description: r.topic.description,
+        showOnHome: r.topic.showOnHome,
+      })
     },
   )
 }

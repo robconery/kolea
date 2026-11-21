@@ -32,6 +32,7 @@ import { store } from './web/admin-store.tsx'
 import { tagging } from './web/admin-tags.tsx'
 import { siteAdmin } from './web/admin-site.tsx'
 import { themesAdmin } from './web/admin-themes.tsx'
+import { topicsAdmin } from './web/admin-topics.tsx'
 import { requireOperator } from './web/auth.ts'
 import { isSiteHost, site } from './web/site.tsx'
 import { prefs } from './web/prefs.tsx'
@@ -121,6 +122,7 @@ app.route('/', store)
 // the site itself is a separate app, reached by hostname.
 app.route('/', siteAdmin)
 app.route('/', themesAdmin)
+app.route('/', topicsAdmin)
 // Ahead of `mail`, which owns `/sequences/:id` and would read "templates" as an id.
 app.route('/', sequenceTemplatesAdmin)
 app.route('/', mail)

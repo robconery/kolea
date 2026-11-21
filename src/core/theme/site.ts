@@ -165,7 +165,7 @@ export function ghostTag(tag: PostTag, posts = 0): GhostTag {
     visibility: 'public',
     accent_color: null,
     meta_title: null,
-    meta_description: null,
+    meta_description: tag.description,
     count: { posts },
     hue: hueForTag(tag.id),
     hue_cool: coolHueForTag(tag.id),
