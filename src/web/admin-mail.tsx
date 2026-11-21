@@ -31,11 +31,14 @@ import {
   setExit,
   setSequenceActive,
   stepsFor,
+  storedWindow,
   tickSequences,
   updateSequence,
   updateStep,
 } from '../core/sequences.ts'
 import { findPlaceholders } from '../core/sequence-templates/index.ts'
+import { clock, parseClock, timeZones } from '../core/send-window.ts'
+import { getTimeZone, setTimeZone } from '../core/site-settings.ts'
 import { BROADCAST_SCOPE_LABEL, footerPreviewHtml, previewHtml } from '../core/render.ts'
 import { type PreviewTarget, previewAddress, sendPreview } from '../core/sending.ts'
 import { type Db, getDb } from '../db/index.ts'
@@ -1632,6 +1635,8 @@ mail.get('/sequences/:id', async (c) => {
   const allCampaigns = await listCampaigns(db)
   const flow = (await sequenceFlow(db, id))!
   const otherSequences = (await listSequences(db)).filter((o) => o.id !== id)
+  const zone = await getTimeZone(db)
+  const window = storedWindow(s.sendWindowStart, s.sendWindowEnd)
 
   return c.html(
     <Layout title={s.name} nav="seq">
@@ -1733,6 +1738,55 @@ mail.get('/sequences/:id', async (c) => {
                 it never touches anyone already in it.
               </p>
             ) : null}
+          </form>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-h">
+          <h2>When it sends</h2>
+        </div>
+        <div class="card-b">
+          <div class="note">
+            {window ? (
+              <>
+                Steps go out between <strong>{clock(window.start)}</strong> and{' '}
+                <strong>{clock(window.end)}</strong>, {zone}. A step that comes due outside that
+                window waits for it to open; it is never skipped.
+              </>
+            ) : (
+              <>
+                Steps go out the minute they come due, day or night. Set a window to keep them to
+                the hours you choose.
+              </>
+            )}
+          </div>
+          <form method="post" action={`/sequences/${id}/window`}>
+            <div class="row">
+              <div class="field">
+                <label>From</label>
+                <input type="time" name="start" value={window ? clock(window.start) : ''} />
+              </div>
+              <div class="field">
+                <label>Until</label>
+                <input type="time" name="end" value={window ? clock(window.end) : ''} />
+              </div>
+              <div class="field">
+                <label>Your time zone (every sequence uses it)</label>
+                <select name="timeZone">
+                  {timeZones().map((z) => (
+                    <option value={z} selected={z === zone}>
+                      {z}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <button class="btn primary">Save window</button>
+            <p class="faint" style="margin:8px 0 0">
+              Leave both times empty for no window. An end earlier than the start runs past
+              midnight, e.g. 22:00 until 06:00.
+            </p>
           </form>
         </div>
       </div>
@@ -2494,6 +2548,29 @@ mail.post('/sequences/:id/next', async (c) => {
     return c.redirect(`/sequences/${id}?flash=${encodeURIComponent(result.reason!)}&kind=warn`)
   }
   return c.redirect(`/sequences/${id}?flash=Saved.`)
+})
+
+mail.post('/sequences/:id/window', async (c) => {
+  const db = getDb(c.env)
+  const id = Number(c.req.param('id'))
+  const form = await c.req.formData()
+  const back = (msg: string, warn = false) =>
+    c.redirect(`/sequences/${id}?flash=${encodeURIComponent(msg)}${warn ? '&kind=warn' : ''}`)
+
+  const start = parseClock(String(form.get('start') ?? ''))
+  const end = parseClock(String(form.get('end') ?? ''))
+  if (start === 'invalid' || end === 'invalid') return back('Times must be HH:MM.', true)
+
+  // The zone first: a window saved against a zone that then failed would read
+  // in the wrong hours until somebody noticed.
+  const zone = String(form.get('timeZone') ?? '').trim()
+  if (zone) {
+    const tz = await setTimeZone(db, zone)
+    if (!tz.ok) return back(tz.reason!, true)
+  }
+  const result = await updateSequence(db, id, { sendWindow: { start, end } })
+  if (!result.ok) return back(result.reason!, true)
+  return back(start === null ? 'No send window: steps go out when due.' : 'Send window saved.')
 })
 
 mail.post('/sequences/:id/exits', async (c) => {

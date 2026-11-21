@@ -221,7 +221,10 @@ export default {
     ctx.waitUntil(
       withActivitySource('cron', async () => {
         const db = getDb(env)
-        await tickSequences(env, db)
+        // The minute the cron was meant for, so a late start still reads each
+        // sequence's send window for that minute.
+        const now = Number.isFinite(controller.scheduledTime) ? new Date(controller.scheduledTime) : new Date()
+        await tickSequences(env, db, now)
 
         // One broadcast per tick, several pages deep. Taking five at a time and
         // one page each meant the D1 query budget bought 400 recipients a minute;

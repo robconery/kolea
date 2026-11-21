@@ -17,7 +17,9 @@ import type { ActivityInput } from './activity.ts'
 import { logActivities, logActivity } from './activity.ts'
 import { canReceiveSequence } from './consent.ts'
 import { slugify } from './ids.ts'
+import { type SendWindow, checkWindow, nextWindowOpen, windowOpen } from './send-window.ts'
 import { dispatch } from './sending.ts'
+import { getTimeZone } from './site-settings.ts'
 import { findPlaceholders } from './sequence-templates/placeholders.ts'
 
 const TICK_LIMIT = 200
@@ -212,17 +214,25 @@ export async function exitOnTag(db: Db, subscriberId: number, tagId: number): Pr
  * dispatch it, and move the enrollment to the following step.
  *
  * Called from cron, and from the "Run sequences now" button so the whole thing
- * is playable locally without waiting on a clock.
+ * is playable locally without waiting on a clock. `now` is the cron's own
+ * scheduled time when there is one, so a tick that starts late still reads the
+ * window for the minute it was meant to run.
+ *
+ * ⭐ A sequence with a send-time window (Kōlea SPEC 12.1.2) sends only inside
+ * it. A step that comes due outside the window is not skipped and not dropped:
+ * the enrollment's `next_run_at` moves to the window's next opening, read in the
+ * operator's time zone, and the tick that runs then sends it. Nothing is sent
+ * outside the window, and nothing due is ever lost.
  */
-export async function tickSequences(env: Env, db: Db): Promise<number> {
-  const now = new Date()
-
+export async function tickSequences(env: Env, db: Db, now: Date = new Date()): Promise<number> {
   const due = await db
     .select({
       enrollmentId: sequenceEnrollments.id,
       sequenceId: sequenceEnrollments.sequenceId,
       subscriberId: sequenceEnrollments.subscriberId,
       stepId: sequenceEnrollments.nextStepId,
+      windowStart: sequences.sendWindowStart,
+      windowEnd: sequences.sendWindowEnd,
     })
     .from(sequenceEnrollments)
     .innerJoin(sequences, eq(sequences.id, sequenceEnrollments.sequenceId))
@@ -252,11 +262,32 @@ export async function tickSequences(env: Env, db: Db): Promise<number> {
   /** sequenceId → the people who were sent its LAST step in this tick. */
   const finished = new Map<number, number[]>()
 
+  /**
+   * sequenceId → enrollments due outside that sequence's window. Moved forward
+   * in ONE update per sequence after the loop: every one of them waits for the
+   * same opening, and a write per enrollment would spend the D1 budget the
+   * sends need.
+   */
+  const held = new Map<number, { window: SendWindow; ids: number[] }>()
+  // Read once, and only when some due sequence has a window to read it for.
+  let zone: string | null = null
+
   for (const d of due) {
     if (d.stepId === null) {
       await complete(db, d.enrollmentId)
       activity.push(completedActivity(d.subscriberId, d.sequenceId, now, 'no_next_step'))
       continue
+    }
+
+    const window = storedWindow(d.windowStart, d.windowEnd)
+    if (window) {
+      zone ??= await getTimeZone(db)
+      if (!windowOpen(window, now, zone)) {
+        const h = held.get(d.sequenceId) ?? { window, ids: [] }
+        h.ids.push(d.enrollmentId)
+        held.set(d.sequenceId, h)
+        continue
+      }
     }
 
     const step = await db.select().from(sequenceSteps).where(eq(sequenceSteps.id, d.stepId)).get()
@@ -343,10 +374,27 @@ export async function tickSequences(env: Env, db: Db): Promise<number> {
     }
   }
 
+  for (const { window, ids } of held.values()) {
+    await db
+      .update(sequenceEnrollments)
+      .set({ nextRunAt: nextWindowOpen(window, now, zone!) })
+      .where(and(inArray(sequenceEnrollments.id, ids), eq(sequenceEnrollments.status, 'active')))
+  }
+
   activity.push(...(await chainFinished(db, finished, now)))
   await logActivities(db, activity)
   await dispatch(env, db, toSend)
   return toSend.length
+}
+
+/**
+ * A sequence row's window, or null for none. Half a window (one end set) is
+ * treated as none: `updateSequence` never writes one, and a window that cannot
+ * be read must not hold mail forever.
+ */
+export function storedWindow(start: number | null, end: number | null): SendWindow | null {
+  const checked = checkWindow(start, end)
+  return checked.ok ? checked.window : null
 }
 
 function completedActivity(
@@ -541,6 +589,11 @@ export interface SequenceInput {
   campaignId?: number | null
   /** "When this sequence ends, add them to…". Null ends the chain. */
   nextSequenceId?: number | null
+  /**
+   * Only send between these minutes of the day, in the operator's time zone.
+   * Null clears it. See `core/send-window.ts` and `tickSequences`.
+   */
+  sendWindow?: { start: number | null; end: number | null } | null
 }
 
 export async function listSequences(db: Db) {
@@ -596,6 +649,13 @@ export async function updateSequence(
     }
   }
 
+  let window: SendWindow | null | undefined
+  if (patch.sendWindow !== undefined) {
+    const checked = checkWindow(patch.sendWindow?.start ?? null, patch.sendWindow?.end ?? null)
+    if (!checked.ok) return { ok: false, reason: checked.reason }
+    window = checked.window
+  }
+
   const trigger = patch.trigger ?? s.trigger
   await db
     .update(sequences)
@@ -608,6 +668,9 @@ export async function updateSequence(
         : {}),
       ...(patch.campaignId !== undefined ? { campaignId: patch.campaignId } : {}),
       ...(patch.nextSequenceId !== undefined ? { nextSequenceId: patch.nextSequenceId } : {}),
+      ...(window !== undefined
+        ? { sendWindowStart: window?.start ?? null, sendWindowEnd: window?.end ?? null }
+        : {}),
     })
     .where(eq(sequences.id, id))
 

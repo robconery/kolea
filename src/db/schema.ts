@@ -361,6 +361,21 @@ export const sequences = sqliteTable(
     nextSequenceId: integer('next_sequence_id').references((): AnySQLiteColumn => sequences.id, {
       onDelete: 'set null',
     }),
+    /**
+     * The send-time window (Kōlea SPEC 12.1.2): minutes after local midnight in
+     * the operator's time zone (`site_settings.time_zone`), start inclusive, end
+     * exclusive. A start after the end wraps past midnight (22:00–06:00).
+     *
+     * Both null means no window — a due step goes at the next minutely tick,
+     * which is how every sequence behaved before this existed. Both set or both
+     * null, never one, and never equal: `core/send-window.ts` checks that on
+     * every write, since SQLite cannot be told after the fact.
+     *
+     * A due step outside the window is not skipped: the tick moves the
+     * enrollment's `next_run_at` to the window's next opening and sends it then.
+     */
+    sendWindowStart: integer('send_window_start'),
+    sendWindowEnd: integer('send_window_end'),
     createdAt: ts('created_at').notNull(),
 
     // ── Imported engagement totals (Kit history). Same contract as
@@ -1929,6 +1944,13 @@ export const siteSettings = sqliteTable('site_settings', {
    * MCP without anyone touching a template.
    */
   profile: text('profile', { mode: 'json' }).notNull().$type<Record<string, unknown>>().default({}),
+  /**
+   * The operator's IANA time zone (`Pacific/Honolulu`). One for the install, as
+   * Kōlea keeps one per account: every sequence's send window is read in it.
+   * Null means UTC. Validated against the runtime's own zone list on write, so
+   * the tick never meets a name `Intl` cannot read.
+   */
+  timeZone: text('time_zone'),
   updatedAt: ts('updated_at').notNull(),
 })
 

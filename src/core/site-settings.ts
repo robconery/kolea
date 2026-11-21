@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm'
 import type { Db } from '../db/index.ts'
 import { type DocNode, type SiteSettings, siteSettings } from '../db/schema.ts'
 import { docIsEmpty } from './render-doc.ts'
+import { DEFAULT_TIME_ZONE, isTimeZone } from './send-window.ts'
 
 /**
  * Who the site is and who writes it: one row, edited on the Profile screen (and,
@@ -35,6 +36,29 @@ export async function saveSiteSettings(db: Db, patch: SiteSettingsPatch): Promis
     .values({ id: 1, socialLinks: [], ...patch, updatedAt: now })
     .returning()
     .get()
+}
+
+/**
+ * The operator's time zone: what every sequence's send window is read in.
+ * UTC until one is chosen, and UTC again if a stored name ever stops being one
+ * the runtime knows — a window read in the wrong zone is late, never lost.
+ */
+export async function getTimeZone(db: Db): Promise<string> {
+  const row = await db
+    .select({ timeZone: siteSettings.timeZone })
+    .from(siteSettings)
+    .where(eq(siteSettings.id, 1))
+    .get()
+  const zone = row?.timeZone
+  return zone && isTimeZone(zone) ? zone : DEFAULT_TIME_ZONE
+}
+
+/** Set the operator's time zone. Refuses a name `Intl` cannot read. */
+export async function setTimeZone(db: Db, zone: string): Promise<{ ok: boolean; reason?: string }> {
+  const z = zone.trim()
+  if (!isTimeZone(z)) return { ok: false, reason: `"${z}" is not a time zone this server knows, e.g. Pacific/Honolulu` }
+  await saveSiteSettings(db, { timeZone: z })
+  return { ok: true }
 }
 
 /** Whether there is anything to put on /about. */
