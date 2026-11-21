@@ -50,10 +50,10 @@ export function registerOps(server: McpServer, ctx: Ctx): void {
             .groupBy(messages.status)
             .all(),
           ctx.db
-            .select({ type: events.type, n: count() })
+            .select({ type: events.type, machine: events.machine, n: count() })
             .from(events)
             .where(gte(events.occurredAt, since))
-            .groupBy(events.type)
+            .groupBy(events.type, events.machine)
             .all(),
           ctx.db
             .select({ n: count() })
@@ -69,7 +69,9 @@ export function registerOps(server: McpServer, ctx: Ctx): void {
         ])
 
       const sent = sends.find((s) => s.status === 'sent')?.n ?? 0
-      const opens = engagement.find((e) => e.type === 'open')?.n ?? 0
+      // Reader opens only; machine opens (Apple MPP, scanners) are counted apart.
+      const opens = engagement.find((e) => e.type === 'open' && !e.machine)?.n ?? 0
+      const machineOpens = engagement.find((e) => e.type === 'open' && e.machine)?.n ?? 0
       const clicks = engagement.find((e) => e.type === 'click')?.n ?? 0
       const pct = (n: number) => (sent ? `${Math.round((n / sent) * 100)}%` : 'n/a')
 
@@ -78,7 +80,8 @@ export function registerOps(server: McpServer, ctx: Ctx): void {
         audience: Object.fromEntries(byStatus.map((r) => [r.status, r.n])),
         messages: Object.fromEntries(sends.map((r) => [r.status, r.n])),
         engagement: {
-          ...Object.fromEntries(engagement.map((r) => [r.type, r.n])),
+          ...Object.fromEntries(engagement.filter((r) => !r.machine).map((r) => [r.type, r.n])),
+          machineOpens,
           // Rates against `sent`, not against delivered — the mailer only knows
           // it handed the message over, and pretending otherwise inflates them.
           openRate: pct(opens),

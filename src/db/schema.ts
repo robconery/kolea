@@ -1090,6 +1090,23 @@ export const events = sqliteTable(
     meta: text('meta', { mode: 'json' }).notNull().$type<Record<string, unknown>>().default({}),
     // Idempotency for replayed provider webhooks (SPEC 5.3).
     dedupeKey: text('dedupe_key'),
+    /**
+     * ⭐ A machine fetched this, not a reader: Apple Mail Privacy Protection,
+     * an image prefetcher, a corporate link scanner (Kōlea SPEC 11.2). Decided
+     * once, at the pixel, by `core/machine-opens.ts`; the reason and the user
+     * agent ride in `meta`.
+     *
+     * A column, not a meta key, because every reader count in the app filters on
+     * it — `json_extract` in twenty WHERE clauses is twenty chances to forget one.
+     * The row is still written: "how much of my open rate is Apple?" is a fair
+     * question, and dropping the hit would make it unanswerable.
+     *
+     * Only ever true for `open`. A click is a person deciding to go somewhere and
+     * stays untouched; provider events (webhooks) carry no request to judge, and
+     * history imported before this column existed defaults to false — it is what
+     * the counts always said.
+     */
+    machine: integer('machine', { mode: 'boolean' }).notNull().default(false),
   },
   (t) => [
     index('events_message_type_idx').on(t.messageId, t.type),

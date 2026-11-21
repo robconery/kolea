@@ -1,0 +1,1 @@
+ALTER TABLE `events` ADD `machine` integer DEFAULT false NOT NULL;

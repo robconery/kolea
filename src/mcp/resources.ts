@@ -167,7 +167,8 @@ export function registerResources(server: McpServer, ctx: Ctx): void {
         .bind(since)
         .all()
       const engagement = await ctx.env.DB.prepare(
-        'select type, count(*) as n from events where occurred_at >= ?1 group by type',
+        // `n` counts readers; `machine` is prefetch opens (events.machine), apart.
+        'select type, count(*) - sum(machine) as n, sum(machine) as machine from events where occurred_at >= ?1 group by type',
       )
         .bind(since)
         .all()

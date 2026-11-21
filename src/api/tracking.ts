@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { recordEvent } from '../core/events.ts'
+import { recordEvent, recordOpen } from '../core/events.ts'
 import { getDb } from '../db/index.ts'
 import type { Env } from '../types.ts'
 
@@ -28,7 +28,12 @@ tracking.get('/t/open/:id{[0-9]+\\.gif}', async (c) => {
   // Recording must never be able to break the pixel (SPEC 5.4) — a message row
   // deleted after send would otherwise 500 this from inboxes forever.
   try {
-    if (messageId) await recordEvent(db, messageId, 'open')
+    if (messageId) {
+      await recordOpen(db, messageId, {
+        userAgent: c.req.header('user-agent'),
+        ip: c.req.header('cf-connecting-ip'),
+      })
+    }
   } catch {
     /* swallow — the pixel matters more than the datapoint */
   }

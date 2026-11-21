@@ -428,7 +428,15 @@ export interface BroadcastStats {
   suppressed: number
   failed: number
   delivered: number
+  /** Unique messages a READER opened. Machine prefetch opens are not in here. */
   opened: number
+  /**
+   * Unique messages a machine fetched the pixel for — Apple Mail Privacy
+   * Protection, scanners (Kōlea SPEC 11.2). Shown beside `opened`, never added
+   * to it, and it may overlap it: a mail Apple prefetched and the reader then
+   * opened is in both. Always 0 for imported totals, which never had it.
+   */
+  machineOpened: number
   clicked: number
   bounced: number
   complained: number
@@ -449,6 +457,7 @@ const EMPTY_STATS: Omit<BroadcastStats, 'source'> = {
   failed: 0,
   delivered: 0,
   opened: 0,
+  machineOpened: 0,
   clicked: 0,
   bounced: 0,
   complained: 0,
@@ -507,16 +516,24 @@ export async function broadcastStats(db: Db, broadcastId: number): Promise<Broad
     return { ...EMPTY_STATS, source: 'live' }
   }
 
+  // Machine opens are grouped apart rather than filtered out: they are left out
+  // of `opened` (Kōlea SPEC 11.2) and reported beside it, because "how much of
+  // my open rate was Apple?" is worth seeing.
   const byEvent = await db
-    .select({ type: events.type, n: sql<number>`count(distinct ${events.messageId})` })
+    .select({
+      type: events.type,
+      machine: events.machine,
+      n: sql<number>`count(distinct ${events.messageId})`,
+    })
     .from(events)
     .innerJoin(messages, eq(events.messageId, messages.id))
     .where(eq(messages.broadcastId, broadcastId))
-    .groupBy(events.type)
+    .groupBy(events.type, events.machine)
     .all()
 
   const s = (k: string) => byStatus.find((r) => r.status === k)?.n ?? 0
-  const e = (k: string) => Number(byEvent.find((r) => r.type === k)?.n ?? 0)
+  const e = (k: string) => Number(byEvent.find((r) => r.type === k && !r.machine)?.n ?? 0)
+  const machineOpened = Number(byEvent.find((r) => r.type === 'open' && r.machine)?.n ?? 0)
 
   return {
     recipients: byStatus.reduce((a, r) => a + r.n, 0),
@@ -525,6 +542,7 @@ export async function broadcastStats(db: Db, broadcastId: number): Promise<Broad
     failed: s('failed'),
     delivered: e('delivered'),
     opened: e('open'),
+    machineOpened,
     clicked: e('click'),
     bounced: e('bounce'),
     complained: e('complaint'),

@@ -709,6 +709,11 @@ mail.get('/broadcasts/:id', async (c) => {
             {reached > 0 ? (
               <div class="h">{((stats.opened / reached) * 100).toFixed(1)}% of reached</div>
             ) : null}
+            {stats.machineOpened > 0 ? (
+              <div class="h" title="Apple Mail Privacy Protection and other prefetchers fetch the pixel whether or not anyone reads the mail. Left out of Opened.">
+                + {stats.machineOpened} machine opens, not counted
+              </div>
+            ) : null}
           </div>
           <div class="stat">
             <div class="n">{stats.clicked}</div>
