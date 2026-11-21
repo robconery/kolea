@@ -9,6 +9,9 @@ import {
   deleteBroadcast,
   getBroadcast,
   listBroadcasts,
+  resumeBroadcast,
+  resumeOutlook,
+  reviseSentBroadcast,
   scheduleBroadcast,
   startBroadcast,
   updateBroadcast,
@@ -499,6 +502,80 @@ export function registerBroadcasts(server: McpServer, ctx: Ctx): void {
           ? `${result.alreadySent} message(s) had already gone out and cannot be recalled.`
           : 'Nothing had gone out yet.',
       })
+    },
+  )
+
+  defineTool(
+    server,
+    ctx,
+    'broadcast_resume',
+    {
+      description:
+        'Pick a CANCELLED broadcast back up where it stopped. Nobody is mailed twice: everyone who already has a sent message for it is skipped, mail the provider already accepted is never re-sent, and the walk continues after the last person reached (anyone who joined since is included). Everyone from here on gets the current subject and body, so a correction saved with broadcast_revise is what they read. Pass confirm: "resume" — the same confirmation the admin screen asks for. Check broadcast_get first: this sends real mail.',
+      inputSchema: z.object({
+        id: z.number().int(),
+        confirm: z.literal('resume').describe('Exactly "resume". Read broadcast_get first.'),
+      }),
+      annotations: { destructiveHint: true, idempotentHint: false },
+    },
+    async ({ id }) => {
+      if (!(await agentSendAllowed(ctx.env, ctx.db))) return fail(agentSendRefusal(ctx.env))
+
+      const b = await getBroadcast(ctx.db, id)
+      if (!b) return fail('No such broadcast.')
+      if (b.status !== 'cancelled') {
+        return fail(`Broadcast #${id} is ${b.status}; only a cancelled send can be resumed.`)
+      }
+      const outlook = (await resumeOutlook(ctx.db, id))!
+      // The confirmation screen offers no button at zero; neither does this.
+      if (outlook.remaining === 0) {
+        return fail('Everyone in the audience already has it — there is nobody to resume for.')
+      }
+
+      const r = await resumeBroadcast(ctx.env, ctx.db, id)
+      if (!r.ok) return failed(r)
+      return ok({
+        resumed: true,
+        alreadySent: outlook.alreadySent,
+        expectedRemaining: outlook.remaining,
+        requeued: r.requeued,
+        materializedThisCall: r.materialized,
+        note: 'Nobody who already has it gets it again. Large sends continue across cron ticks; poll broadcast_stats.',
+      })
+    },
+  )
+
+  defineTool(
+    server,
+    ctx,
+    'broadcast_revise',
+    {
+      description:
+        'Correct a broadcast that already went out (sent, or cancelled part-way): its subject and body, nothing else. NEVER sends anything to anyone — the corrected copy reaches people only through its web page, and through broadcast_resume if the send was cancelled. The as-mailed copy is kept the first time. Omit a field to keep it. For a draft, use broadcast_update.',
+      inputSchema: z.object({
+        id: z.number().int(),
+        subject: z.string().min(1).optional(),
+        body_markdown: z.string().min(1).optional(),
+      }),
+      annotations: { idempotentHint: true },
+    },
+    async ({ id, subject, body_markdown }) => {
+      const b = await getBroadcast(ctx.db, id)
+      if (!b) return fail('No such broadcast.')
+      if (subject === undefined && body_markdown === undefined) {
+        return fail('Nothing to change.', 'Pass subject, body_markdown, or both.')
+      }
+
+      const result = await reviseSentBroadcast(ctx.db, id, {
+        subject: subject ?? b.subject,
+        ...(body_markdown !== undefined
+          ? { bodyMd: body_markdown, bodyJson: mdToDoc(body_markdown) }
+          : { bodyMd: b.bodyMd, bodyJson: b.bodyJson }),
+      })
+      if (!result.ok) {
+        return failed(result, b.status === 'draft' ? 'A draft is edited with broadcast_update.' : undefined)
+      }
+      return ok({ revised: true, sent: 0, note: 'Saved. Nothing was sent.' })
     },
   )
 

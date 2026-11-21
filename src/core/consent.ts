@@ -313,6 +313,32 @@ async function emitUnsubscribed(db: Db, subscriberId: number, scope: 'broadcasts
   )
 }
 
+/**
+ * Off the newsletter on the person's say-so, recorded by the operator (an
+ * email reply, a support ticket, `subscriber_unsubscribe`).
+ *
+ * Broadcast scope only, exactly like the preference-center action: no
+ * suppression row, and enrollments carry on — the onboarding series they asked
+ * for still arrives (invariant 2). Only `active` and `pending` move. Someone
+ * already unsubscribed, bounced or complained is already off broadcasts, and
+ * overwriting `bounced` with `unsubscribed` would hide a dead address behind a
+ * consent choice, so those are left exactly as they are.
+ */
+export async function leaveBroadcasts(
+  db: Db,
+  subscriberId: number,
+): Promise<{ outcome: 'unsubscribed' | 'unchanged' | 'not_found'; status?: string }> {
+  const sub = await db
+    .select({ status: subscribers.status })
+    .from(subscribers)
+    .where(eq(subscribers.id, subscriberId))
+    .get()
+  if (!sub) return { outcome: 'not_found' }
+  if (sub.status !== 'active' && sub.status !== 'pending') return { outcome: 'unchanged', status: sub.status }
+  await unsubscribeBroadcasts(db, subscriberId)
+  return { outcome: 'unsubscribed', status: 'unsubscribed' }
+}
+
 export async function resubscribeBroadcasts(db: Db, subscriberId: number) {
   await db
     .update(subscribers)

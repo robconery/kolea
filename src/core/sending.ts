@@ -122,6 +122,27 @@ function previewSourceId(target: PreviewTarget): number {
 const PARAM_CHUNK = 100
 
 /**
+ * Whether the configured provider can send, without building it. The same
+ * branches as `providerFor` below, kept beside it so a new adapter cannot be
+ * added to one and forgotten in the other. `live` is false for the console
+ * provider: it is the kill switch, and mail lands in the Outbox.
+ */
+export function providerReadiness(env: Env): { name: string; live: boolean; problem: string | null } {
+  if (env.EMAIL_PROVIDER === 'resend') {
+    return env.RESEND_API_KEY
+      ? { name: 'resend', live: true, problem: null }
+      : { name: 'resend', live: false, problem: 'EMAIL_PROVIDER=resend but RESEND_API_KEY is unset — every send fails' }
+  }
+  if (env.EMAIL_PROVIDER === 'mailgun') {
+    return env.MAILGUN_API_KEY && env.MAILGUN_DOMAIN
+      ? { name: 'mailgun', live: true, problem: null }
+      : { name: 'mailgun', live: false, problem: 'EMAIL_PROVIDER=mailgun but MAILGUN_API_KEY or MAILGUN_DOMAIN is unset — every send fails' }
+  }
+  return { name: 'console', live: false, problem: null }
+}
+
+
+/**
  * The configured provider. Exported for `core/domains.ts`, which asks the same
  * provider which DNS records it wants — never for sending from outside here.
  */

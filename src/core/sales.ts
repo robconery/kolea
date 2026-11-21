@@ -1,6 +1,6 @@
-import { and, desc, eq, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, sql } from 'drizzle-orm'
 import type { Db } from '../db/index.ts'
-import { campaigns, sales, sequences, subscribers } from '../db/schema.ts'
+import { campaigns, saleItems, sales, sequences, subscribers } from '../db/schema.ts'
 import { logActivity } from './activity.ts'
 import { getCampaignBySlug, lastTouch, recordTouch } from './campaigns.ts'
 import { isValidEmail, normalizeEmail } from './ids.ts'
@@ -327,6 +327,30 @@ export async function listSales(db: Db, limit = 100) {
     .orderBy(desc(sales.occurredAt), desc(sales.id))
     .limit(limit)
     .all()
+}
+
+/** One sale with its buyer, its frozen campaign credit and its line items. */
+export async function getSale(db: Db, id: number) {
+  const row = await db
+    .select({
+      sale: sales,
+      email: subscribers.email,
+      subscriberName: subscribers.name,
+      campaignName: campaigns.name,
+    })
+    .from(sales)
+    .innerJoin(subscribers, eq(subscribers.id, sales.subscriberId))
+    .leftJoin(campaigns, eq(campaigns.id, sales.campaignId))
+    .where(eq(sales.id, id))
+    .get()
+  if (!row) return null
+  const items = await db
+    .select()
+    .from(saleItems)
+    .where(eq(saleItems.saleId, id))
+    .orderBy(asc(saleItems.id))
+    .all()
+  return { ...row, items }
 }
 
 export async function salesForSubscriber(db: Db, subscriberId: number) {

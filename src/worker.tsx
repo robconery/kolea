@@ -50,6 +50,7 @@ import { themesAdmin } from './web/admin-themes.tsx'
 import { undeliveredAdmin } from './web/admin-undelivered.tsx'
 import { webhooksAdmin } from './web/admin-webhooks.tsx'
 import { auditWrites } from './web/audit.ts'
+import { topicsAdmin } from './web/admin-topics.tsx'
 import { requireOperator } from './web/auth.ts'
 import { isSiteHost, site } from './web/site.tsx'
 import { prefs } from './web/prefs.tsx'
@@ -174,6 +175,7 @@ app.route('/', themesAdmin)
 // Sending domains: operator config, nothing public.
 app.route('/', domainsAdmin)
 app.route('/', mediaAdmin)
+app.route('/', topicsAdmin)
 // Ahead of `mail`, which owns `/sequences/:id` and would read "templates" as an id.
 app.route('/', sequenceTemplatesAdmin)
 app.route('/', mail)

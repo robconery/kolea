@@ -13,7 +13,7 @@ import {
   sendPurchaseMail,
   updateTemplate,
 } from '../../core/purchase-mail.ts'
-import { listSales, recordSale, revenueTotals } from '../../core/sales.ts'
+import { getSale, listSales, recordSale, revenueTotals } from '../../core/sales.ts'
 import { campaigns, sales, subscribers } from '../../db/schema.ts'
 import { type Ctx, clampLimit, defineTool, fail, money, ok } from '../kit.ts'
 
@@ -42,6 +42,47 @@ export function registerSales(server: McpServer, ctx: Ctx): void {
           occurredAt: sale.occurredAt,
         })),
       )
+    },
+  )
+
+  defineTool(
+    server,
+    ctx,
+    'sale_get',
+    {
+      description:
+        'One sale by id (from sale_list): buyer, amount, status, the campaign it was credited to (frozen when it was recorded), its line items, and its metadata.',
+      inputSchema: z.object({ id: z.number().int() }),
+      annotations: { readOnlyHint: true },
+    },
+    async ({ id }) => {
+      const found = await getSale(ctx.db, id)
+      if (!found) return fail(`No sale #${id}.`, 'Find it with sale_list.')
+      const { sale, email, subscriberName, campaignName, items } = found
+      return ok({
+        id: sale.id,
+        subscriberId: sale.subscriberId,
+        email,
+        name: subscriberName,
+        product: sale.product,
+        amount: money(sale.amountCents, sale.currency),
+        amountCents: sale.amountCents,
+        currency: sale.currency,
+        status: sale.status,
+        campaignId: sale.campaignId,
+        campaign: campaignName,
+        externalId: sale.externalId,
+        occurredAt: sale.occurredAt,
+        items: items.map((i) => ({
+          description: i.description,
+          quantity: i.quantity,
+          amount: money(i.amountCents, sale.currency),
+          amountCents: i.amountCents,
+          stripeProductId: i.stripeProductId,
+          stripePriceId: i.stripePriceId,
+        })),
+        meta: sale.meta,
+      })
     },
   )
 

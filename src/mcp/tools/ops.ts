@@ -1,5 +1,5 @@
 import type { McpServer } from '@modelcontextprotocol/server'
-import { and, count, desc, eq, gte, lt } from 'drizzle-orm'
+import { and, count, desc, eq, gte } from 'drizzle-orm'
 import * as z from 'zod/v4'
 import { AGENT_SENSITIVE_OFF, agentSendAllowed, agentSensitiveAllowed } from '../../core/agents.ts'
 import { KEY_SCOPES, listApiKeys, mintApiKey, revokeApiKey } from '../../core/api-keys.ts'
@@ -9,6 +9,7 @@ import {
   LOG_TYPES,
   searchLog,
 } from '../../core/event-log.ts'
+import { healthReport } from '../../core/health.ts'
 import { revenueTotals } from '../../core/sales.ts'
 import {
   broadcasts,
@@ -141,57 +142,28 @@ export function registerOps(server: McpServer, ctx: Ctx): void {
     'health',
     {
       description:
-        'Deployment state: which email provider is live, whether MCP sending is enabled, which bindings exist, and queue backlog. Check this when something is not sending.',
+        'Is mail moving? Cheap and read-only: whether D1 answers, which email provider is live and whether it is configured (console means the kill switch is on and mail lands in the Outbox), whether the queue is bound, mail queued / stuck over an hour / failed, the last time anything was handed to the provider, the nightly cron\'s last run, and whether MCP sending is enabled. `problems` lists anything wrong in plain words. Check this when something is not sending.',
       inputSchema: z.object({}),
       annotations: { readOnlyHint: true },
     },
     async () => {
-      const queued =
-        (
-          await ctx.db
-            .select({ n: count() })
-            .from(messages)
-            .where(eq(messages.status, 'queued'))
-            .get()
-        )?.n ?? 0
-
-      // Anything still queued an hour later is not waiting, it is stuck — the
-      // queue retries for minutes, not hours.
-      const stuck =
-        (
-          await ctx.db
-            .select({ n: count() })
-            .from(messages)
-            .where(
-              and(
-                eq(messages.status, 'queued'),
-                lt(messages.createdAt, new Date(Date.now() - 60 * 60 * 1000)),
-              ),
-            )
-            .get()
-        )?.n ?? 0
-
+      const h = await healthReport(ctx.env, ctx.db)
       return ok({
-        provider: ctx.env.EMAIL_PROVIDER,
+        ...h,
         from: `${ctx.env.FROM_NAME} <${ctx.env.FROM_EMAIL}>`,
         publicUrl: ctx.env.PUBLIC_URL,
         mcpSendingEnabled: await agentSendAllowed(ctx.env, ctx.db),
         mcpSensitiveEnabled: await agentSensitiveAllowed(ctx.db),
         bindings: {
-          queue: Boolean(ctx.env.SEND_QUEUE),
+          queue: h.queueBound,
           media: Boolean(ctx.env.MEDIA),
           downloads: Boolean(ctx.env.DOWNLOADS),
           stripe: Boolean(ctx.env.STRIPE_SECRET_KEY),
-          resend: Boolean(ctx.env.RESEND_API_KEY),
         },
-        queuedMessages: queued,
-        stuckOverAnHour: stuck,
         note:
-          queued > 0 && !ctx.env.SEND_QUEUE
+          h.queued > 0 && !h.queueBound
             ? 'No queue binding — sends run inline. Fine locally, slow in production.'
-            : stuck > 0
-              ? `${stuck} message(s) have been queued for over an hour — check the provider and the queue consumer.`
-              : undefined,
+            : undefined,
       })
     },
   )

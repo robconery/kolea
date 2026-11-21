@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 import type { Context } from 'hono'
-import { listAllPostTags, listPublicTags } from '../core/post-tags.ts'
+import { listAllPostTags } from '../core/post-tags.ts'
 import { ADAPT_GHOST_THEME_PROMPT } from '../core/theme/adapt-prompt.ts'
 import { loadSiteConfig, renderHome, renderPost } from '../core/theme/site.ts'
 import {
@@ -19,11 +19,12 @@ import {
   loadThemeById,
   readThemeAsset,
   saveThemeSettings,
+  switchTheme,
 } from '../core/theme/store.ts'
 import { listPosts } from '../core/posts.ts'
 import { tagsForPost } from '../core/post-tags.ts'
 import { getDb } from '../db/index.ts'
-import { postTags, themes } from '../db/schema.ts'
+import { themes } from '../db/schema.ts'
 import type { Env } from '../types.ts'
 import { Flash, Layout, fmtDate } from './layout.tsx'
 
@@ -53,7 +54,6 @@ themesAdmin.get('/themes', async (c) => {
   // Nothing active means the default built-in is what readers see.
   const live = (t: (typeof all)[number]) => (active ? t.id === active.id : t.name === DEFAULT_THEME)
   const topics = await listAllPostTags(db)
-  const counts = new Map((await listPublicTags(db, 500)).map((t) => [t.id, t.posts]))
   const siteUrl = (c.env.SITE_URL ?? '').replace(/\/$/, '')
 
   return c.html(
@@ -153,43 +153,10 @@ themesAdmin.get('/themes', async (c) => {
           <span class="pill">{topics.length}</span>
         </div>
         <div class="card-b">
-          <p class="faint" style="margin:0 0 14px">
-            Post tags. A post's first tag is its topic and the first part of its URL: tag a post “AI” and it lives
-            at <code>/ai/its-slug</code>, and <code>/ai</code> lists everything tagged AI. Tag posts on their
-            Publishing screen. The busiest topics are the site's navigation.
+          <p class="faint" style="margin:0">
+            Post tags: a post's first tag is its topic and the first part of its URL. Names, descriptions and front-page
+            shelves are on <a href="/topics">Topics</a>.
           </p>
-          {topics.length ? (
-            <table>
-              <thead>
-                <tr>
-                  <th>Topic</th>
-                  <th>Posts</th>
-                  <th>Description (shown on its archive page)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {topics.map((t) => (
-                  <tr>
-                    <td>
-                      {siteUrl ? <a href={`${siteUrl}/${t.slug}`}>{t.name}</a> : t.name}
-                      <div class="faint mono">/{t.slug}</div>
-                    </td>
-                    <td class="mono">{counts.get(t.id) ?? 0}</td>
-                    <td>
-                      <form method="post" action={`/themes/topics/${t.id}`} style="display:flex;gap:8px">
-                        <input type="text" name="description" value={t.description ?? ''} style="flex:1" />
-                        <button class="btn sm" style="flex:0 0 auto;min-width:0">
-                          Save
-                        </button>
-                      </form>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : (
-            <p class="faint">No topics yet.</p>
-          )}
         </div>
       </div>
 
@@ -245,10 +212,9 @@ themesAdmin.post('/themes/builtin/activate', async (c) => {
 themesAdmin.post('/themes/:id/activate', async (c) => {
   const db = getDb(c.env)
   const id = Number(c.req.param('id'))
-  const row = await db.select().from(themes).where(eq(themes.id, id)).get()
-  if (!row) return back(c, 'No such theme.', 'warn')
-  await activateTheme(db, id)
-  return back(c, `${row.name} is live.`)
+  const r = await switchTheme(db, id)
+  if (!r.ok) return back(c, 'No such theme.', 'warn')
+  return back(c, `${r.name} is live.`)
 })
 
 themesAdmin.post('/themes/:id/delete', async (c) => {
@@ -259,17 +225,6 @@ themesAdmin.post('/themes/:id/delete', async (c) => {
   if (isBuiltinRow(row)) return back(c, `${row.name} ships with Kōlea and can't be deleted.`, 'warn')
   await deleteTheme(db, c.env.MEDIA, id)
   return back(c, row.isActive ? `Deleted ${row.name}. The built-in theme is live again.` : `Deleted ${row.name}.`)
-})
-
-themesAdmin.post('/themes/topics/:id', async (c) => {
-  const db = getDb(c.env)
-  const form = await c.req.formData()
-  const description = String(form.get('description') ?? '').trim() || null
-  await db
-    .update(postTags)
-    .set({ description })
-    .where(eq(postTags.id, Number(c.req.param('id'))))
-  return back(c, 'Topic saved.')
 })
 
 // ─────────────────────────────────────────────────────────── settings

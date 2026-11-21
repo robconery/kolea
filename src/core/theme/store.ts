@@ -524,6 +524,48 @@ export async function activateTheme(db: Db, id: number | null): Promise<void> {
   if (id !== null) await db.update(themes).set({ isActive: true }).where(eq(themes.id, id))
 }
 
+export interface ThemeSummary {
+  id: number
+  name: string
+  version: string
+  builtin: boolean
+  /** What readers see right now. With no row active, that is `DEFAULT_THEME`. */
+  live: boolean
+}
+
+/**
+ * Every theme, built-ins first, and which one readers see. The Themes screen
+ * and `theme_list` share this, so "live" is decided in one place: the active
+ * row, or the default built-in when nothing is active.
+ */
+export async function themeSummaries(db: Db): Promise<ThemeSummary[]> {
+  await ensureBuiltinRows(db)
+  const all = (await listThemes(db)).sort((a, b) => Number(isBuiltinRow(b)) - Number(isBuiltinRow(a)))
+  const active = all.find((t) => t.isActive) ?? null
+  return all.map((t) => ({
+    id: t.id,
+    name: t.name,
+    version: t.version,
+    builtin: isBuiltinRow(t),
+    live: active ? t.id === active.id : t.name === DEFAULT_THEME,
+  }))
+}
+
+/**
+ * Switch the site to one theme. Refuses an id that names nothing, because
+ * `activateTheme` would otherwise switch every theme off and quietly drop the
+ * site to the default.
+ */
+export async function switchTheme(
+  db: Db,
+  id: number,
+): Promise<{ ok: true; name: string } | { ok: false; reason: string }> {
+  const row = await db.select().from(themes).where(eq(themes.id, id)).get()
+  if (!row) return { ok: false, reason: 'no such theme' }
+  await activateTheme(db, id)
+  return { ok: true, name: row.name }
+}
+
 export async function deleteTheme(db: Db, bucket: R2Bucket | undefined, id: number): Promise<void> {
   const row = await db.select().from(themes).where(eq(themes.id, id)).get()
   // Built-ins ship with the Worker; deleting their row would only lose settings.

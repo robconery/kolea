@@ -10,7 +10,7 @@ import {
   growthByDay,
 } from '../../core/activity.ts'
 import { campaignsForSubscriber, touchesFor } from '../../core/campaigns.ts'
-import { preferencesFor } from '../../core/consent.ts'
+import { leaveBroadcasts, preferencesFor } from '../../core/consent.ts'
 import { castFieldValues, fieldTypes, fieldsOf, setFieldValues } from '../../core/fields.ts'
 import { normalizeEmail } from '../../core/ids.ts'
 import { salesForSubscriber } from '../../core/sales.ts'
@@ -357,6 +357,36 @@ export function registerAudience(server: McpServer, ctx: Ctx): void {
     async ({ subscriber_id, tag_id }) => {
       await removeTag(ctx.db, subscriber_id, tag_id)
       return ok({ removed: true })
+    },
+  )
+
+  defineTool(
+    server,
+    ctx,
+    'subscriber_unsubscribe',
+    {
+      description:
+        'Take a person off the NEWSLETTER (broadcasts) because they asked — by reply, by ticket, in person. Broadcast scope only: their sequences carry on, receipts still arrive, and no suppression is written. Someone already unsubscribed, bounced or complained is left as they are. This is the person\'s choice recorded on their behalf, and only they can undo it from their preference center. To leave one sequence use sequence_remove_person; to stop ALL marketing use suppression_add.',
+      inputSchema: z.object({
+        id: z.number().int().optional(),
+        email: z.string().optional(),
+      }),
+      annotations: { idempotentHint: true },
+    },
+    async (args) => {
+      const sub = await findByEmailOrId(ctx, args)
+      if (!sub) return fail('No such subscriber.', 'Try subscriber_search to find the right id.')
+      const r = await leaveBroadcasts(ctx.db, sub.id)
+      return ok({
+        id: sub.id,
+        email: sub.email,
+        outcome: r.outcome,
+        status: r.status,
+        note:
+          r.outcome === 'unsubscribed'
+            ? 'Off the newsletter. Sequences and transactional mail continue.'
+            : `Already off broadcasts (${r.status}); nothing changed.`,
+      })
     },
   )
 
