@@ -1,6 +1,7 @@
-import { and, count, desc, eq, inArray, isNotNull, isNull, max, min, ne, or, sql } from 'drizzle-orm'
+import { and, count, desc, eq, inArray, isNotNull, isNull, like, max, min, ne, notLike, or, sql } from 'drizzle-orm'
 import type { Db } from '../db/index.ts'
 import { broadcasts, messages, sequenceSteps, sequences } from '../db/schema.ts'
+import { OUTCOME_UNKNOWN } from '../providers/types.ts'
 import type { Env } from '../types.ts'
 import { dispatch } from './sending.ts'
 
@@ -20,6 +21,16 @@ import { dispatch } from './sending.ts'
  *  - Anything the provider accepted (`provider_message_id` set). It may have
  *    been delivered; sending it again risks a duplicate, and a duplicate is the
  *    other way to break the rule.
+ *  - Anything whose outcome is unknown (`error` starts `outcome unknown`): the
+ *    line dropped after the request may have reached the provider, or it
+ *    answered 2xx with no id. That mail may be in the reader's inbox.
+ *
+ * Those last two are not hidden either. They are listed apart, under "check
+ * before sending" (`checkFirst`): the provider took it and then refused it
+ * (a `rejected` or a permanent non-bounce failure), or nobody can tell whether
+ * it went. Neither is ever claimed by a bulk send-again; each can be sent once,
+ * one message at a time, after the operator has looked (`sendAgain` with
+ * `checked: true`).
  *  - Mail the `console` provider rendered. It is `sent` with `provider =
  *    'console'`, so it can always be told apart, but it is not offered for
  *    release: in Big Mailer the console provider is both the dev default and
@@ -66,6 +77,13 @@ export interface UndeliveredReport {
   /** The newest individual rows, for a per-message send-again. */
   recent: UndeliveredMessage[]
   total: number
+  /**
+   * Failed mail that may have gone, or that the provider took and then
+   * refused. Never in `groups`/`recent`/`total`, never sent in bulk: listed so
+   * it is visible, each with a one-message send-again behind a confirm.
+   */
+  checkFirst: UndeliveredMessage[]
+  checkFirstTotal: number
   /** Mail the console provider rendered to the Outbox instead of the wire. */
   renderedToOutbox: number
 }
@@ -77,18 +95,36 @@ const CANCELLED = 'broadcast cancelled'
 const isPreview = sql`coalesce(${messages.idempotencyKey}, '') like 'preview:%'`
 const notPreview = sql`coalesce(${messages.idempotencyKey}, '') not like 'preview:%'`
 
+const UNKNOWN_LIKE = `${OUTCOME_UNKNOWN}%`
+
+/** A broadcast cancelled since is a stop, not a failure. Previews carry no
+    `broadcast_id`, so they are never caught by this. */
+const notCancelledBroadcast = () =>
+  or(
+    isNull(messages.broadcastId),
+    sql`${messages.broadcastId} not in (select ${broadcasts.id} from ${broadcasts} where ${broadcasts.status} = 'cancelled')`,
+  )
+
 /** The one definition of "failed, and fair to send again". Every query below uses it. */
 function resendable() {
   return and(
     eq(messages.status, 'failed'),
     isNull(messages.providerMessageId),
+    or(isNull(messages.error), and(ne(messages.error, CANCELLED), notLike(messages.error, UNKNOWN_LIKE))),
+    notCancelledBroadcast(),
+  )
+}
+
+/**
+ * ⭐ The one definition of "failed, but it may have gone or the provider
+ * refused it after taking it". Never bulk-resent; see the header.
+ */
+function checkFirst() {
+  return and(
+    eq(messages.status, 'failed'),
+    or(isNotNull(messages.providerMessageId), like(messages.error, UNKNOWN_LIKE)),
     or(isNull(messages.error), ne(messages.error, CANCELLED)),
-    // A broadcast cancelled since is a stop, not a failure. Previews carry no
-    // `broadcast_id`, so they are never caught by this.
-    or(
-      isNull(messages.broadcastId),
-      sql`${messages.broadcastId} not in (select ${broadcasts.id} from ${broadcasts} where ${broadcasts.status} = 'cancelled')`,
-    ),
+    notCancelledBroadcast(),
   )
 }
 
@@ -162,6 +198,21 @@ export async function undeliveredMail(db: Db, recentLimit = 100): Promise<Undeli
     .all()
 
   const total = (await db.select({ n: count() }).from(messages).where(where).get())?.n ?? 0
+  const checkFirstRows = await db
+    .select({
+      id: messages.id,
+      kind: messages.kind,
+      toEmail: messages.toEmail,
+      subject: messages.subject,
+      error: messages.error,
+      createdAt: messages.createdAt,
+    })
+    .from(messages)
+    .where(checkFirst())
+    .orderBy(desc(messages.createdAt))
+    .limit(recentLimit)
+    .all()
+  const checkFirstTotal = (await db.select({ n: count() }).from(messages).where(checkFirst()).get())?.n ?? 0
   const renderedToOutbox =
     (
       await db
@@ -201,11 +252,30 @@ export async function undeliveredMail(db: Db, recentLimit = 100): Promise<Undeli
     })),
   ].sort((a, b) => (b.lastAt?.getTime() ?? 0) - (a.lastAt?.getTime() ?? 0))
 
-  return { groups, recent, total, renderedToOutbox }
+  return { groups, recent, total, checkFirst: checkFirstRows, checkFirstTotal, renderedToOutbox }
 }
 
-/** The ids "send again" would claim for a target, right now. */
-export async function resendableIds(db: Db, target: ResendTarget): Promise<number[]> {
+/**
+ * The ids "send again" would claim for a target, right now.
+ *
+ * `checked` reaches the check-before-sending rows instead, and only for a
+ * single message: the operator has looked at the provider and says this one
+ * did not go. There is no bulk form of that on purpose.
+ */
+export async function resendableIds(
+  db: Db,
+  target: ResendTarget,
+  opts: { checked?: boolean } = {},
+): Promise<number[]> {
+  if (opts.checked) {
+    if (target.kind !== 'message') return []
+    const rows = await db
+      .select({ id: messages.id })
+      .from(messages)
+      .where(and(checkFirst(), eq(messages.id, target.id)))
+      .all()
+    return rows.map((r) => r.id)
+  }
   const scope =
     target.kind === 'broadcast'
       ? eq(messages.broadcastId, target.id)
@@ -235,7 +305,11 @@ export async function sendAgain(
   env: Env,
   db: Db,
   target: ResendTarget,
+  opts: { checked?: boolean } = {},
 ): Promise<{ ok: boolean; requeued: number; reason?: string }> {
+  if (opts.checked && target.kind !== 'message') {
+    return { ok: false, requeued: 0, reason: 'mail that may already have gone is sent again one message at a time' }
+  }
   if (target.kind === 'broadcast') {
     const b = await db.select({ status: broadcasts.status }).from(broadcasts).where(eq(broadcasts.id, target.id)).get()
     if (!b) return { ok: false, requeued: 0, reason: 'no such broadcast' }
@@ -244,7 +318,7 @@ export async function sendAgain(
     }
   }
 
-  const ids = await resendableIds(db, target)
+  const ids = await resendableIds(db, target, opts)
   const claimed: number[] = []
   for (let i = 0; i < ids.length; i += CHUNK) {
     // The claim: only rows still `failed` move, so a second click, or a second

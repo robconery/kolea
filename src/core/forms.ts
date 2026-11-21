@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, isNull, like, notInArray, sql } from 'drizzle-orm'
+import { and, asc, count, desc, eq, inArray, isNotNull, isNull, like, notInArray, or, sql } from 'drizzle-orm'
 import type { Db } from '../db/index.ts'
 import {
   type DocNode,
@@ -11,6 +11,7 @@ import {
   subscribers,
   tags,
 } from '../db/schema.ts'
+import { OUTCOME_UNKNOWN } from '../providers/types.ts'
 import type { Env } from '../types.ts'
 import { logActivity } from './activity.ts'
 import { recordTouch } from './campaigns.ts'
@@ -939,12 +940,18 @@ const REPLY_KEY = (formId: number) => `form:${formId}:%`
  *  - anyone with a reply from this form that is `sent` or still `queued`, on
  *    any day (a failure on Monday and a re-submit that worked on Tuesday);
  *  - a row the provider accepted (`provider_message_id`), whatever its status;
+ *  - anyone with a failure whose outcome is unknown (`outcome unknown`): it may
+ *    have reached them, so a resend could be their second copy;
  *  - anyone no longer `active`: unsubscribed, bounced or complained since.
  *    The first try follows the transactional rule — someone who left still
  *    gets the file they asked for at that moment — but a resend is the
  *    operator's act days later, and Kōlea's rule there is "still on the list".
  */
 export async function failedReplies(db: Db, formId: number): Promise<FailedReply[]> {
+  // "Went, or may have": a failure whose outcome is unknown may be in their
+  // inbox, so it counts as a copy they could already have. So does one the
+  // provider accepted and later refused. Neither is resent from here; both are
+  // on the Undelivered screen under "check before sending".
   const went = db
     .select({ id: messages.subscriberId })
     .from(messages)
@@ -953,7 +960,11 @@ export async function failedReplies(db: Db, formId: number): Promise<FailedReply
         eq(messages.kind, 'form'),
         eq(messages.formId, formId),
         like(messages.idempotencyKey, REPLY_KEY(formId)),
-        inArray(messages.status, ['sent', 'queued']),
+        or(
+          inArray(messages.status, ['sent', 'queued']),
+          isNotNull(messages.providerMessageId),
+          like(messages.error, `${OUTCOME_UNKNOWN}%`),
+        ),
       ),
     )
 

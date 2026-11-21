@@ -15,9 +15,27 @@ export interface OutgoingEmail {
   listUnsubscribeUrl?: string
 }
 
+/**
+ * The words every "we cannot tell whether it went" failure starts with, so the
+ * stored `messages.error` says it on its own and every resend path can leave it
+ * out by prefix. A dropped connection after the request may have reached the
+ * provider, or a 2xx came back with no id: sending it again could be the
+ * reader's second copy.
+ */
+export const OUTCOME_UNKNOWN = 'outcome unknown'
+
 export type SendResult =
   | { ok: true; providerMessageId: string }
-  | { ok: false; error: string; retryable: boolean }
+  | {
+      ok: false
+      error: string
+      retryable: boolean
+      /**
+       * The provider may have the mail. Never retried, and never offered for a
+       * bulk resend: the operator checks the provider first (see OUTCOME_UNKNOWN).
+       */
+      outcomeUnknown?: boolean
+    }
 
 export interface ProviderEvent {
   providerMessageId: string
@@ -29,6 +47,13 @@ export interface ProviderEvent {
   occurredAt: Date
   /** Hard bounces suppress the address; soft bounces do not. */
   hardBounce?: boolean
+  /**
+   * The provider took the mail and has now given up on it for good without
+   * saying the mailbox is dead (an ESP block, its own suppression list, expired
+   * in its queue). Changes no consent, but the mail did not arrive, so the
+   * message must stop reading `sent`. `failed` events are always this.
+   */
+  permanent?: boolean
   meta?: Record<string, unknown>
   dedupeKey?: string
 }

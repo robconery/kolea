@@ -4,7 +4,7 @@ import { type MergeExtras, broadcasts, messages, sequenceSteps, sequences, subsc
 import { ConsoleProvider } from '../providers/console.ts'
 import { MailgunProvider } from '../providers/mailgun.ts'
 import { ResendProvider } from '../providers/resend.ts'
-import type { EmailProvider, OutgoingEmail } from '../providers/types.ts'
+import { type EmailProvider, OUTCOME_UNKNOWN, type OutgoingEmail } from '../providers/types.ts'
 import type { Env, SendJob } from '../types.ts'
 import {
   type ConsentSnapshot,
@@ -517,15 +517,18 @@ export async function sendMessages(
       continue
     }
 
+    // ⭐ "It may have gone" is stored so that it says so on its own: every
+    // resend path leaves an OUTCOME_UNKNOWN row out by its prefix, and it is
+    // never put back on the queue here, whatever the adapter said.
+    const unknown = result.outcomeUnknown === true
+    const error =
+      unknown && !result.error.startsWith(OUTCOME_UNKNOWN) ? `${OUTCOME_UNKNOWN}: ${result.error}` : result.error
+    const retryable = result.retryable && !unknown
     await db
       .update(messages)
-      .set({ status: result.retryable ? 'queued' : 'failed', error: result.error })
+      .set({ status: retryable ? 'queued' : 'failed', error })
       .where(eq(messages.id, message.id))
-    outcomes.set(message.id, {
-      status: 'failed',
-      error: result.error,
-      retryable: result.retryable,
-    })
+    outcomes.set(message.id, { status: 'failed', error, retryable })
   }
 
   return outcomes

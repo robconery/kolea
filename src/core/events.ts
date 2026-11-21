@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import type { Db } from '../db/index.ts'
 import { events, messages, subscribers } from '../db/schema.ts'
 import type { ProviderEvent } from '../providers/types.ts'
@@ -116,6 +116,10 @@ export async function applyProviderEvent(db: Db, ev: ProviderEvent): Promise<voi
 
   await recordEvent(db, msg.id, ev.type, ev.meta ?? {}, ev.dedupeKey)
 
+  if (ev.type === 'failed' || (ev.type === 'bounce' && !ev.hardBounce && ev.permanent)) {
+    await markRefused(db, msg.id, ev)
+  }
+
   if (ev.type === 'bounce' && ev.hardBounce) {
     await suppressAddress(db, msg.toEmail, 'hard_bounce')
     await db
@@ -133,6 +137,27 @@ export async function applyProviderEvent(db: Db, ev: ProviderEvent): Promise<voi
       .where(eq(subscribers.id, msg.subscriberId))
     await logLeaving(db, msg.subscriberId, 'complained', msg.id, msg.toEmail)
   }
+}
+
+/**
+ * ⭐ The provider took the mail, then refused it for good (a `rejected`, or a
+ * permanent failure that is not a dead mailbox). Left `sent`, it would be mail
+ * silently dropped: nothing would ever show it did not arrive.
+ *
+ * It becomes `failed` with the provider's reason, which puts it on the
+ * Undelivered screen under "check before sending" (it has a provider id, so no
+ * bulk resend ever claims it: the provider refused it, and sending it again
+ * blind is only worth doing once whatever refused it is fixed). No consent
+ * changes. Guarded on `sent`, so a replay, or a late event about mail already
+ * sent again, changes nothing.
+ */
+async function markRefused(db: Db, messageId: number, ev: ProviderEvent): Promise<void> {
+  const meta = ev.meta ?? {}
+  const why = [meta.reason, meta.message].filter((v) => typeof v === 'string' && v).join(': ')
+  await db
+    .update(messages)
+    .set({ status: 'failed', error: `refused by the provider after accepting it${why ? ` (${why})` : ''}`.slice(0, 500) })
+    .where(and(eq(messages.id, messageId), eq(messages.status, 'sent')))
 }
 
 /**
