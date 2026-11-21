@@ -1014,6 +1014,8 @@ const NAV: ({ grp: string } | { href: string; key: string; label: string })[] = 
   { grp: 'System' },
   { href: '/site', key: 'site', label: 'Profile' },
   { href: '/themes', key: 'theme', label: 'Themes' },
+  // Every uploaded image, whichever screen it came in by.
+  { href: '/media', key: 'media', label: 'Media' },
   { href: '/consent', key: 'cons', label: 'Consent' },
   { href: '/settings', key: 'set', label: 'Settings' },
   { href: '/help', key: 'help', label: 'Help' },

@@ -26,6 +26,7 @@ import { purchaseMailAdmin } from './web/admin-purchase-mail.tsx'
 import { goalsAdmin } from './web/admin-goals.tsx'
 import { help } from './web/admin-help.tsx'
 import { mail } from './web/admin-mail.tsx'
+import { mediaAdmin } from './web/admin-media.tsx'
 import { sequenceTemplatesAdmin } from './web/admin-sequence-templates.tsx'
 import { aiAdmin } from './web/admin-ai.ts'
 import { store } from './web/admin-store.tsx'
@@ -121,6 +122,7 @@ app.route('/', store)
 // the site itself is a separate app, reached by hostname.
 app.route('/', siteAdmin)
 app.route('/', themesAdmin)
+app.route('/', mediaAdmin)
 // Ahead of `mail`, which owns `/sequences/:id` and would read "templates" as an id.
 app.route('/', sequenceTemplatesAdmin)
 app.route('/', mail)

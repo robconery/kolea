@@ -1,8 +1,6 @@
-import { desc } from 'drizzle-orm'
 import { Hono } from 'hono'
-import { deleteMedia, storeMedia } from '../core/media.ts'
+import { deleteMedia, listMedia, storeMedia } from '../core/media.ts'
 import { getDb } from '../db/index.ts'
-import { media } from '../db/schema.ts'
 import type { Env } from '../types.ts'
 import { requireOperator } from '../web/auth.ts'
 
@@ -42,20 +40,38 @@ mediaRoutes.post('/api/media/upload', async (c) => {
   return c.json({ url: result.url, key: result.key })
 })
 
+/**
+ * The library as JSON, newest first, paged: what the composer's image picker
+ * reads. `?page=` and `?per_page=` (at most 200).
+ */
 mediaRoutes.get('/api/media', async (c) => {
-  const db = getDb(c.env)
-  const rows = await db.select().from(media).orderBy(desc(media.id)).limit(60).all()
+  const page = await listMedia(c.env, getDb(c.env), {
+    page: Number(c.req.query('page') ?? 1),
+    perPage: Number(c.req.query('per_page') ?? 48),
+  })
   return c.json({
-    items: rows.map((m) => ({
-      url: `${c.env.PUBLIC_URL}/media/${m.key}`,
+    items: page.items.map((m) => ({
+      url: m.url,
       key: m.key,
       filename: m.filename,
       bytes: m.bytes,
+      width: m.width,
+      height: m.height,
+      created_at: m.createdAt.getTime(),
     })),
+    page: page.page,
+    per_page: page.perPage,
+    total: page.total,
+    pages: page.pages,
   })
 })
 
+/** Refused with 409 and the places it is used while anything shows it; `?force=1` deletes anyway. */
 mediaRoutes.delete('/api/media/:key{.+}', async (c) => {
-  await deleteMedia(c.env, getDb(c.env), c.req.param('key'))
-  return c.json({ ok: true })
+  const result = await deleteMedia(c.env, getDb(c.env), c.req.param('key'), {
+    force: c.req.query('force') === '1',
+  })
+  if (result.ok) return c.json({ ok: true })
+  if (result.reason === 'not_found') return c.json({ error: 'No such image.' }, 404)
+  return c.json({ error: 'That image is still in use.', usage: result.usage }, 409)
 })

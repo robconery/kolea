@@ -85,6 +85,16 @@ export const SLASH_ITEMS: SlashItem[] = [
     },
   },
   {
+    title: 'Image from library',
+    subtitle: 'Reuse an image you uploaded before',
+    icon: '🗂',
+    keywords: 'image picture photo library media reuse',
+    run: (e, r) => {
+      e.chain().focus().deleteRange(r).run()
+      void pickFromLibrary(e)
+    },
+  },
+  {
     title: 'Code block',
     subtitle: 'Syntax-highlighted code',
     icon: '{ }',
@@ -217,4 +227,62 @@ export function pickAndUploadImage(editor: Editor): void {
     if (file) void uploadImage(editor, file)
   })
   input.click()
+}
+
+interface LibraryItem {
+  url: string
+  filename: string
+}
+
+/**
+ * The media library as a picker: reads `GET /api/media` (newest first) into a
+ * plain `<dialog>` of thumbnails, and inserts the one clicked. Nothing is
+ * inserted until a pick, same rule as an upload.
+ */
+export async function pickFromLibrary(editor: Editor): Promise<void> {
+  let items: LibraryItem[]
+  try {
+    const res = await fetch('/api/media?per_page=60')
+    if (!res.ok) throw new Error(res.statusText)
+    items = ((await res.json()) as { items: LibraryItem[] }).items
+  } catch (err) {
+    window.alert(`Could not load the media library: ${String(err)}`)
+    return
+  }
+  if (items.length === 0) {
+    window.alert('The media library is empty. Upload an image first.')
+    return
+  }
+
+  const dialog = document.createElement('dialog')
+  dialog.className = 'bm-library'
+  dialog.style.cssText = 'max-width:720px;width:90vw;border:0;border-radius:12px;padding:16px'
+  const grid = document.createElement('div')
+  grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px'
+  for (const item of items) {
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.title = item.filename
+    btn.style.cssText = 'padding:0;border:0;background:none;cursor:pointer'
+    const img = document.createElement('img')
+    img.src = item.url
+    img.alt = item.filename
+    img.loading = 'lazy'
+    img.style.cssText = 'width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:6px;display:block'
+    btn.append(img)
+    btn.addEventListener('click', () => {
+      dialog.close()
+      editor.chain().focus().setImage({ src: item.url, alt: item.filename }).run()
+    })
+    grid.append(btn)
+  }
+  const close = document.createElement('button')
+  close.type = 'button'
+  close.textContent = 'Cancel'
+  close.style.cssText = 'margin-top:12px'
+  close.addEventListener('click', () => dialog.close())
+  dialog.append(grid, close)
+  dialog.addEventListener('close', () => dialog.remove())
+  document.body.append(dialog)
+  dialog.showModal()
 }
