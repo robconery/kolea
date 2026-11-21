@@ -371,6 +371,11 @@ describe('Feature: confirming a signup', () => {
           .set({ createdAt: new Date(r.createdAt.getTime() - ms) })
           .where(eq(messages.id, r.id))
       }
+      // The confirmation's idempotency key carries the millisecond it was
+      // made. A warm run can post again inside the same millisecond as the
+      // first (now backdated) one and collide on that key, which is only an
+      // artifact of moving the clock by hand. Let a real millisecond pass.
+      await Bun.sleep(2)
     }
 
     beforeAll(async () => {
