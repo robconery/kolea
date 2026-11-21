@@ -306,12 +306,12 @@ const BRANCHES: Branch[] = [
     src: 'au',
     select: (floor) => sql`
       select 'au' as src, u.id as sid, u.at as at, 'audit.' || u.outcome as type,
-        case u.actor_kind when 'key' then coalesce(k.name, 'key ' || u.actor_id) else u.actor_id end as name,
+        case u.actor_kind when 'key' then coalesce(k.name, 'key ' || u.actor_id) when 'operator' then case when u.actor_id = 'dev-bypass' then u.actor_id else coalesce(u.actor_id || ' (' || u.actor_role || ')', u.actor_id) end else u.actor_id end as name,
         null as email, u.action as ref, u.status as n1, null as n2,
         coalesce(u.detail, case when u.summary = '{}' then null else u.summary end) as detail,
         u.actor_kind as x, u.target as target,
         lower(coalesce(u.actor_id,'') || ' ' || coalesce(k.name,'') || ' ' || u.action || ' '
-          || coalesce(u.target,'') || ' ' || coalesce(u.detail,'') || ' ' || u.summary || ' ' || u.actor_kind) as hay
+          || coalesce(u.target,'') || ' ' || coalesce(u.detail,'') || ' ' || u.summary || ' ' || u.actor_kind || ' ' || coalesce(u.actor_role,'')) as hay
       from audit_entries u
       left join api_keys k on k.id = u.api_key_id
       where u.at >= ${floor}`,

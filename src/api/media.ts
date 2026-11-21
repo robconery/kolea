@@ -3,6 +3,7 @@ import { deleteMedia, listMedia, storeMedia } from '../core/media.ts'
 import { getDb } from '../db/index.ts'
 import type { Env } from '../types.ts'
 import { requireOperator } from '../web/auth.ts'
+import { requireRole } from '../web/roles.ts'
 
 export const mediaRoutes = new Hono<{ Bindings: Env }>()
 
@@ -25,7 +26,7 @@ mediaRoutes.get('/media/:key{.+}', async (c) => {
 })
 
 // Uploading is operator-only even though serving is public.
-mediaRoutes.use('/api/media/*', requireOperator)
+mediaRoutes.use('/api/media/*', requireOperator, requireRole)
 
 mediaRoutes.post('/api/media/upload', async (c) => {
   const db = getDb(c.env)

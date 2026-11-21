@@ -71,10 +71,12 @@ export function auditWrites(kind: 'operator' | 'key'): MiddlewareHandler<{ Bindi
     }
 
     let actorId: string | null
+    let actorRole: 'owner' | 'admin' | 'writer' | null = null
     let apiKeyId: number | null = null
     if (kind === 'operator') {
       const email = c.get('operatorEmail' as never) as unknown as string | null | undefined
       actorId = email ?? (c.env.DEV_AUTH_BYPASS === 'true' ? 'dev-bypass' : null)
+      actorRole = (c.get('operatorRole' as never) as unknown as typeof actorRole | undefined) ?? null
     } else {
       apiKeyId = await keyIdFor(db, c.req.header('Authorization'))
       actorId = apiKeyId === null ? null : String(apiKeyId)
@@ -84,6 +86,7 @@ export function auditWrites(kind: 'operator' | 'key'): MiddlewareHandler<{ Bindi
     await recordAudit(db, {
       actorKind: kind,
       actorId,
+      actorRole,
       apiKeyId,
       action,
       target,

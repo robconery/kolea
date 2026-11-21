@@ -1700,12 +1700,65 @@ export const auditEntries = sqliteTable(
     /** The HTTP status the caller got. 0 when the handler threw. */
     status: integer('status').notNull().default(0),
     summary: text('summary', { mode: 'json' }).notNull().$type<Record<string, string>>().default({}),
+    /**
+     * The operator's team role at the moment of the request (`team_members`),
+     * copied rather than joined: a role changes, and "an admin did this" has to
+     * stay true of the row after they are made a writer. `owner` under
+     * DEV_AUTH_BYPASS. Null for key actors, and for rows written before roles.
+     */
+    actorRole: text('actor_role', { enum: ['owner', 'admin', 'writer'] }),
   },
   (t) => [
     index('audit_entries_at_idx').on(t.at),
     index('audit_entries_outcome_idx').on(t.outcome, t.at),
   ],
 )
+
+/**
+ * ⭐ The people who may use the console, and in which role (gap.md "More than
+ * one person"; Kōlea SPEC 4.3, 4.4 without accounts: one install is one team).
+ *
+ * Identity is NOT here. Cloudflare Access signs people in (one-time codes,
+ * GitHub, Google, passkeys: whatever identity providers the Access app has) and
+ * `web/auth.ts` verifies its JWT. This table only says what a verified address
+ * may do once it is in. No passwords, codes or sessions live in this database.
+ *
+ * One row per address, ever (unique `email`, stored lowercased). The row's
+ * state is read from the stamps, not a status column, so it can't disagree with
+ * them:
+ *   invited  — `joined_at` null, `removed_at` null, `invited_at` within 7 days
+ *   expired  — the same, older than 7 days (Kōlea's invitation lifetime)
+ *   member   — `joined_at` set, `removed_at` null
+ *   removed  — `removed_at` set. Kept, not deleted, so the audit trail's emails
+ *              still name somebody; inviting the address again revives the row.
+ *
+ * The first verified person to reach a console whose table is EMPTY becomes the
+ * owner (the upgrade path from single-operator installs: the operator Access
+ * already lets in is seeded on their next request). Once any row exists that
+ * door is shut for good, and the last owner can never be removed or demoted
+ * (`core/team.ts`), so an install always has someone who can manage it.
+ */
+export const teamMembers = sqliteTable(
+  'team_members',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    /** The Access-verified address, lowercased. The join key to the JWT. */
+    email: text('email').notNull(),
+    /** owner: everything · admin: all but managing owners · writer: drafts, posts, sequence steps. */
+    role: text('role', { enum: ['owner', 'admin', 'writer'] }).notNull(),
+    /** When the address was invited (or seeded, for the first owner). Re-inviting resets it. */
+    invitedAt: ts('invited_at').notNull(),
+    /** First request that came in under this address after the invitation. Null while invited. */
+    joinedAt: ts('joined_at'),
+    /** Taken off the team. They keep their history; Access may still let them reach a 403. */
+    removedAt: ts('removed_at'),
+    /** Who invited them, by Access email. Null for the seeded first owner. Text, like `audit_entries.actor_id`. */
+    invitedBy: text('invited_by'),
+  },
+  (t) => [uniqueIndex('team_members_email_idx').on(t.email)],
+)
+
+export type TeamMember = typeof teamMembers.$inferSelect
 
 /**
  * ⭐ The thing standing between a hallucinated tool call and eight thousand
