@@ -22,6 +22,7 @@ import { analyticsSequences } from './web/admin-analytics-sequences.tsx'
 import { audience } from './web/admin-audience.tsx'
 import { campaignsAdmin } from './web/admin-campaigns.tsx'
 import { conversionsAdmin } from './web/admin-conversions.tsx'
+import { membersAdmin } from './web/admin-members.tsx'
 import { purchaseMailAdmin } from './web/admin-purchase-mail.tsx'
 import { goalsAdmin } from './web/admin-goals.tsx'
 import { help } from './web/admin-help.tsx'
@@ -129,6 +130,7 @@ app.route('/', mail)
 app.route('/', purchaseMailAdmin)
 app.route('/', campaignsAdmin)
 app.route('/', conversionsAdmin)
+app.route('/', membersAdmin)
 app.route('/', goalsAdmin)
 app.route('/', help)
 app.route('/', seed)

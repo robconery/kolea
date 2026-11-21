@@ -12,6 +12,7 @@ import { listCampaigns } from '../core/campaigns.ts'
 import { storeMedia } from '../core/media.ts'
 import { setPostTags, tagSlug, tagsForPost } from '../core/post-tags.ts'
 import { clearFeatureImage, postPath, publishPost, setFeatureImage, setPostFeatured, unpublishPost } from '../core/posts.ts'
+import { ACCESS_LEVELS, LEVEL_LABEL, isAccessLevel } from '../core/member-access.ts'
 import { postPlainText } from '../core/render-web.ts'
 import { type Photo, searchPhotos, triggerDownload, unsplashConfigured } from '../core/unsplash.ts'
 import { aiConfigured, modelFor, modelLabel } from '../core/ai/openrouter.ts'
@@ -1087,6 +1088,20 @@ const Publishing: FC<{ env: Env; b: Broadcast; topics: string[] }> = ({ env, b, 
             <span>Featured: show it in the front page's "Start here"</span>
           </label>
           <label>
+            <span>Who can read it</span>
+            <select name="access_level">
+              {ACCESS_LEVELS.map((level) => (
+                <option value={level} selected={b.accessLevel === level}>
+                  {LEVEL_LABEL[level]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <p class="faint" style="margin:-8px 0 4px;font-size:12.5px">
+            On the web only: the mail still goes to its whole segment. Members and Premium posts show everyone else
+            the title, the excerpt you write below (never one taken from the body), and a way to sign in or upgrade.
+          </p>
+          <label>
             <span>Excerpt</span>
             <textarea name="excerpt" rows={3} placeholder="derived from the first lines of the body">
               {b.excerpt ?? ''}
@@ -1106,9 +1121,11 @@ mail.post('/broadcasts/:id/publish', async (c) => {
   const id = Number(c.req.param('id'))
   const form = await c.req.formData()
 
+  const level = form.get('access_level')
   const post = await publishPost(db, id, {
     slug: String(form.get('slug') ?? '').trim() || null,
     excerpt: String(form.get('excerpt') ?? '').trim() || null,
+    ...(isAccessLevel(level) ? { accessLevel: level } : {}),
   })
   await setPostFeatured(db, id, form.get('featured') !== null)
   const tags = await setPostTags(

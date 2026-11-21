@@ -100,4 +100,20 @@ export interface Env {
    * endpoint anybody can post fake revenue to.
    */
   STRIPE_WEBHOOK_SECRET?: string
+
+  /**
+   * Signs the member session cookie on the public site (Members, SPEC 15.11).
+   * A secret, not a var: any long random string. Unset means readers cannot
+   * sign in — the sign-in page says so, and members-only and Premium posts show
+   * their teaser to everyone. Rotating it signs every member out.
+   */
+  MEMBER_SESSION_SECRET?: string
+  /**
+   * Which payment port Premium uses (`core/premium-billing.ts`). Unset — the
+   * production default — is the real Stripe adapter, which needs
+   * `STRIPE_SECRET_KEY` to be allowed to create Checkout Sessions (the
+   * read-only restricted key is not). `fake` is the in-memory test double and
+   * must never be set in production.
+   */
+  PREMIUM_BILLING?: string
 }

@@ -21,6 +21,7 @@ import {
   postPath,
   shareOnXUrl,
 } from '../posts.ts'
+import { type ViewerKind, decideAccess, ghostVisibility, teaserHtml } from '../member-access.ts'
 import { renderPostHtml } from '../render-web.ts'
 import { escapeHtml } from '../text.ts'
 import { helpers } from './helpers.ts'
@@ -192,7 +193,15 @@ export function ghostAuthor(cfg: SiteConfig, posts = 0): GhostAuthor {
   }
 }
 
-export function ghostPost(post: Post, tags: PostTag[], cfg: SiteConfig): GhostPost {
+/**
+ * A post in Ghost's shape. `viewer` decides whether `html` is the body or the
+ * teaser (core/member-access.ts). It defaults to `anonymous` on purpose: every
+ * caller but the post page renders something cached for everyone — listings,
+ * the front page, `{{#get}}`, next/prev — so a gated body can never reach one
+ * of them by a caller forgetting to pass a viewer.
+ */
+export function ghostPost(post: Post, tags: PostTag[], cfg: SiteConfig, viewer: ViewerKind = 'anonymous'): GhostPost {
+  const decision = decideAccess(viewer, post.accessLevel)
   const author = ghostAuthor(cfg)
   const gTags = tags.map((t) => ghostTag(t))
   const url = postPath(post.slug, tags[0]?.slug)
@@ -217,8 +226,8 @@ export function ghostPost(post: Post, tags: PostTag[], cfg: SiteConfig): GhostPo
     feature_image_caption: caption,
     featured: false,
     page: false,
-    visibility: 'public',
-    access: true,
+    visibility: ghostVisibility(post.accessLevel),
+    access: decision === 'full',
     comments: false,
     published_at: published,
     updated_at: published,
@@ -240,7 +249,11 @@ export function ghostPost(post: Post, tags: PostTag[], cfg: SiteConfig): GhostPo
   // The body and its reading time are rendered on first read, not up front:
   // an archive page of twelve cards reads neither.
   let html: string | null = null
-  const body = () => (html ??= renderPostHtml({ json: post.bodyJson, md: post.bodyMd }))
+  const body = () =>
+    (html ??=
+      decision === 'full'
+        ? renderPostHtml({ json: post.bodyJson, md: post.bodyMd })
+        : teaserHtml({ level: post.accessLevel, slug: post.slug, excerpt: post.excerpt }))
   Object.defineProperty(out, 'html', { enumerable: true, get: body })
   Object.defineProperty(out, 'reading_time', {
     enumerable: true,
@@ -704,9 +717,14 @@ export async function renderAuthor(req: SiteRequest, slug: string, page: number)
   })
 }
 
-export async function renderPost(req: SiteRequest, post: Post, tags: PostTag[]): Promise<Rendered> {
+export async function renderPost(
+  req: SiteRequest,
+  post: Post,
+  tags: PostTag[],
+  viewer: ViewerKind = 'anonymous',
+): Promise<Rendered> {
   const { cfg } = req
-  const gp = ghostPost(post, tags, cfg)
+  const gp = ghostPost(post, tags, cfg, viewer)
   return render(req, {
     templates: [`post-${post.slug}`, 'post'],
     contexts: ['post'],
@@ -829,4 +847,28 @@ function bareError(status: number, cfg: SiteConfig, detail?: string): string {
   const e = escapeHtml
   const title = status === 404 ? 'Not here' : 'Something broke'
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${e(title)} · ${e(cfg.title)}</title><meta name="robots" content="noindex"></head><body style="font:17px/1.6 system-ui,sans-serif;max-width:40rem;margin:4rem auto;padding:0 1rem"><h1>${e(title)}</h1><p>${status === 404 ? "That page doesn't exist, or it isn't published." : 'The theme could not render this page.'}</p>${detail ? `<pre style="white-space:pre-wrap;opacity:.7">${e(detail)}</pre>` : ''}<p><a href="/">← Home</a></p></body></html>`
+}
+
+/**
+ * A plain page in the theme's own `page.hbs` (or `post.hbs`): the member and
+ * Premium screens. Never indexed — they are per-reader, not documents.
+ */
+export async function renderSitePage(
+  req: SiteRequest,
+  page: { title: string; html: string; url: string },
+): Promise<Rendered> {
+  const { cfg } = req
+  return render(req, {
+    templates: ['page', 'post'],
+    contexts: ['page'],
+    root: { post: syntheticPage(page.title, page.html, page.url, cfg) },
+    meta: {
+      title: `${page.title} · ${cfg.title}`,
+      description: null,
+      image: null,
+      type: 'website',
+      publishedAt: null,
+      noindex: true,
+    },
+  })
 }

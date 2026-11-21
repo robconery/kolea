@@ -2,6 +2,7 @@ import { and, asc, count, desc, eq, gt, inArray, isNotNull, lt, ne, notInArray, 
 import type { Db } from '../db/index.ts'
 import { broadcastPostTags, broadcasts } from '../db/schema.ts'
 import { slugify } from './ids.ts'
+import { type AccessLevel, isGated } from './member-access.ts'
 import { excerptFrom, firstImageFrom, type PostBody, postPlainText } from './render-web.ts'
 
 /**
@@ -88,6 +89,8 @@ export interface PostMeta {
   /** Omit to derive from the body. */
   excerpt?: string | null
   featureImage?: string | null
+  /** Who may read it on the web. Omit to keep the current level. */
+  accessLevel?: AccessLevel
 }
 
 /** Where a featured image came from, and who is owed the credit. */
@@ -110,6 +113,7 @@ export interface Post {
   bodyJson: (typeof broadcasts.$inferSelect)['bodyJson']
   bodyMd: string
   featured: boolean
+  accessLevel: AccessLevel
 }
 
 /** Only these columns leave the module — a post is a *page*, not a broadcast. */
@@ -125,6 +129,7 @@ const postColumns = {
   bodyJson: broadcasts.bodyJson,
   bodyMd: broadcasts.bodyMd,
   featured: broadcasts.featured,
+  accessLevel: broadcasts.accessLevel,
 }
 
 /** `published_at is not null` is the only thing that makes a row public. */
@@ -140,17 +145,20 @@ export async function publishPost(db: Db, id: number, meta: PostMeta = {}): Prom
   if (!b) throw new Error(`no broadcast ${id}`)
 
   const body = { json: b.bodyJson, md: b.bodyMd }
-  const text = postPlainText(body)
 
   // The slug is sticky once assigned. Re-deriving it from the subject on every
   // save would break every link anyone has ever shared the moment a title is
   // tidied up.
   const slug = await uniqueSlug(db, id, meta.slug ?? b.slug ?? b.subject)
 
-  const excerpt = (meta.excerpt ?? b.excerpt ?? excerptFrom(text)) || null
-  // Derived only as a last resort, and a derived image carries no credit — it is
-  // already one of the operator's own images, embedded in their own post.
-  const featureImage = meta.featureImage ?? b.featureImage ?? firstImageFrom(body)
+  const accessLevel = meta.accessLevel ?? b.accessLevel
+  const derived = gatedSafeCard(
+    { excerpt: meta.excerpt ?? b.excerpt, featureImage: meta.featureImage ?? b.featureImage },
+    body,
+    accessLevel,
+  )
+  const excerpt = derived.excerpt
+  const featureImage = derived.featureImage
   const credited = featureImage === b.featureImage
 
   await db
@@ -161,7 +169,8 @@ export async function publishPost(db: Db, id: number, meta: PostMeta = {}): Prom
       featureImage,
       featureImageCredit: credited ? b.featureImageCredit : null,
       featureImageCreditUrl: credited ? b.featureImageCreditUrl : null,
-      searchText: text,
+      searchText: derived.searchText(b.subject),
+      accessLevel,
       // Sent mail dates the post: the day it landed in inboxes is the day it was
       // published, whatever day the web page happened to be switched on.
       publishedAt: b.publishedAt ?? b.sentAt ?? new Date(),
@@ -170,6 +179,55 @@ export async function publishPost(db: Db, id: number, meta: PostMeta = {}): Prom
 
   const row = await db.select(postColumns).from(broadcasts).where(eq(broadcasts.id, id)).get()
   return row as Post
+}
+
+/**
+ * What publishing may derive from the body, by access level (Kōlea SPEC
+ * 15.11.6). A public post gets an excerpt and featured image from its body when
+ * none were chosen, and is searchable by its whole text. A gated post gets
+ * neither: its excerpt is the hand-written one or nothing (a derived excerpt
+ * left over from when it was public is dropped, since it is a prefix of the
+ * body), its featured image is never lifted from the body, and search sees the
+ * subject and the hand-written excerpt only.
+ */
+function gatedSafeCard(
+  chosen: { excerpt: string | null; featureImage: string | null },
+  body: PostBody,
+  level: AccessLevel,
+): { excerpt: string | null; featureImage: string | null; searchText: (subject: string) => string } {
+  const text = postPlainText(body)
+  if (!isGated(level)) {
+    return {
+      excerpt: (chosen.excerpt ?? excerptFrom(text)) || null,
+      // Derived only as a last resort, and a derived image carries no credit — it is
+      // already one of the operator's own images, embedded in their own post.
+      featureImage: chosen.featureImage ?? firstImageFrom(body),
+      searchText: () => text,
+    }
+  }
+  const excerpt = authoredLead(chosen.excerpt, body)
+  const fromBody = firstImageFrom(body)
+  const featureImage = chosen.featureImage && chosen.featureImage !== fromBody ? chosen.featureImage : null
+  return {
+    excerpt,
+    featureImage,
+    searchText: (subject) => [subject, excerpt ?? ''].join(' ').trim(),
+  }
+}
+
+/**
+ * Change who may read a post. A live post is re-published so its excerpt,
+ * image and search text are re-derived under the new level's rules at once;
+ * an unpublished one just stores the level, and publishing applies it.
+ */
+export async function setPostAccess(db: Db, id: number, level: AccessLevel): Promise<void> {
+  const b = await db.select({ publishedAt: broadcasts.publishedAt }).from(broadcasts).where(eq(broadcasts.id, id)).get()
+  if (!b) throw new Error(`no broadcast ${id}`)
+  if (b.publishedAt) {
+    await publishPost(db, id, { accessLevel: level })
+    return
+  }
+  await db.update(broadcasts).set({ accessLevel: level }).where(eq(broadcasts.id, id))
 }
 
 /**
@@ -422,6 +480,7 @@ export async function postStatus(db: Db, id: number) {
       publishedAt: broadcasts.publishedAt,
       subject: broadcasts.subject,
       featured: broadcasts.featured,
+      accessLevel: broadcasts.accessLevel,
     })
     .from(broadcasts)
     .where(eq(broadcasts.id, id))

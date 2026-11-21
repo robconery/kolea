@@ -286,6 +286,21 @@ export const broadcasts = sqliteTable(
     publishOnSend: integer('publish_on_send', { mode: 'boolean' }).notNull().default(true),
     /** Shown in the front page's "Start here", newest first. Web only; mail never reads it. */
     featured: integer('featured', { mode: 'boolean' }).notNull().default(false),
+    /**
+     * Who may read this post on the web (Kōlea SPEC 15.11.4): `public` (anyone),
+     * `members` (a reader signed in on the site) or `premium` (a member with a
+     * live `member_subscriptions` row). Web only — the send path never reads it:
+     * a broadcast still goes to its segment, in full, whatever this says.
+     *
+     * A gated level changes what publishing derives (`core/posts.ts`): the
+     * excerpt and the featured image are never taken from a gated body, and
+     * `search_text` holds the subject and hand-written excerpt only, so no list,
+     * feed, search hit or og tag can carry the body out. What a reader actually
+     * sees is one pure decision in `core/member-access.ts`.
+     */
+    accessLevel: text('access_level', { enum: ['public', 'members', 'premium'] })
+      .notNull()
+      .default('public'),
     /** URL identity. Unique across published and unpublished alike, so taking a
         post down never frees its slug for something else to claim. */
     slug: text('slug'),
@@ -1977,3 +1992,218 @@ export const pageViews = sqliteTable(
 )
 
 export type PageView = typeof pageViews.$inferSelect
+
+// ─────────────────────────────────────────────────────────── members & premium
+
+/**
+ * ⭐ Members and Premium (Kōlea SPEC 15.11, 16.7). A **member** is a subscriber
+ * who has signed in on the public site. There is no second person record: the
+ * member IS the `subscribers` row, so one person has one consent state however
+ * they arrived. Nothing in this cluster writes `subscribers.status`, a
+ * suppression or an opt-out — signing in, signing out and paying are not
+ * consent (SPEC 15.11.3). An unsubscribed reader can still sign in and read
+ * what they are entitled to; the newsletter and their access are separate facts.
+ */
+
+/**
+ * One request for a sign-in link, kept as history (SPEC 15.11.2: a request,
+ * a link and a session are rows). Only requests for an address that IS a
+ * subscriber get a row — the sign-in page never creates a subscriber and answers
+ * the same whether or not the address is known.
+ *
+ * `token_hash` is the SHA-256 of the token in the mailed link; the token itself
+ * is never stored, not here and not on the `messages` row (whose body carries a
+ * `{{sign_in_link}}` merge tag resolved only in memory at send time). It is set
+ * only while the link is live: a link whose mail was blocked, throttled or
+ * failed carries none, so it can never be used. Nullable + UNIQUE is fine:
+ * SQLite treats NULLs as distinct.
+ *
+ * Status: `sent` (the link is out, valid until `expires_at`, single use),
+ * `used`, `blocked` (the transactional consent check refused: hard bounce or
+ * complaint; `blocked_reason` says which), `throttled` (five links an hour per
+ * address — recorded, never mailed), `failed` (the provider refused; the reader
+ * asks again). `requested` exists only between the insert and the send.
+ */
+export const memberSignInLinks = sqliteTable(
+  'member_sign_in_links',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    subscriberId: integer('subscriber_id')
+      .notNull()
+      .references(() => subscribers.id, { onDelete: 'cascade' }),
+    status: text('status', { enum: ['requested', 'sent', 'used', 'blocked', 'throttled', 'failed'] })
+      .notNull()
+      .default('requested'),
+    tokenHash: text('token_hash'),
+    expiresAt: ts('expires_at'),
+    // nullable-fk: the system mail that carried it. `set null` so pruning old
+    // messages never erases who asked to sign in.
+    messageId: integer('message_id').references(() => messages.id, { onDelete: 'set null' }),
+    // nullable-fk: the post the reader was on, so the link lands them back on it.
+    returnPostId: integer('return_post_id').references(() => broadcasts.id, { onDelete: 'set null' }),
+    blockedReason: text('blocked_reason'),
+    requestedIp: text('requested_ip'),
+    requestedUserAgent: text('requested_user_agent'),
+    createdAt: ts('created_at').notNull(),
+    usedAt: ts('used_at'),
+  },
+  (t) => [
+    uniqueIndex('member_sign_in_links_token_key').on(t.tokenHash),
+    // "How many links has this address had this hour?" before every send.
+    index('member_sign_in_links_subscriber_idx').on(t.subscriberId, t.createdAt),
+    // The per-IP limit, counted with premium checkouts (SPEC 16.7.2.1).
+    index('member_sign_in_links_ip_idx').on(t.requestedIp, t.createdAt),
+  ],
+)
+
+/**
+ * A signed-in reader. The cookie holds an opaque token plus an HMAC of it under
+ * `MEMBER_SESSION_SECRET`; this row holds only the token's SHA-256, so a leaked
+ * database signs nobody in and a session is revocable by stamping `revoked_at`.
+ * Sixty days, no sliding renewal. `last_seen_at` is refreshed at most daily —
+ * a write per page view would be a write per reader per click.
+ */
+export const memberSessions = sqliteTable(
+  'member_sessions',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    subscriberId: integer('subscriber_id')
+      .notNull()
+      .references(() => subscribers.id, { onDelete: 'cascade' }),
+    tokenHash: text('token_hash').notNull(),
+    // nullable-fk: the link it was opened with.
+    signInLinkId: integer('sign_in_link_id').references(() => memberSignInLinks.id, {
+      onDelete: 'set null',
+    }),
+    ip: text('ip'),
+    userAgent: text('user_agent'),
+    createdAt: ts('created_at').notNull(),
+    expiresAt: ts('expires_at').notNull(),
+    lastSeenAt: ts('last_seen_at').notNull(),
+    revokedAt: ts('revoked_at'),
+  },
+  (t) => [
+    uniqueIndex('member_sessions_token_key').on(t.tokenHash),
+    index('member_sessions_subscriber_idx').on(t.subscriberId),
+  ],
+)
+
+/**
+ * The one Premium level's two prices (SPEC 16.7.1), as Stripe price ids picked
+ * from the synced catalog on the Members screen. Exactly one row (`id = 1`),
+ * created on first save. Plain text, not FKs to `stripe_prices`, like
+ * `stripe_products.default_price_id`: a catalog resync must never be blocked by,
+ * or silently null, the price readers are paying. Validated on save instead.
+ * A null price is a plan that is not on sale.
+ */
+export const premiumSettings = sqliteTable('premium_settings', {
+  id: integer('id').primaryKey(),
+  monthlyPriceId: text('monthly_price_id'),
+  yearlyPriceId: text('yearly_price_id'),
+  updatedAt: ts('updated_at').notNull(),
+})
+
+/**
+ * Every Stripe Checkout a reader starts, written BEFORE the session is created
+ * (SPEC 16.7.2.1). `token` is the session's `metadata.kolea_checkout` and
+ * `client_reference_id`; the webhook applies what this row says, so a session
+ * naming an unknown token, or a different Stripe session than the row's,
+ * grants nothing. No email is stored: Stripe collects it.
+ *
+ * `converted_from_post_id` is the post whose call to action they pressed — the
+ * "which post converted them" the Members screen answers.
+ *
+ * Status: `open` → `completed` (a subscription was recorded), `duplicate` (they
+ * already held a live one; the second Stripe subscription is kept here for the
+ * operator to cancel and refund — "Paid twice"), `expired`, `failed` (a delayed
+ * payment failed), `ignored` (the session did not match this row).
+ */
+export const premiumCheckouts = sqliteTable(
+  'premium_checkouts',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    token: text('token').notNull(),
+    interval: text('interval', { enum: ['month', 'year'] }).notNull(),
+    stripePriceId: text('stripe_price_id').notNull(),
+    // nullable-fk: the signed-in member who pressed Upgrade, if any.
+    subscriberId: integer('subscriber_id').references(() => subscribers.id, { onDelete: 'set null' }),
+    convertedFromPostId: integer('converted_from_post_id').references(() => broadcasts.id, {
+      onDelete: 'set null',
+    }),
+    stripeSessionId: text('stripe_session_id'),
+    status: text('status', { enum: ['open', 'completed', 'duplicate', 'expired', 'failed', 'ignored'] })
+      .notNull()
+      .default('open'),
+    note: text('note'),
+    stripeSubscriptionId: text('stripe_subscription_id'),
+    stripeCustomerId: text('stripe_customer_id'),
+    ip: text('ip'),
+    userAgent: text('user_agent'),
+    createdAt: ts('created_at').notNull(),
+    completedAt: ts('completed_at'),
+  },
+  (t) => [
+    uniqueIndex('premium_checkouts_token_key').on(t.token),
+    uniqueIndex('premium_checkouts_session_key').on(t.stripeSessionId),
+    index('premium_checkouts_ip_idx').on(t.ip, t.createdAt),
+    index('premium_checkouts_status_idx').on(t.status),
+  ],
+)
+
+/**
+ * A Premium subscription (SPEC 15.11.4, 16.7.3). A member is premium while they
+ * hold a row in status `active`. Status moves only through the transition table
+ * in `core/premium-lifecycle.ts`: `active ↔ past_due`, `active → canceled`,
+ * `past_due → canceled`; `canceled` is final, and a returning subscriber gets a
+ * new row. The partial unique index keeps at most one non-canceled row per
+ * subscriber, so two completed checkouts can never make two live subscriptions.
+ *
+ * Granted ONLY by the signature-verified `checkout.session.completed` (or its
+ * `async_payment_succeeded`), never by the return page. `stripe_event_at` is the
+ * `created` time of the newest Stripe event applied: Stripe does not promise
+ * order, and an older event must change nothing.
+ *
+ * Money (`amount_cents`, `currency`) is what the price was at signup, frozen
+ * like a sale's campaign. Each paid invoice is a `sales` row of its own, booked
+ * by the ordinary webhook path.
+ */
+export const memberSubscriptions = sqliteTable(
+  'member_subscriptions',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    subscriberId: integer('subscriber_id')
+      .notNull()
+      .references(() => subscribers.id, { onDelete: 'cascade' }),
+    // nullable-fk: the checkout that created it.
+    checkoutId: integer('checkout_id').references(() => premiumCheckouts.id, { onDelete: 'set null' }),
+    status: text('status', { enum: ['active', 'past_due', 'canceled'] }).notNull(),
+    interval: text('interval', { enum: ['month', 'year'] }).notNull(),
+    amountCents: integer('amount_cents').notNull(),
+    currency: text('currency').notNull(),
+    stripeCustomerId: text('stripe_customer_id'),
+    stripeSubscriptionId: text('stripe_subscription_id').notNull(),
+    stripePriceId: text('stripe_price_id').notNull(),
+    convertedFromPostId: integer('converted_from_post_id').references(() => broadcasts.id, {
+      onDelete: 'set null',
+    }),
+    currentPeriodEndAt: ts('current_period_end_at'),
+    cancelAtPeriodEnd: integer('cancel_at_period_end', { mode: 'boolean' }).notNull().default(false),
+    cancelReason: text('cancel_reason'),
+    statusChangedAt: ts('status_changed_at').notNull(),
+    /** Kept when they recover, so "who was ever late" stays answerable. */
+    pastDueAt: ts('past_due_at'),
+    canceledAt: ts('canceled_at'),
+    stripeEventAt: ts('stripe_event_at'),
+    createdAt: ts('created_at').notNull(),
+  },
+  (t) => [
+    uniqueIndex('member_subscriptions_stripe_key').on(t.stripeSubscriptionId),
+    uniqueIndex('member_subscriptions_live_key')
+      .on(t.subscriberId)
+      .where(sql`status <> 'canceled'`),
+    index('member_subscriptions_status_idx').on(t.status),
+  ],
+)
+
+export type MemberSubscription = typeof memberSubscriptions.$inferSelect
+export type PremiumCheckout = typeof premiumCheckouts.$inferSelect
