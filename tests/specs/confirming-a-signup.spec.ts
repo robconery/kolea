@@ -376,15 +376,20 @@ describe('Feature: confirming a signup', () => {
       s = await aConfirmingForm()
       await s.world.post('/f/toolkit', { email })
       await s.world.post('/f/toolkit', { email })
+      // Settle before counting: the confirmation is dispatched in waitUntil, and
+      // counting the outbox before it lands made this flaky.
+      await s.world.settle()
       afterDoubleClick = (await subjectsTo(s.world, email)).length
 
       await backdateConfirmations(11 * 60_000)
       await s.world.post('/f/toolkit', { email })
+      await s.world.settle()
       afterTenMinutes = (await subjectsTo(s.world, email)).length
 
       for (let i = 0; i < 5; i++) {
         await backdateConfirmations(11 * 60_000)
         await s.world.post('/f/toolkit', { email })
+        await s.world.settle()
       }
       afterADay = (await subjectsTo(s.world, email)).length
 

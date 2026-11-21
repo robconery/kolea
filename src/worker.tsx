@@ -11,6 +11,7 @@ import { withActivitySource } from './core/activity.ts'
 import { sendBroadcastNow } from './core/broadcasts.ts'
 import { checkDueDomains } from './core/domains.ts'
 import { advanceImports } from './core/importers/runs.ts'
+import { advanceTakes } from './core/ai/takes.ts'
 import { sendMessages } from './core/sending.ts'
 import { tickSequences } from './core/sequences.ts'
 import { isTrackingHost } from './core/tracking-host.ts'
@@ -50,6 +51,7 @@ import { sequenceTemplatesAdmin } from './web/admin-sequence-templates.tsx'
 import { aiAdmin } from './web/admin-ai.ts'
 import { aiSettingsAdmin } from './web/admin-ai-settings.tsx'
 import { councilAdmin } from './web/admin-council.tsx'
+import { ghostwriterAdmin } from './web/admin-ghostwriter.tsx'
 import { agentsAdmin } from './web/admin-agents.tsx'
 import { store } from './web/admin-store.tsx'
 import { tagging } from './web/admin-tags.tsx'
@@ -207,6 +209,7 @@ app.route('/', aiAdmin)
 app.route('/', aiSettingsAdmin)
 // The reader council's review desk. Advisory: reads drafts, never changes or sends them.
 app.route('/', councilAdmin)
+app.route('/', ghostwriterAdmin)
 app.route('/', store)
 // The public site's look. Operator-only like everything below `requireOperator`;
 // the site itself is a separate app, reached by hostname.
@@ -360,6 +363,15 @@ export default {
           } catch {
             /* recorded on import_runs where it could be; retried next tick */
           }
+        }
+        // Ghostwriter takes: a few model calls for the oldest take still
+        // writing, last of all. It touches no mail and few rows, and its
+        // progress is the take's own rows, so a failure here just leaves the
+        // lease to expire and the next minute carries on.
+        try {
+          await advanceTakes(env, db)
+        } catch {
+          /* the take's lease expires; next tick resumes it */
         }
       }),
     )

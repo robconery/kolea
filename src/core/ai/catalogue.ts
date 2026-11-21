@@ -38,6 +38,7 @@ export const HELPERS: Helper[] = [
   { task: 'sequence-mail', label: 'Sequence mails', what: 'Writes each mail of a drafted sequence, all at once.' },
   { task: 'council', label: 'Reader council', what: 'Three readers and an editor read a draft and say what to keep and cut.' },
   { task: 'launch', label: 'Launch angle', what: 'Reads a launch brief and outlines the points the sales copy should make.' },
+  { task: 'ghostwriter', label: 'Ghostwriter', what: 'Drafts a mail, or every mail of a take, in the voice on the sliders.' },
 ]
 
 export type Maker = 'anthropic' | 'openai'

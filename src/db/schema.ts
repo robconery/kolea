@@ -3554,3 +3554,143 @@ export const councilReviews = sqliteTable(
 )
 
 export type CouncilReviewRow = typeof councilReviews.$inferSelect
+
+// ─────────────────────────────────────────────────────────── ghostwriter
+//
+// Kōlea's Ghostwriter (gap.md "Ghostwriter"). Three tables, and none of them
+// is mail: a voice the operator tunes, and "takes" that sit BESIDE a sequence.
+// ⚠️ A take never becomes live mail by itself. Its words reach a step only
+// when the operator presses "Use this mail" on a paused sequence, and every
+// take mail opens with a `[[ AI draft … ]]` placeholder, so `setSequenceActive`
+// still refuses to go live until a person has read each step and deleted it.
+
+/**
+ * How the Ghostwriter writes: the slider values Kōlea keeps per account, here
+ * one row (`id = 1`), created on first save. No row means the defaults in
+ * `core/ai/ghostwriter-voice.ts` (direct storyteller 3, bare bones 2).
+ *
+ * The six influence columns are 0 (off) to 5 (strong). They name traits Kōlea
+ * wrote, never "write like X": the model is told to borrow how they write, not
+ * what. Range and enum values are checked in core on every write (SQLite
+ * cannot add a CHECK after the fact), and re-clamped on read.
+ */
+export const ghostwriterVoices = sqliteTable('ghostwriter_voices', {
+  id: integer('id').primaryKey(),
+  king: integer('king').notNull().default(3),
+  hemingway: integer('hemingway').notNull().default(2),
+  vonnegut: integer('vonnegut').notNull().default(0),
+  didion: integer('didion').notNull().default(0),
+  bryson: integer('bryson').notNull().default(0),
+  graham: integer('graham').notNull().default(0),
+  /** Target length of a single mail: about 250, 500 or 900 words. */
+  length: text('length', { enum: ['short', 'medium', 'long'] }).notNull().default('medium'),
+  /**
+   * Read the operator's own last two SENT broadcasts as voice samples. Only
+   * sent mail: it already went to the whole list, so nothing private, and
+   * never anything a subscriber wrote.
+   */
+  useMyMail: integer('use_my_mail', { mode: 'boolean' }).notNull().default(true),
+  /** How a single mail is built (punchline, story, problem, list). */
+  structure: text('structure', { enum: ['punchline', 'story', 'problem', 'list'] })
+    .notNull()
+    .default('punchline'),
+  /** The draft dial: how finished the Ghostwriter makes it, outline → third round. */
+  draft: text('draft', { enum: ['outline', 'rough', 'first', 'second', 'third'] })
+    .notNull()
+    .default('second'),
+  /** The marketing approach a sequence take follows. `none` = the sequence's own shape alone. */
+  pitch: text('pitch', { enum: ['none', 'brunson', 'cochrane', 'godin', 'ferriss'] })
+    .notNull()
+    .default('cochrane'),
+  updatedAt: ts('updated_at').notNull(),
+})
+
+export type GhostwriterVoice = typeof ghostwriterVoices.$inferSelect
+
+/**
+ * One run of the Ghostwriter over a sequence that already exists: Take 1,
+ * Take 2, numbered per sequence and never overwritten.
+ *
+ * Written across cron ticks, never in one request: a plan call, then one call
+ * per mail (`core/ai/takes.ts` `advanceTakes`). Nothing is held in memory
+ * between ticks; this row and its mails ARE the progress. `story` null means
+ * the plan has not been written yet. `locked_until` is a lease so two
+ * overlapping ticks never pay for the same mail twice.
+ *
+ * `draft` and `pitch` are copied from the voice when the take starts, so
+ * changing the sliders mid-take does not change a take half written.
+ */
+export const sequenceTakes = sqliteTable(
+  'sequence_takes',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    sequenceId: integer('sequence_id')
+      .notNull()
+      .references(() => sequences.id, { onDelete: 'cascade' }),
+    number: integer('number').notNull(),
+    /** `writing` while ticks still owe it calls; `done` once every mail was tried; `failed` when none could be. */
+    status: text('status', { enum: ['writing', 'done', 'failed'] }).notNull().default('writing'),
+    draft: text('draft', { enum: ['outline', 'rough', 'first', 'second', 'third'] }).notNull(),
+    pitch: text('pitch', { enum: ['none', 'brunson', 'cochrane', 'godin', 'ferriss'] }).notNull(),
+    topic: text('topic').notNull(),
+    goal: text('goal').notNull().default(''),
+    notes: text('notes').notNull().default(''),
+    /** The plan pass's through-line. Null until planned. */
+    story: text('story'),
+    /** Dollars spent on this take so far, summed from its own calls (the budget reads `ai_calls`). */
+    costUsd: real('cost_usd').notNull().default(0),
+    /** Why it stopped, readable by a person. */
+    failure: text('failure'),
+    lockedUntil: ts('locked_until'),
+    createdAt: ts('created_at').notNull(),
+    updatedAt: ts('updated_at').notNull(),
+  },
+  (t) => [
+    uniqueIndex('sequence_takes_number_key').on(t.sequenceId, t.number),
+    index('sequence_takes_status_idx').on(t.status, t.createdAt),
+  ],
+)
+
+export type SequenceTake = typeof sequenceTakes.$inferSelect
+
+/**
+ * One mail of a take, for the step at `position` when the take began.
+ *
+ * Life: `waiting` → `writing` → `written` (words to read) or `failed`. A
+ * written mail is then `used` (its words were copied into the step, and the
+ * step's words before are kept in `before_*` so "Put mine back" restores them)
+ * or `kept` (the operator kept their own). Both undo back to `written`.
+ *
+ * The step cascade: delete the step and its take mails go too, so a take can
+ * never write into a step that is no longer there.
+ */
+export const sequenceTakeMails = sqliteTable(
+  'sequence_take_mails',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    takeId: integer('take_id')
+      .notNull()
+      .references(() => sequenceTakes.id, { onDelete: 'cascade' }),
+    stepId: integer('step_id')
+      .notNull()
+      .references(() => sequenceSteps.id, { onDelete: 'cascade' }),
+    position: integer('position').notNull(),
+    status: text('status', { enum: ['waiting', 'writing', 'written', 'failed', 'used', 'kept'] })
+      .notNull()
+      .default('waiting'),
+    /** This mail's job in the take's story, from the plan pass. */
+    plan: text('plan'),
+    subject: text('subject'),
+    /** Model output after `core/ai/guard.ts` cleaned it. Shown escaped, never as HTML. */
+    bodyMd: text('body_md'),
+    bodyJson: text('body_json', { mode: 'json' }).$type<DocNode | null>(),
+    /** The step's own words while this mail is `used`; null otherwise. */
+    beforeSubject: text('before_subject'),
+    beforeBodyMd: text('before_body_md'),
+    beforeBodyJson: text('before_body_json', { mode: 'json' }).$type<DocNode | null>(),
+    updatedAt: ts('updated_at').notNull(),
+  },
+  (t) => [uniqueIndex('sequence_take_mails_position_key').on(t.takeId, t.position)],
+)
+
+export type SequenceTakeMail = typeof sequenceTakeMails.$inferSelect

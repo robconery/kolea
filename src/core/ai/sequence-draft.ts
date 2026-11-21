@@ -102,7 +102,7 @@ const MAIL_SCHEMA = {
   },
 }
 
-const DRAFT_RULES = `
+export const DRAFT_RULES = `
 # Drafting rules
 
 You are drafting one email in an automated sequence for a writer who will rewrite it in their own words before it is sent. Your draft is a starting point that shows the structure and the argument, written well enough that the writer can see how it should sound.
