@@ -1273,6 +1273,30 @@ export const mcpCalls = sqliteTable(
 )
 
 /**
+ * ⭐ What an agent may do that cannot be taken back. One row (`id = 1`), the
+ * same single-row shape as `site_settings`; no row reads as both switches off.
+ *
+ * - `allowSend`: MCP tools may put mail on the wire. Replaces flipping
+ *   `MCP_ALLOW_SEND` and redeploying; the var survives only as a hard override
+ *   that can force sending off (`core/agents.ts`).
+ * - `allowSensitive`: MCP tools may make changes that carry data out or put
+ *   mail in front of someone who left (delete, suppression removal, import,
+ *   minting keys). An agent reads text strangers wrote, and that text can
+ *   steer it (ported from Kōlea's `allow_agent_sensitive`).
+ *
+ * Both default off. No MCP tool writes this table: the switch exists to stop
+ * the agent that holds a key, so only the operator's screen flips it.
+ */
+export const agentSettings = sqliteTable('agent_settings', {
+  id: integer('id').primaryKey(),
+  allowSend: integer('allow_send', { mode: 'boolean' }).notNull().default(false),
+  allowSensitive: integer('allow_sensitive', { mode: 'boolean' }).notNull().default(false),
+  updatedAt: ts('updated_at').notNull(),
+})
+
+export type AgentSettings = typeof agentSettings.$inferSelect
+
+/**
  * ⭐ The thing standing between a hallucinated tool call and eight thousand
  * people getting mail. A send tool refuses to run without a token minted by the
  * matching preview tool, and the token carries a `digest` of what was actually

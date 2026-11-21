@@ -1,12 +1,14 @@
 import { Hono } from 'hono'
 import type { FC } from 'hono/jsx'
+import { type AgentSwitches, getAgentSwitches, sendForcedOff, setAgentSwitches } from '../core/agents.ts'
 import { type KeyScope, listApiKeys, mintApiKey, revokeApiKey } from '../core/api-keys.ts'
 import { getDb } from '../db/index.ts'
 import type { Env } from '../types.ts'
 import { Flash, Layout, fmtDate } from './layout.tsx'
 
 /**
- * Agents & keys: who may talk to the mailer without a browser (SPEC 7.7, 8.3).
+ * Agents & keys: who may talk to the mailer without a browser (SPEC 7.7, 8.3),
+ * and the two switches on what an agent may do with it (`core/agents.ts`).
  *
  * Operator-only, mounted after `requireOperator`. Every rule is in
  * `core/api-keys.ts`; this file reads forms and draws tables.
@@ -78,16 +80,86 @@ const KeyTable: FC<{ keys: KeyRow[] }> = ({ keys }) =>
     </div>
   )
 
+const SWITCHES: { field: keyof AgentSwitches; name: 'send' | 'sensitive'; title: string; body: string }[] = [
+  {
+    field: 'allowSend',
+    name: 'send',
+    title: 'Agents may send mail',
+    body: 'broadcast_send, broadcast_send_test, broadcast_schedule, sequence_activate, sequence_tick and purchase_mail_send. Off, an agent can still draft, preview and preflight everything; a person sends.',
+  },
+  {
+    field: 'allowSensitive',
+    name: 'sensitive',
+    title: 'Agents may make sensitive changes',
+    body: 'subscriber_delete, suppression_remove, subscriber_import_csv and apikey_create. An agent reads text strangers wrote, and that text can steer it, so changes that mail someone who left or hand out lasting access wait for this.',
+  },
+]
+
+const SwitchCard: FC<{ switches: AgentSwitches; forcedOff: boolean }> = ({ switches, forcedOff }) => (
+  <div class="card" style="margin-bottom:18px">
+    <div class="card-h">
+      <h2>What agents may do</h2>
+    </div>
+    <div class="card-b flush">
+      <table>
+        <tbody>
+          {SWITCHES.map((sw) => {
+            const on = switches[sw.field]
+            const forced = sw.name === 'send' && forcedOff
+            return (
+              <tr>
+                <td>
+                  <strong>{sw.title}</strong>
+                  <div class="faint">{sw.body}</div>
+                  {forced ? (
+                    <div class="faint" style="margin-top:6px">
+                      Forced off: the Worker config sets <span class="mono">MCP_ALLOW_SEND="false"</span>,
+                      which overrides this switch.
+                    </div>
+                  ) : null}
+                </td>
+                <td style="white-space:nowrap">
+                  {forced ? (
+                    <span class="pill bad">forced off</span>
+                  ) : on ? (
+                    <span class="pill ok" data-switch={sw.name}>on</span>
+                  ) : (
+                    <span class="pill" data-switch={sw.name}>off</span>
+                  )}
+                </td>
+                <td style="text-align:right;white-space:nowrap">
+                  <form method="post" action="/settings/agents/switches" style="display:inline">
+                    <input type="hidden" name="switch" value={sw.name} />
+                    <input type="hidden" name="value" value={on ? 'off' : 'on'} />
+                    <button class={on ? 'btn sm' : 'btn sm danger'}>{on ? 'Turn off' : 'Turn on'}</button>
+                  </form>
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+    <div class="card-b">
+      <p class="faint" style="margin:0">
+        Both start off. No key can flip them; only this screen can. A refused call is still written to
+        the MCP audit log.
+      </p>
+    </div>
+  </div>
+)
+
 interface PageProps {
   env: Env
   keys: KeyRow[]
+  switches: AgentSwitches
   flash?: string
   flashKind?: string
   /** The one moment the plaintext exists outside the caller's clipboard. */
   minted?: { name: string; scope: KeyScope; token: string }
 }
 
-const AgentsPage: FC<PageProps> = ({ keys, flash, flashKind, minted }) => (
+const AgentsPage: FC<PageProps> = ({ env, keys, switches, flash, flashKind, minted }) => (
   <Layout title="Agents & keys" nav="agents">
     <div class="head">
       <div>
@@ -118,6 +190,8 @@ const AgentsPage: FC<PageProps> = ({ keys, flash, flashKind, minted }) => (
         </div>
       </div>
     ) : null}
+
+    <SwitchCard switches={switches} forcedOff={sendForcedOff(env)} />
 
     <div class="card">
       <div class="card-h">
@@ -172,6 +246,7 @@ agentsAdmin.get('/settings/agents', async (c) => {
     <AgentsPage
       env={c.env}
       keys={await listApiKeys(db)}
+      switches={await getAgentSwitches(db)}
       flash={c.req.query('flash')}
       flashKind={c.req.query('kind')}
     />,
@@ -193,6 +268,7 @@ agentsAdmin.post('/settings/agents/keys', async (c) => {
     <AgentsPage
       env={c.env}
       keys={await listApiKeys(db)}
+      switches={await getAgentSwitches(db)}
       minted={{ name: minted.name, scope: minted.scope, token: minted.token }}
     />,
   )
@@ -206,4 +282,24 @@ agentsAdmin.post('/settings/agents/keys/:id/revoke', async (c) => {
     return c.redirect(`/settings/agents?flash=${encodeURIComponent(`Not revoked: ${result.reason}.`)}&kind=warn`)
   }
   return c.redirect('/settings/agents?flash=Key revoked. It stops working on its next request.')
+})
+
+agentsAdmin.post('/settings/agents/switches', async (c) => {
+  const db = getDb(c.env)
+  const form = await c.req.formData()
+  const which = form.get('switch')
+  const value = form.get('value')
+  if ((which !== 'send' && which !== 'sensitive') || (value !== 'on' && value !== 'off')) {
+    return c.redirect('/settings/agents?flash=Unknown switch.&kind=warn')
+  }
+
+  const on = value === 'on'
+  await setAgentSwitches(db, which === 'send' ? { allowSend: on } : { allowSensitive: on })
+
+  const what = which === 'send' ? 'Agent sending' : 'Sensitive changes by agents'
+  let msg = `${what} turned ${value}.`
+  if (which === 'send' && on && sendForcedOff(c.env)) {
+    msg += ' MCP_ALLOW_SEND="false" in the Worker config still forces it off.'
+  }
+  return c.redirect(`/settings/agents?flash=${encodeURIComponent(msg)}`)
 })

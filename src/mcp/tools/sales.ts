@@ -1,6 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/server'
 import { desc, eq, isNull } from 'drizzle-orm'
 import * as z from 'zod/v4'
+import { agentSendAllowed, agentSendRefusal } from '../../core/agents.ts'
 import { getCampaign, getCampaignBySlug, touchesFor } from '../../core/campaigns.ts'
 import {
   FALLBACK_SLUG,
@@ -15,7 +16,6 @@ import {
 import { listSales, recordSale, revenueTotals } from '../../core/sales.ts'
 import { campaigns, sales, subscribers } from '../../db/schema.ts'
 import { type Ctx, clampLimit, defineTool, fail, money, ok } from '../kit.ts'
-import { SEND_DISABLED, sendingAllowed } from '../preflight.ts'
 
 export function registerSales(server: McpServer, ctx: Ctx): void {
   defineTool(
@@ -418,7 +418,7 @@ export function registerSales(server: McpServer, ctx: Ctx): void {
       annotations: { destructiveHint: true },
     },
     async ({ sale_id, resend }) => {
-      if (!sendingAllowed(ctx.env)) return fail(SEND_DISABLED)
+      if (!(await agentSendAllowed(ctx.env, ctx.db))) return fail(agentSendRefusal(ctx.env))
       const result = await sendPurchaseMail(ctx.env, ctx.db, sale_id, { resend })
       if (!result.ok) return fail(result.reason)
       return ok({ messageId: result.messageId, to: result.to, status: 'queued' })

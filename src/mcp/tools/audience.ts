@@ -1,6 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/server'
 import { and, desc, eq, like, or } from 'drizzle-orm'
 import * as z from 'zod/v4'
+import { AGENT_SENSITIVE_OFF, agentSensitiveAllowed } from '../../core/agents.ts'
 import {
   type ActivityType,
   activityCounts,
@@ -294,12 +295,16 @@ export function registerAudience(server: McpServer, ctx: Ctx): void {
     'subscriber_import_csv',
     {
       description:
-        'Bulk import from CSV text with an `email` column (optional `name`, `tags`). Returns a per-row report.',
+        'Bulk import from CSV text with an `email` column (optional `name`, `tags`). Returns a per-row report. Refused unless the operator has turned on sensitive changes for agents (System > Agents & keys).',
       inputSchema: z.object({
         csv: z.string().describe('Raw CSV including the header row'),
       }),
+      annotations: { destructiveHint: true },
     },
-    async ({ csv }) => ok(await importCsv(ctx.db, csv)),
+    async ({ csv }) => {
+      if (!(await agentSensitiveAllowed(ctx.db))) return fail(AGENT_SENSITIVE_OFF)
+      return ok(await importCsv(ctx.db, csv))
+    },
   )
 
   defineTool(
@@ -343,7 +348,7 @@ export function registerAudience(server: McpServer, ctx: Ctx): void {
     'subscriber_delete',
     {
       description:
-        'Permanently delete a subscriber and everything cascading from them — messages, events, enrollments, attribution touches, and sales. For a GDPR erasure. To stop mailing someone, use suppression_add instead; it keeps the history.',
+        'Permanently delete a subscriber and everything cascading from them — messages, events, enrollments, attribution touches, and sales. For a GDPR erasure. To stop mailing someone, use suppression_add instead; it keeps the history. Refused unless the operator has turned on sensitive changes for agents (System > Agents & keys).',
       inputSchema: z.object({
         id: z.number().int(),
         confirm_email: z
@@ -353,6 +358,7 @@ export function registerAudience(server: McpServer, ctx: Ctx): void {
       annotations: { destructiveHint: true },
     },
     async ({ id, confirm_email }) => {
+      if (!(await agentSensitiveAllowed(ctx.db))) return fail(AGENT_SENSITIVE_OFF)
       const sub = await ctx.db.select().from(subscribers).where(eq(subscribers.id, id)).get()
       if (!sub) return fail('No such subscriber.')
       if (normalizeEmail(confirm_email) !== sub.email) {

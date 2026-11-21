@@ -1,6 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/server'
 import { asc, eq } from 'drizzle-orm'
 import * as z from 'zod/v4'
+import { agentSendAllowed, agentSendRefusal } from '../../core/agents.ts'
 import {
   broadcastStats,
   cancelBroadcast,
@@ -21,7 +22,7 @@ import { sendPreview } from '../../core/sending.ts'
 import type { SegmentRule } from '../../db/schema.ts'
 import { subscribers, tags } from '../../db/schema.ts'
 import { type Ctx, clampLimit, defineTool, fail, failed, ok } from '../kit.ts'
-import { SEND_DISABLED, consumePreflight, digestOf, mintPreflight, sendingAllowed } from '../preflight.ts'
+import { consumePreflight, digestOf, mintPreflight } from '../preflight.ts'
 
 /**
  * Merge tags the renderer knows. Anything else is passed through to the reader
@@ -247,7 +248,7 @@ export function registerBroadcasts(server: McpServer, ctx: Ctx): void {
       }),
     },
     async ({ id, to }) => {
-      if (!sendingAllowed(ctx.env)) return fail(SEND_DISABLED)
+      if (!(await agentSendAllowed(ctx.env, ctx.db))) return fail(agentSendRefusal(ctx.env))
 
       const b = await getBroadcast(ctx.db, id)
       if (!b) return fail('No such broadcast.')
@@ -374,7 +375,7 @@ export function registerBroadcasts(server: McpServer, ctx: Ctx): void {
         )
       }
       if (!b.campaignId) warnings.push('No campaign — clicks will not be attributed to anything.')
-      if (!sendingAllowed(ctx.env)) warnings.push(SEND_DISABLED)
+      if (!(await agentSendAllowed(ctx.env, ctx.db))) warnings.push(agentSendRefusal(ctx.env))
       if (partial) {
         warnings.push(
           `Audience is larger than the preflight walks: counted the first ${examined} of ${totalCandidates}. The rest are filtered by the same rules at send time.`,
@@ -412,7 +413,7 @@ export function registerBroadcasts(server: McpServer, ctx: Ctx): void {
       annotations: { destructiveHint: true, idempotentHint: false },
     },
     async ({ id, preflight_token }) => {
-      if (!sendingAllowed(ctx.env)) return fail(SEND_DISABLED)
+      if (!(await agentSendAllowed(ctx.env, ctx.db))) return fail(agentSendRefusal(ctx.env))
 
       const b = await getBroadcast(ctx.db, id)
       if (!b) return fail('No such broadcast.')
@@ -455,7 +456,7 @@ export function registerBroadcasts(server: McpServer, ctx: Ctx): void {
       }),
     },
     async ({ id, at }) => {
-      if (!sendingAllowed(ctx.env)) return fail(SEND_DISABLED)
+      if (!(await agentSendAllowed(ctx.env, ctx.db))) return fail(agentSendRefusal(ctx.env))
 
       const ms = Date.parse(at)
       if (Number.isNaN(ms)) return fail(`"${at}" is not a parseable timestamp.`)

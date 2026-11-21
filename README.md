@@ -760,9 +760,9 @@ it), then per-tool guards. Every call lands in `mcp_calls`, including the refusa
 
 **Irreversible sends need a preflight.** `broadcast_send` refuses without a token from
 `broadcast_preflight`: single-use, 10-minute expiry, invalidated by any edit to the
-content or the audience. Same for `sequence_activate`. On top of that, `MCP_ALLOW_SEND`
-is `"false"` in production, so MCP can read and draft everything but cannot put mail on
-the wire until you deliberately flip it. Flipping it back is the instant off-switch.
+content or the audience. Same for `sequence_activate`. On top of that, agent sending
+is off until you flip the switch on System > Agents & keys, so MCP can read and draft
+everything but cannot put mail on the wire. Flipping it back is the instant off-switch.
 
 Agents should read `kolea://conventions` before touching consent. Scoped unsubscribe is
 not the shape anything trained on normal ESPs expects, and getting it wrong is exactly
@@ -931,7 +931,7 @@ Cloudflare with `bunx wrangler secret put NAME --env production`, and locally in
 | `PREVIEW_EMAIL` | var | The only address a test send may reach | Falls back to `FROM_EMAIL` |
 | `CF_ACCESS_TEAM_DOMAIN` / `CF_ACCESS_AUD` | var | Who the Access login is and which app it's for | The admin refuses everyone, you included |
 | `DEV_AUTH_BYPASS` | var | `true` skips the login. Local only | Login required (correct) |
-| `MCP_ALLOW_SEND` | var | `true` lets agents put mail on the wire | Agents can draft but not send |
+| `MCP_ALLOW_SEND` | var | `"false"` forces agent sending off, overriding the admin switch | The switch on Agents & keys decides (off by default) |
 | `SITE_URL` | var | The public site's host | No public site |
 | `SITE_TITLE` / `SITE_TAGLINE` / `SITE_AUTHOR` | var | Site masthead, until the Profile screen says otherwise | Blank / `FROM_NAME` |
 | `SITE_FORM_SLUG` | var | The form the site's subscribe box posts to | No subscribe box |

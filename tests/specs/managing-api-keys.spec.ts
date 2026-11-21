@@ -211,6 +211,8 @@ describe('Feature: the operator makes and revokes API keys in the admin', () => 
     beforeAll(async () => {
       world = keysWorld()
       const { token } = await createApiKey(world.db, 'Claude', 'admin')
+      // Minting is a sensitive change (the-agent-switches.spec.ts).
+      await world.post('/settings/agents/switches', { switch: 'sensitive', value: 'on' })
       await callTool(world, token, 'apikey_create', { name: 'Reporting', scope: 'read' })
       row = await keyNamed(world, 'Reporting')
     })

@@ -1,6 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/server'
 import { and, desc, eq } from 'drizzle-orm'
 import * as z from 'zod/v4'
+import { AGENT_SENSITIVE_OFF, agentSensitiveAllowed } from '../../core/agents.ts'
 import {
   canReceiveBroadcastIn,
   canReceiveSequenceIn,
@@ -205,11 +206,12 @@ export function registerDeliverability(server: McpServer, ctx: Ctx): void {
     'suppression_remove',
     {
       description:
-        'Lift a suppression. Only do this on an explicit request from the person themselves — a hard bounce or a spam complaint is not something to clear because a send failed.',
+        'Lift a suppression. Only do this on an explicit request from the person themselves — a hard bounce or a spam complaint is not something to clear because a send failed. Refused unless the operator has turned on sensitive changes for agents (System > Agents & keys).',
       inputSchema: z.object({ email: z.string() }),
       annotations: { destructiveHint: true },
     },
     async ({ email }) => {
+      if (!(await agentSensitiveAllowed(ctx.db))) return fail(AGENT_SENSITIVE_OFF)
       const address = normalizeEmail(email)
       const existing = await ctx.db
         .select()
