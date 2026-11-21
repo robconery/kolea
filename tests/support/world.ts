@@ -16,6 +16,7 @@
  * | `MEDIA`/`DOWNLOADS` | in-memory buckets      | R2 holds bytes; no rule lives there. |
  * | `ASSETS`     | 404 fetcher                   | Static assets are Cloudflare's, not ours. |
  * | mail         | `EMAIL_PROVIDER=console`      | The kill switch (CLAUDE.md). Mail lands in `dev_outbox` and the spec reads it. |
+ * | `IMPORT_HTTP`| refuses everything            | The importers' outbound HTTP. A spec binds `fakeImportApis()` to answer like Kit, Ghost, Mailchimp and Drip. |
  *
  * ⚠️ `EMAIL_PROVIDER` is `console` here and must stay that way. A spec that
  * flips it to `resend` would need `RESEND_API_KEY`, and the only thing standing
@@ -29,6 +30,7 @@ import { devOutbox } from '../../src/db/schema.ts'
 import type { Env, SendJob } from '../../src/types.ts'
 import worker from '../../src/worker.tsx'
 import { freshD1 } from './d1.ts'
+import { noNetwork } from './fake-import-apis.ts'
 import { migrate } from './migrate.ts'
 
 /** The origin every link in a rendered email is built against. */
@@ -110,6 +112,11 @@ export function createWorld(overrides: Partial<Env> = {}): World {
     // The admin console is behind Cloudflare Access in production. A spec that
     // wants to prove the gate exists creates its own world without this.
     DEV_AUTH_BYPASS: 'true',
+
+    // The importers' HTTP seam. Refuses everything unless a spec binds the fake
+    // APIs (`support/fake-import-apis.ts`): no test may reach Kit, Ghost,
+    // Mailchimp or Drip.
+    IMPORT_HTTP: noNetwork,
 
     ...overrides,
   }

@@ -905,6 +905,8 @@ const ICONS: Record<string, string> = {
   tags: 'M9.4 4.4 7.6 19.6M16.4 4.4l-1.8 15.2M4.8 8.8h15M4 15.2h15',
   /* Two overlapping circles: a segment is the part of the list that satisfies
      more than one thing at once. */
+  /* An arrow coming down into a tray: a list arriving from elsewhere. */
+  imp: 'M12 4v10m-4-4 4 4 4-4M4.8 14.4v4.8h14.4v-4.8',
   segs: 'M9.6 19a7 7 0 1 0 0-14 7 7 0 0 0 0 14Zm4.8 0a7 7 0 1 0 0-14 7 7 0 0 0 0 14Z',
   bc: 'M4 12.2 20.2 4.6l-4.4 15.2-3.9-5.9L4 12.2Zm7.9 1.7 4.9-8',
   seq: 'M5.4 6.6h6.2a3.1 3.1 0 0 1 0 6.2H9a3.1 3.1 0 0 0 0 6.2h6.6M14.6 16.6l2.6 2.4-2.6 2.4M14.6 4.2 17.2 6.6l-2.6 2.4',
@@ -970,6 +972,8 @@ const NAV: ({ grp: string } | { href: string; key: string; label: string })[] = 
   // an enrollment — effectively undiscoverable.
   { href: '/tags', key: 'tags', label: 'Tags & automation' },
   { href: '/segments', key: 'segs', label: 'Segments' },
+  // Kit, Ghost, Mailchimp, Drip: bringing a list in is an audience act.
+  { href: '/imports', key: 'imp', label: 'Imports' },
   // ⭐ Mail sits directly under the audience: who is on the list, then what
   // goes out to them — the two screens used every day, at the top.
   { grp: 'Mail' },

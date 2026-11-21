@@ -100,4 +100,13 @@ export interface Env {
    * endpoint anybody can post fake revenue to.
    */
   STRIPE_WEBHOOK_SECRET?: string
+
+  /**
+   * Test seam for the importers (Kit, Ghost, Mailchimp, Drip): when bound, every
+   * importer request goes through this instead of global `fetch`. Deliberately in
+   * NO wrangler environment — production talks to the real APIs. The spec suite
+   * binds a fake that answers like those APIs, and `createWorld()` binds one that
+   * refuses everything by default, so no test can reach a third party.
+   */
+  IMPORT_HTTP?: Fetcher
 }
