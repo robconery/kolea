@@ -4,7 +4,7 @@ import { events, messages, subscribers } from '../db/schema.ts'
 import type { ProviderEvent } from '../providers/types.ts'
 import { logActivity } from './activity.ts'
 import { touchFromMessage } from './campaigns.ts'
-import { suppressAddress, unsubscribeAll } from './consent.ts'
+import { leaveBroadcasts, suppressAddress } from './consent.ts'
 import { classifyOpen } from './machine-opens.ts'
 import { applyTagRules } from './tagging.ts'
 import { emitWebhook, subscriberPayload } from './webhooks.ts'
@@ -163,15 +163,23 @@ async function markRefused(db: Db, messageId: number, ev: ProviderEvent): Promis
 /**
  * The provider says the reader asked it to stop (Mailgun's own unsubscribe list).
  *
- * The provider will refuse that address from now on whatever we think, so the
- * honest reading is "off everything": the same suppression the reader's own
- * "unsubscribe from everything" writes. Keeping them `active` here would mean
- * every later send quietly fails at the provider — mail silently dropped.
+ * ⭐ Broadcast scope, and nothing wider. Only the reader's own "unsubscribe
+ * from everything", a hard bounce or a complaint may write a suppression
+ * (invariant 2), and a provider-side unsubscribe is none of those: it most
+ * often comes from a List-Unsubscribe on a newsletter. So it is exactly what
+ * the preference center's newsletter unsubscribe does: `unsubscribed`, no
+ * suppression, sequences untouched.
+ *
+ * Nothing is silently dropped by not going wider: if the provider then refuses
+ * a sequence step or a receipt to that address, that refusal arrives as a
+ * permanent failure, the message is marked `failed`, and it shows on the
+ * Undelivered screen (`markRefused`).
  *
  * Like the preference centre's unsubscribe, it skips tag rules and attribution
  * (`recordEvent`): it is a consent change, not engagement. The event row is the
- * countable mark, and its dedupe key makes a replay change nothing. A person
- * already bounced or complained keeps that status; they are suppressed already.
+ * countable mark, and its dedupe key makes a replay change nothing. Only
+ * `active` and `pending` move (`leaveBroadcasts`); a person already
+ * unsubscribed, bounced or complained is left as they are.
  */
 async function applyProviderUnsubscribe(
   db: Db,
@@ -184,20 +192,14 @@ async function applyProviderUnsubscribe(
       messageId: msg.id,
       type: 'unsubscribe',
       occurredAt: ev.occurredAt,
-      meta: { ...(ev.meta ?? {}), action: 'all' },
+      meta: { ...(ev.meta ?? {}), action: 'broadcast' },
       dedupeKey: ev.dedupeKey ?? null,
     })
     .onConflictDoNothing()
     .returning({ id: events.id })
   if (inserted.length === 0) return
 
-  const sub = await db
-    .select({ status: subscribers.status })
-    .from(subscribers)
-    .where(eq(subscribers.id, msg.subscriberId))
-    .get()
-  if (!sub || sub.status === 'bounced' || sub.status === 'complained') return
-  await unsubscribeAll(db, msg.subscriberId, msg.toEmail)
+  await leaveBroadcasts(db, msg.subscriberId)
 }
 
 /**

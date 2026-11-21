@@ -237,9 +237,9 @@ export async function hmacSha256Hex(key: string, message: string): Promise<strin
  *   no consent, but the message is marked failed so it shows on Undelivered
  * - `failed` temporary → soft bounce (countable, changes nothing; Mailgun retries)
  * - `complained` → complaint (suppresses)
- * - `unsubscribed` → unsubscribe (off everything: Mailgun will refuse that
- *   address from this domain from now on, so pretending otherwise would be mail
- *   silently dropped)
+ * - `unsubscribed` → unsubscribe (off the newsletter only; consent is scoped,
+ *   and a later send Mailgun refuses comes back as a permanent failure that
+ *   shows on Undelivered)
  * - `rejected` → failed (Mailgun would not take it at all; the message is
  *   marked failed, and listed on Undelivered to check before sending)
  * - `opened` / `clicked` → ignored; tracking is ours, and this would double it

@@ -40,8 +40,8 @@ export type SendResult =
 export interface ProviderEvent {
   providerMessageId: string
   /**
-   * `unsubscribe` is a provider telling us it will no longer deliver to this
-   * address because the reader asked it to (Mailgun's own unsubscribe list).
+   * `unsubscribe` is a provider telling us the reader asked it to stop
+   * (Mailgun's own unsubscribe list). Applied as a newsletter unsubscribe only.
    */
   type: 'delivered' | 'open' | 'click' | 'bounce' | 'complaint' | 'failed' | 'unsubscribe'
   occurredAt: Date
