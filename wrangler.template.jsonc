@@ -191,6 +191,11 @@
 				"CF_ACCESS_AUD": "{{CF_ACCESS_AUD}}"
 				// Agent sending is the switch on System > Agents & keys, off by default.
 				// Add "MCP_ALLOW_SEND": "false" to force it off whatever the switch says.
+				"CF_ACCESS_AUD": "{{CF_ACCESS_AUD}}",
+				// MCP can read and draft everything, but cannot send until this is "true".
+				"MCP_ALLOW_SEND": "false",
+				// Nor make sensitive changes (where webhooks POST subscriber data).
+				"MCP_ALLOW_SENSITIVE": "false"
 			}
 		}
 	}

@@ -13,6 +13,7 @@ import { sendMessages } from './core/sending.ts'
 import { tickSequences } from './core/sequences.ts'
 import { syncStripeCatalog } from './core/stripe-catalog.ts'
 import { syncStripe } from './core/stripe.ts'
+import { deliverDueWebhooks } from './core/webhooks.ts'
 import { getDb } from './db/index.ts'
 import { broadcasts, messages } from './db/schema.ts'
 import { handleMcp, handleOAuthMcp } from './mcp/server.ts'
@@ -45,6 +46,7 @@ import { tagging } from './web/admin-tags.tsx'
 import { siteAdmin } from './web/admin-site.tsx'
 import { themesAdmin } from './web/admin-themes.tsx'
 import { undeliveredAdmin } from './web/admin-undelivered.tsx'
+import { webhooksAdmin } from './web/admin-webhooks.tsx'
 import { requireOperator } from './web/auth.ts'
 import { isSiteHost, site } from './web/site.tsx'
 import { prefs } from './web/prefs.tsx'
@@ -171,6 +173,8 @@ app.route('/', conversionsAdmin)
 app.route('/', goalsAdmin)
 // API keys and the agent switches. `/settings/agents`, beside `admin`'s `/settings`.
 app.route('/', agentsAdmin)
+// Outbound webhooks: endpoints, the delivery log, redeliver.
+app.route('/', webhooksAdmin)
 app.route('/', help)
 app.route('/', seed)
 
@@ -261,6 +265,15 @@ export default {
         // One overdue sending-domain check, after the mail: it is a few DNS
         // lookups and never throws, so it can neither delay nor break a send.
         await checkDueDomains(env, db)
+        // Outbound webhooks: one page of due deliveries, last, so mail always
+        // gets the D1 budget first. Caught on its own — a receiver that is down
+        // must never be able to stop the tick that sends mail. The rows stay
+        // pending and the next minute tries again.
+        try {
+          await deliverDueWebhooks(env, db)
+        } catch {
+          /* recorded on the delivery rows */
+        }
       }),
     )
   },

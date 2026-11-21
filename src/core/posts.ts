@@ -2,6 +2,7 @@ import { and, asc, count, desc, eq, gt, inArray, isNotNull, lt, ne, notInArray, 
 import type { Db } from '../db/index.ts'
 import { broadcastPostTags, broadcasts } from '../db/schema.ts'
 import { slugify } from './ids.ts'
+import { emitWebhook } from './webhooks.ts'
 import { excerptFrom, firstImageFrom, type PostBody, postPlainText } from './render-web.ts'
 
 /**
@@ -168,8 +169,23 @@ export async function publishPost(db: Db, id: number, meta: PostMeta = {}): Prom
     })
     .where(eq(broadcasts.id, id))
 
-  const row = await db.select(postColumns).from(broadcasts).where(eq(broadcasts.id, id)).get()
-  return row as Post
+  const row = (await db.select(postColumns).from(broadcasts).where(eq(broadcasts.id, id)).get()) as Post
+
+  // Only the moment it goes up. Re-publishing a live post to fix a typo is
+  // not news; taking it down and putting it back is.
+  if (!b.publishedAt) {
+    await emitWebhook(db, 'published', () => ({
+      post: {
+        id: row.id,
+        slug: row.slug,
+        title: row.subject,
+        // Filled from SITE_URL at delivery (`webhookEnvelope`); this runs without env.
+        url: null,
+        published_at: row.publishedAt ? new Date(row.publishedAt).toISOString() : null,
+      },
+    }))
+  }
+  return row
 }
 
 /**

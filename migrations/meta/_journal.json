@@ -281,6 +281,13 @@
       "when": 1795249340938,
       "tag": "0039_sad_jean_grey",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "6",
+      "when": 1795249355540,
+      "tag": "0040_huge_bastion",
+      "breakpoints": true
     }
   ]
 }

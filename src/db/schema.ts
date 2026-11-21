@@ -2659,3 +2659,122 @@ export const testimonials = sqliteTable(
 )
 
 export type Testimonial = typeof testimonials.$inferSelect
+// ─────────────────────────────────────────────────────────── outbound webhooks
+
+/**
+ * The events an endpoint can subscribe to. Kōlea's five (SPEC 20.2) plus
+ * `complained`: here a spam complaint is its own status and its own consent
+ * fact, distinct from a hard bounce, and a receiver mirroring the list needs to
+ * hear about both.
+ */
+export const WEBHOOK_EVENTS = [
+  'subscribed',
+  'unsubscribed',
+  'bounced',
+  'complained',
+  'purchased',
+  'published',
+] as const
+export type WebhookEvent = (typeof WEBHOOK_EVENTS)[number]
+
+/**
+ * Where the operator wants facts POSTed. See `core/webhooks.ts`.
+ *
+ * `secret` is stored in the clear, unlike `api_keys.token_hash`: a key is
+ * something we *check*, so a hash is enough, but a signing secret is something
+ * we must *use* on every delivery, so it has to be readable. It is shown to the
+ * operator exactly once, at creation; every screen and tool after that shows
+ * `secret_prefix` only, which is not enough to sign with.
+ *
+ * `events` is a JSON array rather than a junction table: six possible values,
+ * read whole on every emit, never queried by element. Emit loads every active
+ * endpoint (there are a handful) and filters in the Worker.
+ */
+export const webhookEndpoints = sqliteTable(
+  'webhook_endpoints',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    /** https only, public host. `checkWebhookUrl` runs on save AND before every POST. */
+    url: text('url').notNull(),
+    description: text('description').notNull().default(''),
+    events: text('events', { mode: 'json' }).notNull().$type<WebhookEvent[]>(),
+    secret: text('secret').notNull(),
+    secretPrefix: text('secret_prefix').notNull(),
+    isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
+    /**
+     * Why it is off, in words — "switched off" by hand, or switched off after N
+     * failed deliveries in a row. An endpoint that went quiet with no reason on
+     * it is a mystery; with one, it is a to-do.
+     */
+    disabledReason: text('disabled_reason'),
+    disabledAt: ts('disabled_at'),
+    /** Deliveries that used every attempt, in a row. A success resets it. */
+    consecutiveFailures: integer('consecutive_failures').notNull().default(0),
+    lastDeliveredAt: ts('last_delivered_at'),
+    createdAt: ts('created_at').notNull(),
+    updatedAt: ts('updated_at').notNull(),
+  },
+)
+
+/**
+ * One fact to one endpoint, and the whole delivery log (SPEC 20.2).
+ *
+ * ⭐ Emitting writes this row and nothing else — no HTTP on the consent or send
+ * path. The minutely cron claims due rows and POSTs them, so the row IS the
+ * queue: it survives a restart, it is visible, and a `failed` one carries a
+ * "Redeliver" button rather than vanishing (CLAUDE.md: anything observable is
+ * a row).
+ *
+ * `payload` is frozen at emit time so every attempt — and a redelivery a week
+ * later — sends the same bytes about the same moment, not today's version of
+ * the person. `event_id` is shared by every endpoint's copy of one fact, so a
+ * receiver can dedupe on it.
+ *
+ * `dedupe_key` + the partial unique index make a replayed provider webhook or
+ * a re-run of the same fact land once per endpoint. Null means "each call is
+ * its own fact" (unsubscribing twice is two things a person did).
+ */
+export const webhookDeliveries = sqliteTable(
+  'webhook_deliveries',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    endpointId: integer('endpoint_id')
+      .notNull()
+      .references(() => webhookEndpoints.id, { onDelete: 'cascade' }),
+    event: text('event', { enum: WEBHOOK_EVENTS }).notNull(),
+    eventId: text('event_id').notNull(),
+    payload: text('payload', { mode: 'json' }).notNull().$type<Record<string, unknown>>(),
+    occurredAt: ts('occurred_at').notNull(),
+    dedupeKey: text('dedupe_key'),
+    status: text('status', { enum: ['pending', 'delivered', 'failed'] })
+      .notNull()
+      .default('pending'),
+    /** Tries in the current round. Redeliver starts a new round at 0. */
+    attempts: integer('attempts').notNull().default(0),
+    /**
+     * When the cron may next try it. Null once delivered or failed. Also the
+     * claim: a pass pushes it forward before POSTing, so two overlapping ticks
+     * cannot both send the same row.
+     */
+    nextAttemptAt: ts('next_attempt_at'),
+    lastAttemptAt: ts('last_attempt_at'),
+    lastStatusCode: integer('last_status_code'),
+    lastError: text('last_error'),
+    /** First 1,000 characters of what the receiver said. Enough to debug, not a store. */
+    lastResponse: text('last_response'),
+    deliveredAt: ts('delivered_at'),
+    createdAt: ts('created_at').notNull(),
+  },
+  (t) => [
+    // The cron's claim: "pending and due, oldest first".
+    index('webhook_deliveries_due_idx').on(t.status, t.nextAttemptAt),
+    // The delivery log, per endpoint, newest first.
+    index('webhook_deliveries_endpoint_idx').on(t.endpointId, t.createdAt),
+    uniqueIndex('webhook_deliveries_dedupe_key')
+      .on(t.endpointId, t.dedupeKey)
+      .where(sql`dedupe_key is not null`),
+  ],
+)
+
+export type WebhookEndpoint = typeof webhookEndpoints.$inferSelect
+export type WebhookDelivery = typeof webhookDeliveries.$inferSelect

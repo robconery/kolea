@@ -17,6 +17,7 @@
  * | `ASSETS`     | 404 fetcher                   | Static assets are Cloudflare's, not ours. |
  * | mail         | `EMAIL_PROVIDER=console`      | The kill switch (CLAUDE.md). Mail lands in `dev_outbox` and the spec reads it. |
  * | DNS          | `DNS_RESOLVER=fake`           | Sending-domain lookups read `providers/dns.ts`'s in-memory zone, never DoH. |
+ * | webhooks     | `WEBHOOK_TRANSPORT=fake`      | Outbound POSTs are recorded in memory, never sent. |
  *
  * ⚠️ `EMAIL_PROVIDER` is `console` here and must stay that way. A spec that
  * flips it to `resend` would need `RESEND_API_KEY`, and the only thing standing
@@ -116,6 +117,9 @@ export function createWorld(overrides: Partial<Env> = {}): World {
     // keeps every spec off the real DNS; Cloudflare stays unconfigured (no
     // token, no adapter) unless a spec asks for the fake.
     DNS_RESOLVER: 'fake',
+    // Outbound webhooks go to an in-memory fake (`providers/webhooks.ts`), never
+    // the network. A spec reads and scripts it with `fakeTransportFor(env)`.
+    WEBHOOK_TRANSPORT: 'fake',
 
     ...overrides,
   }

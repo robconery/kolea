@@ -6,6 +6,7 @@ import { getCampaignBySlug, lastTouch, recordTouch } from './campaigns.ts'
 import { isValidEmail, normalizeEmail } from './ids.ts'
 import { exitSequence } from './sequences.ts'
 import { addTags, findOrCreateTag, upsertSubscriber } from './subscribers.ts'
+import { emitWebhook, salePayload, subscriberPayload } from './webhooks.ts'
 
 export interface SaleInput {
   email: string
@@ -207,6 +208,22 @@ export async function recordSale(db: Db, input: SaleInput): Promise<SaleResult> 
     },
     dedupeKey: `${wantsRefund ? 'refunded' : 'purchased'}:${saleId}`,
   })
+
+  // A sale that arrives already refunded is history, not a purchase.
+  if (!wantsRefund) {
+    await emitWebhook(
+      db,
+      'purchased',
+      async () => {
+        const [subscriber, sale] = await Promise.all([
+          subscriberPayload(db, subscriberId),
+          salePayload(db, saleId),
+        ])
+        return subscriber && sale ? { subscriber, sale } : null
+      },
+      { dedupeKey: `purchased:${saleId}`, occurredAt: input.occurredAt ?? now },
+    )
+  }
 
   // A campaign named on the sale itself is a touch we hadn't seen — record it so
   // the campaign's people count includes the person who bought from it.

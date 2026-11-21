@@ -20,6 +20,7 @@ import { registerSequences } from './tools/sequences.ts'
 import { registerStripe } from './tools/stripe.ts'
 import { registerTags } from './tools/tags.ts'
 import { registerTransactional } from './tools/transactional.ts'
+import { registerWebhooks } from './tools/webhooks.ts'
 
 /**
  * Constant-time string compare.
@@ -153,6 +154,7 @@ async function serve(
     registerStripe(server, ctx)
     registerDeliverability(server, ctx)
     registerOps(server, ctx)
+    registerWebhooks(server, ctx)
 
     registerResources(server, ctx)
     registerPrompts(server)

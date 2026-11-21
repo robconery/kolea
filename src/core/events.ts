@@ -6,6 +6,7 @@ import { logActivity } from './activity.ts'
 import { touchFromMessage } from './campaigns.ts'
 import { suppressAddress, unsubscribeAll } from './consent.ts'
 import { applyTagRules } from './tagging.ts'
+import { emitWebhook, subscriberPayload } from './webhooks.ts'
 
 export async function recordEvent(
   db: Db,
@@ -148,6 +149,17 @@ async function logLeaving(
     // provider replays the webhook.
     dedupeKey: `${type}:${subscriberId}`,
   })
+  // Same key, same reason: a replayed provider webhook reaches a receiver once.
+  await emitWebhook(
+    db,
+    type,
+    async () => {
+      const subscriber = await subscriberPayload(db, subscriberId)
+      if (!subscriber) return null
+      return type === 'bounced' ? { subscriber, bounce: 'hard' } : { subscriber }
+    },
+    { dedupeKey: `${type}:${subscriberId}` },
+  )
 }
 
 /**
