@@ -17,6 +17,7 @@ import { handleMcp } from './mcp/server.ts'
 import type { Env, SendJob } from './types.ts'
 import { admin } from './web/admin.tsx'
 import { activityAdmin } from './web/admin-activity.tsx'
+import { logsAdmin } from './web/admin-logs.tsx'
 import { analytics } from './web/admin-analytics.tsx'
 import { analyticsSequences } from './web/admin-analytics-sequences.tsx'
 import { audience } from './web/admin-audience.tsx'
@@ -111,6 +112,8 @@ app.route('/', audience)
 // The sequence screens come first so `/analytics/sequences/:id` is matched by
 // its own router rather than swallowed by anything broader.
 app.route('/', activityAdmin)
+// Read-only like Activity: the event log, over the tables the facts live in.
+app.route('/', logsAdmin)
 app.route('/', analyticsSequences)
 app.route('/', analytics)
 app.route('/', tagging)

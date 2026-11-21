@@ -1066,6 +1066,10 @@ export const messages = sqliteTable(
     // "Has this sale already been thanked?" — asked before every purchase send.
     index('messages_sale_idx').on(t.saleId),
     index('messages_status_idx').on(t.status),
+    // The event log (`core/event-log.ts`) walks recent mail newest-first to find
+    // failures, holds and single sends, and stops at a page. Without this every
+    // Logs page would scan the whole table, which is every mail ever sent.
+    index('messages_created_idx').on(t.createdAt),
     uniqueIndex('messages_idempotency_key')
       .on(t.idempotencyKey)
       .where(sql`idempotency_key is not null`),

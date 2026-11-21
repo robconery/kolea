@@ -941,6 +941,8 @@ const ICONS: Record<string, string> = {
   ancon: 'M12 3.9a8.1 8.1 0 1 0 8.1 8.1H12V3.9Z',
   /* A pulse. The list either has one or it doesn't. */
   anhl: 'M3.8 12.4h3.1l2-4.6 2.7 9 2.5-6.3 1.6 1.9h4.5',
+  // A page of lines with a lens: the log you search.
+  logs: 'M5 6.5h9M5 10.5h5M5 14.5h4M18.6 15.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM17.8 17.7l2.4 2.4',
   set: 'M4.4 8h9.2M17.6 8h2M4.4 16h2.2M10.6 16h9M15.4 5.6v4.8M8.2 13.6v4.8',
   help: 'M12 3.8a8.2 8.2 0 1 0 0 16.4 8.2 8.2 0 0 0 0-16.4Zm-2.4 5.5a2.5 2.5 0 1 1 3.3 2.4c-.6.2-.9.8-.9 1.4v.6m0 2.5v.1',
 }
@@ -1015,6 +1017,9 @@ const NAV: ({ grp: string } | { href: string; key: string; label: string })[] = 
   { href: '/site', key: 'site', label: 'Profile' },
   { href: '/themes', key: 'theme', label: 'Themes' },
   { href: '/consent', key: 'cons', label: 'Consent' },
+  // Everything that happened, in words. With the setup screens because it is
+  // where you go when something looks wrong, not a number you read daily.
+  { href: '/logs', key: 'logs', label: 'Logs' },
   { href: '/settings', key: 'set', label: 'Settings' },
   { href: '/help', key: 'help', label: 'Help' },
 ]
