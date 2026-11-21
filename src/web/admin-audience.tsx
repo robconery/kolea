@@ -82,6 +82,9 @@ audience.get('/subscribers', async (c) => {
           <a class="btn" href="/subscribers/import">
             Import CSV
           </a>
+          <a class="btn" href="/subscribers/clean-up">
+            Clean up
+          </a>
           <a class="btn primary" href="/subscribers/new">
             Add
           </a>

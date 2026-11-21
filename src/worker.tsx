@@ -20,6 +20,7 @@ import { activityAdmin } from './web/admin-activity.tsx'
 import { analytics } from './web/admin-analytics.tsx'
 import { analyticsSequences } from './web/admin-analytics-sequences.tsx'
 import { audience } from './web/admin-audience.tsx'
+import { cleanupAdmin } from './web/admin-cleanup.tsx'
 import { campaignsAdmin } from './web/admin-campaigns.tsx'
 import { conversionsAdmin } from './web/admin-conversions.tsx'
 import { purchaseMailAdmin } from './web/admin-purchase-mail.tsx'
@@ -107,6 +108,8 @@ app.all('/mcp/:secret', (c) =>
 
 app.use('*', requireOperator)
 app.route('/', admin)
+// Before `audience`, whose `/subscribers/:id` would claim `/subscribers/clean-up`.
+app.route('/', cleanupAdmin)
 app.route('/', audience)
 // Read-only by construction — see the header note in `web/admin-analytics.tsx`.
 // The sequence screens come first so `/analytics/sequences/:id` is matched by

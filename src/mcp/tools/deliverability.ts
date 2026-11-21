@@ -14,7 +14,7 @@ import { normalizeEmail } from '../../core/ids.ts'
 import { devOutbox, events, messages, sequences, subscribers, suppressions } from '../../db/schema.ts'
 import { type Ctx, clampLimit, defineTool, fail, ok } from '../kit.ts'
 
-const REASONS = ['unsubscribed_all', 'hard_bounce', 'complaint', 'manual'] as const
+const REASONS = ['unsubscribed_all', 'hard_bounce', 'complaint', 'manual', 'pruned'] as const
 
 /**
  * `unsubscribed_all` is missing on purpose: that reason means the subscriber
