@@ -1538,6 +1538,113 @@ export const saleItems = sqliteTable(
   ],
 )
 
+// ──────────────────────────────────────────── store: offers & checkouts
+
+/**
+ * What the public site sells. One row per product the operator put on sale.
+ *
+ * ⚠️ A separate table, not a `for_sale` column on `stripe_products`: the
+ * catalog is a mirror Stripe owns and the sync overwrites, and "Rob wants this
+ * on the site" is not Stripe's fact to overwrite. Taking a product off sale
+ * deletes this row and nothing else — checkouts already started keep their own
+ * copy of the price, and sales never point here.
+ *
+ * The page is `/offers/<slug>`. The slug defaults to the product's
+ * `metadata.sku` (the key purchase mail and conversions already agree on) and
+ * is the operator's to change. A price that goes inactive in Stripe takes the
+ * page down by itself (checked on every view and every Buy), so this row can
+ * outlive a price without the site selling something Stripe would refuse.
+ */
+export const storeOffers = sqliteTable(
+  'store_offers',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    /** One listing per product. Cascades: a product gone from the mirror is not
+        for sale, and a dangling listing would be a page that cannot sell. */
+    productId: text('product_id')
+      .notNull()
+      .references(() => stripeProducts.id, { onDelete: 'cascade' }),
+    /** The one price Buy opens. One-time only: Checkout runs in payment mode,
+        and a recurring price is Members/Premium, not the store. */
+    priceId: text('price_id')
+      .notNull()
+      .references(() => stripePrices.id, { onDelete: 'cascade' }),
+    /** `/offers/<slug>`. `[a-z0-9-]`, never `return` or `cancel`. */
+    slug: text('slug').notNull(),
+    createdAt: ts('created_at').notNull(),
+    updatedAt: ts('updated_at').notNull(),
+  },
+  (t) => [
+    uniqueIndex('store_offers_product_key').on(t.productId),
+    uniqueIndex('store_offers_slug_key').on(t.slug),
+  ],
+)
+
+/**
+ * ⭐ Every Checkout a reader starts, written BEFORE Stripe is asked (Kōlea
+ * SPEC 16.7.4.1, its `offer_checkouts`).
+ *
+ * The row is what the webhook trusts. Its `token` rides to Stripe as
+ * `metadata.bm_checkout` and `client_reference_id`, and `checkout.session.
+ * completed` is matched back to it only when the session id is the one this
+ * row opened — a session naming somebody else's token completes nothing.
+ *
+ * It holds the converting post (the broadcast whose link brought the reader to
+ * Buy), because that is a fact only the click knows: by the time the webhook
+ * lands, the reader is a charge and an email address. No email is kept here;
+ * Stripe collects it, and the sale has it. `ip` exists for the hourly cap.
+ */
+export const storeCheckouts = sqliteTable(
+  'store_checkouts',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    /** 40 random characters. In the return URL and in Stripe's metadata. */
+    token: text('token').notNull(),
+    /** Frozen at Buy. Not an FK to `store_offers`: taking a product off sale
+        must not erase the record of a checkout already paid for. */
+    stripePriceId: text('stripe_price_id').notNull(),
+    stripeProductId: text('stripe_product_id').notNull(),
+    offerSlug: text('offer_slug').notNull(),
+    /** What Stripe was asked to charge, so the row reads without the catalog. */
+    amountCents: integer('amount_cents').notNull(),
+    currency: text('currency').notNull(),
+    // nullable-fk: the post the reader came from, validated at Buy against the
+    // published posts. Null for a reader who arrived any other way. `set null`
+    // so unpublishing or deleting a post never touches money.
+    convertedFromBroadcastId: integer('converted_from_broadcast_id').references(
+      () => broadcasts.id,
+      { onDelete: 'set null' },
+    ),
+    // nullable-fk: the buyer, once the sale says who that is. The site has no
+    // reader sign-in, so this is never known at Buy.
+    subscriberId: integer('subscriber_id').references(() => subscribers.id, {
+      onDelete: 'set null',
+    }),
+    // nullable-fk: set when the webhook books the money.
+    saleId: integer('sale_id').references(() => sales.id, { onDelete: 'set null' }),
+    /** started → open (Stripe answered) → completed (webhook booked it), or
+        failed (Stripe refused to open one; `lastError` says why). */
+    status: text('status', { enum: ['started', 'open', 'completed', 'failed'] })
+      .notNull()
+      .default('started'),
+    stripeSessionId: text('stripe_session_id'),
+    lastError: text('last_error'),
+    ip: text('ip'),
+    userAgent: text('user_agent'),
+    createdAt: ts('created_at').notNull(),
+    completedAt: ts('completed_at'),
+  },
+  (t) => [
+    uniqueIndex('store_checkouts_token_key').on(t.token),
+    index('store_checkouts_ip_idx').on(t.ip, t.createdAt),
+    index('store_checkouts_broadcast_idx').on(t.convertedFromBroadcastId),
+    index('store_checkouts_sale_idx').on(t.saleId),
+  ],
+)
+
+export type StoreOffer = typeof storeOffers.$inferSelect
+export type StoreCheckout = typeof storeCheckouts.$inferSelect
+
 export type StripeEvent = typeof stripeEvents.$inferSelect
 export type StripeProduct = typeof stripeProducts.$inferSelect
 export type StripePrice = typeof stripePrices.$inferSelect

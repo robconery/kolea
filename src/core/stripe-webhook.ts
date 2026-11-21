@@ -5,6 +5,7 @@ import type { Env } from '../types.ts'
 import { recordConversion } from './conversions.ts'
 import { type SaleResult, recordSale } from './sales.ts'
 import { upsertPrice, upsertProduct } from './stripe-catalog.ts'
+import { completeStoreCheckout, storeTokenOf } from './store.ts'
 import {
   type StripeCharge,
   type StripeCheckoutSession,
@@ -331,6 +332,14 @@ async function onCheckoutSession(
   if (!email) return { status: 'ignored', note: 'no email on the checkout session' }
 
   const chargeId = await chargeIdFor(env, session.payment_intent)
+  const storeToken = storeTokenOf(session)
+  if (!chargeId && storeToken) {
+    // A store checkout carries the one fact the charge does not — the post the
+    // reader bought from. Ignoring this event would let `charge.succeeded` book
+    // the money and lose that for good, so it fails instead: the 500 asks
+    // Stripe to redeliver, and by then the charge exists (Kōlea SPEC 16.7.4.2).
+    throw new Error('store checkout paid but no charge resolved yet; Stripe will redeliver')
+  }
   if (!chargeId) {
     // No charge means no shared key with the reconcile. Recording under the
     // session id would create a second row for the same money the moment a
@@ -367,10 +376,14 @@ async function onCheckoutSession(
   // AFTER the items land — both the kind and the offer are read off them.
   const conv = await recordConversion(db, result.saleId, items.data)
 
+  // A store checkout also closes its own row and pins the converting post on
+  // the sale. Nothing else: no mail, no tags — the same sale any checkout makes.
+  const store = storeToken ? await completeStoreCheckout(db, session, result) : null
+
   return {
     status: 'processed',
     saleId: result.saleId,
-    note: `checkout ${result.status}, ${attached} line item(s) attached, conversion ${conv.status}${conv.kindSlug ? ` (${conv.kindSlug})` : ''}`,
+    note: `checkout ${result.status}, ${attached} line item(s) attached, conversion ${conv.status}${conv.kindSlug ? ` (${conv.kindSlug})` : ''}${store ? `, store checkout ${store}` : ''}`,
   }
 }
 
