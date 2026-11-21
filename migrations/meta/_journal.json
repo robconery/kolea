@@ -337,6 +337,13 @@
       "when": 1795250396730,
       "tag": "0047_sharp_purple_man",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "6",
+      "when": 1795250425414,
+      "tag": "0048_charming_lethal_legion",
+      "breakpoints": true
     }
   ]
 }

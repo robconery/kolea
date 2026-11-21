@@ -925,6 +925,7 @@ const ICONS: Record<string, string> = {
   undel: 'M4 7.5h16v10H4v-10Zm0 0 8 5.5 8-5.5M15.5 3.8l-2 2 2 2M13.5 5.8h4a2.5 2.5 0 0 1 0 5',
   /* A sheet with a filled line and an arrow leaving it: fill this in, get that back. */
   forms: 'M6.2 3.8h11.6v16.4H6.2V3.8Zm2.8 4.2h6M9 11.2h3.2M14.8 12.6v5m0 0 2-2m-2 2-2-2',
+  launch: 'M12 3.4c2.6 1.9 4 4.6 4 8.1v4.3H8v-4.3c0-3.5 1.4-6.2 4-8.1ZM8 13.6l-2.6 2.6v3h2.6M16 13.6l2.6 2.6v3H16M10.6 19.4h2.8M12 9.4a1.3 1.3 0 1 0 0 2.6 1.3 1.3 0 0 0 0-2.6Z',
   camp: 'M12 3.6a8.4 8.4 0 1 0 0 16.8 8.4 8.4 0 0 0 0-16.8Zm0 4.6a3.8 3.8 0 1 0 0 7.6 3.8 3.8 0 0 0 0-7.6Zm0 3.3a.5.5 0 1 0 0 1 .5.5 0 0 0 0-1Z',
   store: 'M5.6 8.2h12.8l1 11.4H4.6l1-11.4Zm3.4 0V6.4a3 3 0 0 1 6 0v1.8',
   /* A dollar sign: the mail that goes out after money comes in. */
@@ -1025,6 +1026,9 @@ const NAV: ({ grp: string } | { href: string; key: string; label: string })[] = 
   { href: '/analytics/health', key: 'anhl', label: 'List health' },
   { grp: 'Money' },
   { href: '/campaigns', key: 'camp', label: 'Campaigns' },
+  // Directly under Campaigns: a launch is a campaign with a plan, built in seven
+  // steps, and it hands off to the mail screens rather than sending itself.
+  { href: '/launches', key: 'launch', label: 'Launch Studio' },
   // ⭐ Its own slot rather than a tab under Campaigns: a form is where a lead
   // magnet is built and where the file lives, and it was unfindable one level in.
   { href: '/forms', key: 'forms', label: 'Forms' },
