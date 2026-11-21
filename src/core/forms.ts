@@ -1,6 +1,6 @@
-import { and, asc, count, eq, sql } from 'drizzle-orm'
+import { and, asc, count, desc, eq, inArray, isNull, like, notInArray, sql } from 'drizzle-orm'
 import type { Db } from '../db/index.ts'
-import { type DocNode, campaigns, formTags, forms, messages, sequences, tags } from '../db/schema.ts'
+import { type DocNode, campaigns, formTags, forms, messages, sequences, subscribers, tags } from '../db/schema.ts'
 import type { Env } from '../types.ts'
 import { logActivity } from './activity.ts'
 import { recordTouch } from './campaigns.ts'
@@ -485,4 +485,105 @@ export async function submitForm(
     message: form.successMessage,
     redirectUrl: form.redirectUrl,
   }
+}
+
+// ───────────────────────────────────────────────── replies that failed
+
+export interface FailedReply {
+  messageId: number
+  subscriberId: number
+  email: string
+  failedAt: Date
+  error: string | null
+}
+
+/**
+ * A real reply's idempotency key, `form:<form>:<subscriber>:<day>`. Preview
+ * copies are `kind: 'form'` too, but keyed `preview:…`, and a failed test send
+ * to the operator is not somebody's missing download.
+ */
+const REPLY_KEY = (formId: number) => `form:${formId}:%`
+
+/**
+ * The people whose reply from this form failed and never went since.
+ *
+ * One row per person, their latest failure. Left out, so a resend can never
+ * be their second copy or reach someone who should not get it:
+ *  - anyone with a reply from this form that is `sent` or still `queued`, on
+ *    any day (a failure on Monday and a re-submit that worked on Tuesday);
+ *  - a row the provider accepted (`provider_message_id`), whatever its status;
+ *  - anyone no longer `active`: unsubscribed, bounced or complained since.
+ *    The first try follows the transactional rule — someone who left still
+ *    gets the file they asked for at that moment — but a resend is the
+ *    operator's act days later, and Kōlea's rule there is "still on the list".
+ */
+export async function failedReplies(db: Db, formId: number): Promise<FailedReply[]> {
+  const went = db
+    .select({ id: messages.subscriberId })
+    .from(messages)
+    .where(
+      and(
+        eq(messages.kind, 'form'),
+        eq(messages.formId, formId),
+        like(messages.idempotencyKey, REPLY_KEY(formId)),
+        inArray(messages.status, ['sent', 'queued']),
+      ),
+    )
+
+  const rows = await db
+    .select({
+      messageId: messages.id,
+      subscriberId: messages.subscriberId,
+      email: subscribers.email,
+      failedAt: messages.createdAt,
+      error: messages.error,
+    })
+    .from(messages)
+    .innerJoin(subscribers, eq(subscribers.id, messages.subscriberId))
+    .where(
+      and(
+        eq(messages.kind, 'form'),
+        eq(messages.formId, formId),
+        like(messages.idempotencyKey, REPLY_KEY(formId)),
+        eq(messages.status, 'failed'),
+        isNull(messages.providerMessageId),
+        eq(subscribers.status, 'active'),
+        notInArray(messages.subscriberId, went),
+      ),
+    )
+    .orderBy(desc(messages.createdAt), desc(messages.id))
+    .limit(1000)
+    .all()
+
+  const seen = new Set<number>()
+  return rows.filter((r) => (seen.has(r.subscriberId) ? false : (seen.add(r.subscriberId), true)))
+}
+
+/**
+ * Send each failed reply again, once per person.
+ *
+ * The same row goes back to `queued` — no new message, so the per-day
+ * idempotency key still holds — and through `dispatch`, so the send path
+ * re-checks consent immediately before the provider call exactly as on the
+ * first try. The flip is guarded on `status = 'failed'`, which makes a double
+ * click (or two agents) harmless: the second call finds nothing failed.
+ *
+ * What goes out is the reply as it was when they asked for it (the body is
+ * snapshotted on the row), with their own download link merged in at send.
+ */
+export async function resendFailedReplies(env: Env, db: Db, formId: number): Promise<FailedReply[]> {
+  const rows = await failedReplies(db, formId)
+  const ids = rows.map((r) => r.messageId)
+  const flipped: number[] = []
+  for (let i = 0; i < ids.length; i += 90) {
+    const done = await db
+      .update(messages)
+      .set({ status: 'queued', error: null })
+      .where(and(inArray(messages.id, ids.slice(i, i + 90)), eq(messages.status, 'failed')))
+      .returning({ id: messages.id })
+    flipped.push(...done.map((d) => d.id))
+  }
+  if (flipped.length) await dispatch(env, db, flipped)
+  const queued = new Set(flipped)
+  return rows.filter((r) => queued.has(r.messageId))
 }

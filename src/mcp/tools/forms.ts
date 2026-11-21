@@ -4,15 +4,18 @@ import { downloadUrl, fileStats } from '../../core/downloads.ts'
 import {
   createForm,
   deleteForm,
+  failedReplies,
   formDeliveryCount,
   formTagIds,
   formTagList,
   getForm,
   listForms,
+  resendFailedReplies,
   setFormReply,
   updateForm,
 } from '../../core/forms.ts'
 import { type Ctx, defineTool, fail, ok } from '../kit.ts'
+import { SEND_DISABLED, sendingAllowed } from '../preflight.ts'
 
 export function registerForms(server: McpServer, ctx: Ctx): void {
   defineTool(
@@ -212,6 +215,34 @@ export function registerForms(server: McpServer, ctx: Ctx): void {
       if (!form) return fail('No such form.')
       await deleteForm(ctx.db, id)
       return ok({ deleted: true, wasSubmitted: form.submitCount })
+    },
+  )
+
+  defineTool(
+    server,
+    ctx,
+    'form_resend_replies',
+    {
+      description:
+        "The people whose reply (the lead-magnet mail) from this form failed and never went since, and who are still on the list. By default it only LISTS them (who, when, why). With send: true it sends the reply to each of them once: anyone who has since received it, or has unsubscribed, bounced or complained, is left out, and consent is checked again just before the provider call. Fix whatever made them fail first (see health).",
+      inputSchema: z.object({
+        id: z.number().int().describe('The form'),
+        send: z.boolean().optional().describe('false (the default) only lists who would get it.'),
+      }),
+      annotations: { destructiveHint: true, idempotentHint: true },
+    },
+    async ({ id, send }) => {
+      if (!(await getForm(ctx.db, id))) return fail('No such form.', 'List them with form_list.')
+      const people = (rows: Awaited<ReturnType<typeof failedReplies>>) =>
+        rows.map((r) => ({ email: r.email, failedAt: r.failedAt, error: r.error }))
+
+      if (send !== true) {
+        const rows = await failedReplies(ctx.db, id)
+        return ok({ sent: false, wouldSend: rows.length, people: people(rows) })
+      }
+      if (!sendingAllowed(ctx.env)) return fail(SEND_DISABLED)
+      const rows = await resendFailedReplies(ctx.env, ctx.db, id)
+      return ok({ sent: true, queued: rows.length, people: people(rows) })
     },
   )
 }

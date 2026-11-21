@@ -22,11 +22,13 @@ import {
 import {
   createForm,
   deleteForm,
+  failedReplies,
   formDeliveryCount,
   formViewStats,
   formTagList,
   getForm,
   listForms,
+  resendFailedReplies,
   setFormReply,
   updateForm,
 } from '../core/forms.ts'
@@ -915,13 +917,14 @@ campaignsAdmin.get('/forms/:id', async (c) => {
   const form = await getForm(db, id)
   if (!form) return c.notFound()
 
-  const [seqs, allCampaigns, theirTags, stats, replied, viewStats] = await Promise.all([
+  const [seqs, allCampaigns, theirTags, stats, replied, viewStats, failed] = await Promise.all([
     db.select().from(sequences).orderBy(asc(sequences.name)).all(),
     listCampaigns(db),
     formTagList(db, id),
     fileStats(db, id),
     formDeliveryCount(db, id),
     formViewStats(db, 30),
+    failedReplies(db, id),
   ])
   const seen = viewStats.find((v) => v.id === id)
 
@@ -1211,6 +1214,47 @@ await fetch('${endpoint}', {
         </div>
       </div>
 
+      {failed.length ? (
+        <div class="card">
+          <div class="card-h">
+            <h2>Replies that didn't go</h2>
+            <span class="pill">{failed.length}</span>
+          </div>
+          <div class="card-b">
+            <p style="margin:0 0 12px">
+              {failed.length === 1 ? 'One person' : `${failed.length} people`} asked for this and never got the reply.
+              Once whatever stopped it is fixed, send it to them now. Each gets it once: nobody who has since received
+              it, and nobody who has left the list, bounced or complained, is mailed.
+            </p>
+            <table>
+              <thead>
+                <tr>
+                  <th>Who</th>
+                  <th>When it failed</th>
+                  <th>Why</th>
+                </tr>
+              </thead>
+              <tbody>
+                {failed.slice(0, 20).map((f) => (
+                  <tr>
+                    <td>{f.email}</td>
+                    <td class="mono">{fmtDate(f.failedAt)}</td>
+                    <td class="faint">{f.error ?? 'unknown'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {failed.length > 20 ? <p class="faint">…and {failed.length - 20} more.</p> : null}
+            <form method="post" action={`/forms/${id}/resend-replies`} style="margin-top:14px">
+              <input type="hidden" name="confirm" value="resend" />
+              <button class="btn accent">
+                Send the reply to {failed.length === 1 ? 'them' : `these ${failed.length} people`}
+              </button>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
       <div class="card">
         <div class="card-h">
           <h2>Settings</h2>
@@ -1252,6 +1296,25 @@ campaignsAdmin.post('/forms/:id', async (c) => {
     tagIds: await readTagIds(db, String(body.get('tags') ?? '')),
   })
   return c.redirect(`/forms/${id}?flash=Saved.`)
+})
+
+/**
+ * Send the replies that failed, once each. The confirm field is what the
+ * button posts; anything else (a stray POST, a crawler) changes nothing.
+ * The rules — who is left out, one per person — are `resendFailedReplies`.
+ */
+campaignsAdmin.post('/forms/:id/resend-replies', async (c) => {
+  const db = getDb(c.env)
+  const id = Number(c.req.param('id'))
+  if (!(await getForm(db, id))) return c.notFound()
+  const body = await c.req.formData()
+  if (String(body.get('confirm') ?? '') !== 'resend') return c.redirect(`/forms/${id}`)
+
+  const sent = await resendFailedReplies(c.env, db, id)
+  const flash = sent.length
+    ? `Sent the reply again to ${sent.length === 1 ? sent[0]!.email : `${sent.length} people`}.`
+    : 'Nothing to resend: every reply has gone, or the people left the list.'
+  return c.redirect(`/forms/${id}?flash=${encodeURIComponent(flash)}`)
 })
 
 /**
