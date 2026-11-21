@@ -1,5 +1,5 @@
 import { eq } from 'drizzle-orm'
-import { randomToken, sha256 } from '../core/ids.ts'
+import { randomToken, sha256 } from './ids.ts'
 import type { Db } from '../db/index.ts'
 import { preflightTokens } from '../db/schema.ts'
 

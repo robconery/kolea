@@ -22,6 +22,20 @@ export async function verifyApiKey(
   header: string | undefined,
   requiredScope: KeyScope = 'send',
 ) {
+  const key = await liveApiKey(db, header)
+  if (!key || !scopeSatisfies(key.scope, requiredScope)) return null
+
+  await db.update(apiKeys).set({ lastUsedAt: new Date() }).where(eq(apiKeys.id, key.id))
+  return key
+}
+
+/**
+ * The live (present, unrevoked) key a bearer header names, whatever its scope,
+ * or null. For `/api/v1`, which answers 401 for "no usable key" and 403 for
+ * "a real key that may not do this" — the way Kōlea's REST API does (SPEC
+ * 20.1). The scope check is the caller's, and so is stamping `last_used_at`.
+ */
+export async function liveApiKey(db: Db, header: string | undefined) {
   const token = header?.startsWith('Bearer ') ? header.slice(7).trim() : ''
   if (!token) return null
 
@@ -31,8 +45,10 @@ export async function verifyApiKey(
     .where(eq(apiKeys.tokenHash, await sha256(token)))
     .get()
   if (!key || key.revokedAt) return null
-  if (!scopeSatisfies(key.scope, requiredScope)) return null
-
-  await db.update(apiKeys).set({ lastUsedAt: new Date() }).where(eq(apiKeys.id, key.id))
   return key
+}
+
+/** Stamp a key's last use. */
+export async function touchApiKey(db: Db, id: number): Promise<void> {
+  await db.update(apiKeys).set({ lastUsedAt: new Date() }).where(eq(apiKeys.id, id))
 }

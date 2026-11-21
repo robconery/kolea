@@ -1,5 +1,5 @@
 import type { McpServer } from '@modelcontextprotocol/server'
-import { and, count, desc, eq, gte } from 'drizzle-orm'
+import { and, desc, eq } from 'drizzle-orm'
 import * as z from 'zod/v4'
 import { AGENT_SENSITIVE_OFF, agentSendAllowed, agentSensitiveAllowed } from '../../core/agents.ts'
 import { KEY_SCOPES, listApiKeys, mintApiKey, revokeApiKey } from '../../core/api-keys.ts'
@@ -10,21 +10,11 @@ import {
   searchLog,
 } from '../../core/event-log.ts'
 import { healthReport } from '../../core/health.ts'
-import { revenueTotals } from '../../core/sales.ts'
+import { statsOverview } from '../../core/overview.ts'
 import { trackingBaseUrl } from '../../core/tracking-host.ts'
-import {
-  broadcasts,
-  campaigns,
-  events,
-  mcpCalls,
-  messages,
-  sequences,
-  subscribers,
-} from '../../db/schema.ts'
+import { mcpCalls } from '../../db/schema.ts'
 import { type Ctx, clampLimit, defineTool, fail, failed, money, ok } from '../kit.ts'
 import { MAX_ROWS, checkQuery } from '../sql.ts'
-
-const DAY_MS = 24 * 60 * 60 * 1000
 
 export function registerOps(server: McpServer, ctx: Ctx): void {
   defineTool(
@@ -40,72 +30,8 @@ export function registerOps(server: McpServer, ctx: Ctx): void {
       annotations: { readOnlyHint: true },
     },
     async ({ days }) => {
-      const window = days ?? 30
-      const since = new Date(Date.now() - window * DAY_MS)
-
-      const [byStatus, sends, engagement, liveSequences, activeCampaigns, totals] =
-        await Promise.all([
-          ctx.db
-            .select({ status: subscribers.status, n: count() })
-            .from(subscribers)
-            .groupBy(subscribers.status)
-            .all(),
-          ctx.db
-            .select({ status: messages.status, n: count() })
-            .from(messages)
-            .where(gte(messages.createdAt, since))
-            .groupBy(messages.status)
-            .all(),
-          ctx.db
-            .select({ type: events.type, machine: events.machine, n: count() })
-            .from(events)
-            .where(gte(events.occurredAt, since))
-            .groupBy(events.type, events.machine)
-            .all(),
-          ctx.db
-            .select({ n: count() })
-            .from(sequences)
-            .where(eq(sequences.isActive, true))
-            .get(),
-          ctx.db
-            .select({ n: count() })
-            .from(campaigns)
-            .where(eq(campaigns.status, 'active'))
-            .get(),
-          revenueTotals(ctx.db, since.getTime()),
-        ])
-
-      const sent = sends.find((s) => s.status === 'sent')?.n ?? 0
-      // Reader opens only; machine opens (Apple MPP, scanners) are counted apart.
-      const opens = engagement.find((e) => e.type === 'open' && !e.machine)?.n ?? 0
-      const machineOpens = engagement.find((e) => e.type === 'open' && e.machine)?.n ?? 0
-      const clicks = engagement.find((e) => e.type === 'click')?.n ?? 0
-      const pct = (n: number) => (sent ? `${Math.round((n / sent) * 100)}%` : 'n/a')
-
-      return ok({
-        windowDays: window,
-        audience: Object.fromEntries(byStatus.map((r) => [r.status, r.n])),
-        messages: Object.fromEntries(sends.map((r) => [r.status, r.n])),
-        engagement: {
-          ...Object.fromEntries(engagement.filter((r) => !r.machine).map((r) => [r.type, r.n])),
-          machineOpens,
-          // Rates against `sent`, not against delivered — the mailer only knows
-          // it handed the message over, and pretending otherwise inflates them.
-          openRate: pct(opens),
-          clickRate: pct(clicks),
-        },
-        revenue: totals.map((t) => ({ ...t, total: money(t.cents, t.currency) })),
-        liveSequences: liveSequences?.n ?? 0,
-        activeCampaigns: activeCampaigns?.n ?? 0,
-        draftBroadcasts:
-          (
-            await ctx.db
-              .select({ n: count() })
-              .from(broadcasts)
-              .where(eq(broadcasts.status, 'draft'))
-              .get()
-          )?.n ?? 0,
-      })
+      const o = await statsOverview(ctx.db, days ?? 30)
+      return ok({ ...o, revenue: o.revenue.map((t) => ({ ...t, total: money(t.cents, t.currency) })) })
     },
   )
 

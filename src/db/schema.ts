@@ -1585,8 +1585,8 @@ export const apiKeys = sqliteTable(
      * weaker one. A key minted before this column existed stays `send`, which is
      * the safe reading of "we don't know what this was for".
      *
-     * `read` is for the REST API to come (Kōlea SPEC 20.1): it reads, and it can
-     * neither send nor reach MCP. MCP stays `admin`-only rather than filtering
+     * `read` is for the REST API (`/api/v1`, Kōlea SPEC 20.1): its GETs, and
+     * nothing else — it can neither write, send, nor reach MCP. MCP stays `admin`-only rather than filtering
      * its tools by scope, because one gate at the door is a gate that cannot be
      * forgotten on the 104th tool. Widening the enum is not a migration: SQLite
      * stores it as text and the app is the only writer.
@@ -1599,6 +1599,29 @@ export const apiKeys = sqliteTable(
     revokedAt: ts('revoked_at'),
   },
   (t) => [uniqueIndex('api_keys_token_hash_key').on(t.tokenHash)],
+)
+
+/**
+ * Requests per key per clock minute, for the REST API's rate limit (Kōlea SPEC
+ * 13.5, 20.1: 120 a minute per key). One row per key per minute, bumped with an
+ * upsert, so a check costs one write and never a scan of the audit trail.
+ *
+ * `minute` is epoch-ms / 60,000 — an integer bucket, not a timestamp, because
+ * the only question asked of it is "this minute or not". A key's older buckets
+ * are deleted the first time it is used in a new minute, so the table holds at
+ * most one row per key that was used recently. Cascades with the key: a deleted
+ * key has nothing left to count.
+ */
+export const apiRateWindows = sqliteTable(
+  'api_rate_windows',
+  {
+    apiKeyId: integer('api_key_id')
+      .notNull()
+      .references(() => apiKeys.id, { onDelete: 'cascade' }),
+    minute: integer('minute').notNull(),
+    count: integer('count').notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.apiKeyId, t.minute] })],
 )
 
 // ─────────────────────────────────────────────────────────── MCP

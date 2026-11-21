@@ -15,7 +15,7 @@ import { normalizeEmail } from '../../core/ids.ts'
 import { type ResendTarget, resendableIds, sendAgain, undeliveredMail } from '../../core/undelivered.ts'
 import { devOutbox, events, messages, sequences, subscribers, suppressions } from '../../db/schema.ts'
 import { type Ctx, clampLimit, defineTool, fail, failed, ok } from '../kit.ts'
-import { consumePreflight, digestOf, mintPreflight } from '../preflight.ts'
+import { consumePreflight, digestOf, mintPreflight } from '../../core/preflight.ts'
 
 const TARGET = z.object({
   kind: z

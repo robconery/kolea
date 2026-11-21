@@ -10,16 +10,14 @@ import {
   growthByDay,
 } from '../../core/activity.ts'
 import { campaignsForSubscriber, touchesFor } from '../../core/campaigns.ts'
-import { leaveBroadcasts, preferencesFor } from '../../core/consent.ts'
-import { castFieldValues, fieldTypes, fieldsOf, setFieldValues } from '../../core/fields.ts'
+import { leaveBroadcasts } from '../../core/consent.ts'
 import { normalizeEmail } from '../../core/ids.ts'
 import { salesForSubscriber } from '../../core/sales.ts'
-import { addTags, importCsv, removeTag, upsertSubscriber } from '../../core/subscribers.ts'
+import { subscriberDetail } from '../../core/subscriber-reads.ts'
+import { addTags, eraseSubscriber, importCsv, removeTag, upsertWithFields } from '../../core/subscribers.ts'
 import {
   events,
   messages,
-  sequenceEnrollments,
-  sequences,
   subscriberTags,
   subscribers,
   tags,
@@ -148,25 +146,8 @@ export function registerAudience(server: McpServer, ctx: Ctx): void {
       const sub = await findByEmailOrId(ctx, args)
       if (!sub) return fail('No such subscriber.', 'Try subscriber_search to find the right id.')
 
-      const enrollments = await ctx.db
-        .select({
-          sequenceId: sequences.id,
-          sequence: sequences.name,
-          status: sequenceEnrollments.status,
-          nextRunAt: sequenceEnrollments.nextRunAt,
-        })
-        .from(sequenceEnrollments)
-        .innerJoin(sequences, eq(sequences.id, sequenceEnrollments.sequenceId))
-        .where(eq(sequenceEnrollments.subscriberId, sub.id))
-        .all()
-
-      return ok({
-        ...sub,
-        tags: await tagsOf(ctx, sub.id),
-        fields: await fieldsOf(ctx.db, sub.attributes),
-        enrollments,
-        preferences: await preferencesFor(ctx.db, sub.id),
-      })
+      // From core, which never selects the reader's unsubscribe token.
+      return ok(await subscriberDetail(ctx.db, sub.id))
     },
   )
 
@@ -285,26 +266,24 @@ export function registerAudience(server: McpServer, ctx: Ctx): void {
       }),
     },
     async ({ email, name, source, tag_ids, fields, trigger_sequences }) => {
-      // Checked before the upsert, so a bad value never leaves a half-written person.
-      const cast = fields ? castFieldValues(await fieldTypes(ctx.db), fields) : null
-      if (cast && Object.keys(cast.errors).length) {
-        return fail(
-          `Field values rejected: ${Object.entries(cast.errors)
-            .map(([k, e]) => `${k} ${e}`)
-            .join('; ')}.`,
-          'Read kolea://merge-tags for the defined keys and their types.',
-        )
+      const r = await upsertWithFields(
+        ctx.db,
+        {
+          email,
+          name: name ?? null,
+          source: source ?? 'mcp',
+          tagIds: tag_ids,
+          triggerSubscribeSequences: trigger_sequences,
+        },
+        fields,
+      )
+      if (!r.ok) {
+        return r.fieldErrors
+          ? fail(r.reason, 'Read kolea://merge-tags for the defined keys and their types.')
+          : fail(r.reason)
       }
-      const result = await upsertSubscriber(ctx.db, {
-        email,
-        name: name ?? null,
-        source: source ?? 'mcp',
-        tagIds: tag_ids,
-        triggerSubscribeSequences: trigger_sequences,
-      })
-      if (result.outcome === 'invalid') return fail(`"${email}" is not a valid address.`)
-      const written = cast && result.id ? await setFieldValues(ctx.db, result.id, cast.changes) : 0
-      return ok({ ...result, ...(cast ? { fieldsWritten: written } : {}) })
+      const { ok: _ok, ...result } = r
+      return ok(result)
     },
   )
 
@@ -417,14 +396,13 @@ export function registerAudience(server: McpServer, ctx: Ctx): void {
         )
       }
 
-      const purchases = await salesForSubscriber(ctx.db, id)
-      await ctx.db.delete(subscribers).where(eq(subscribers.id, id))
+      const { salesDeleted } = await eraseSubscriber(ctx.db, id)
 
       return ok({
         deleted: true,
         email: sub.email,
-        warning: purchases.length
-          ? `${purchases.length} sale(s) were deleted with them — revenue reports will change.`
+        warning: salesDeleted
+          ? `${salesDeleted} sale(s) were deleted with them — revenue reports will change.`
           : undefined,
       })
     },

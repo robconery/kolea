@@ -21,7 +21,8 @@ export interface BroadcastInput {
   campaignId?: number | null
 }
 
-export async function listBroadcasts(db: Db, limit = 50) {
+/** Newest first. `offset` pages it for the REST API; the screens pass only a limit. */
+export async function listBroadcasts(db: Db, limit = 50, offset = 0) {
   return await db
     .select()
     .from(broadcasts)
@@ -32,8 +33,10 @@ export async function listBroadcasts(db: Db, limit = 50) {
       // Drafts and scheduled mail have no `sent_at`, so they fall back to the
       // date they're actually pegged to.
       desc(sql`coalesce(${broadcasts.sentAt}, ${broadcasts.scheduledAt}, ${broadcasts.createdAt})`),
+      desc(broadcasts.id),
     )
     .limit(limit)
+    .offset(offset)
     .all()
 }
 

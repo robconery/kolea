@@ -9,9 +9,10 @@ import {
   getSegment,
   listSegments,
   resolveSegment,
+  ruleFromInput,
   updateSegment,
 } from '../../core/segments.ts'
-import { FIELD_OPS, checkConditions, listFields } from '../../core/fields.ts'
+import { FIELD_OPS, listFields } from '../../core/fields.ts'
 import type { SegmentRule } from '../../db/schema.ts'
 import { subscribers, tags } from '../../db/schema.ts'
 import { type Ctx, clampLimit, defineTool, fail, ok } from '../kit.ts'
@@ -48,36 +49,8 @@ const RULE = z.object({
     .describe('Custom field conditions. All must hold. not_equals includes people with no value.'),
 })
 
-type RuleInput = z.output<typeof RULE>
-
-async function toRule(
-  ctx: Ctx,
-  input: RuleInput,
-): Promise<{ ok: true; rule: SegmentRule } | { ok: false; reason: string }> {
-  const rule: SegmentRule = {}
-  if (input.match) rule.match = input.match
-  if (input.include_tag_ids?.length) rule.includeTagIds = input.include_tag_ids
-  if (input.exclude_tag_ids?.length) rule.excludeTagIds = input.exclude_tag_ids
-
-  for (const [key, value] of [
-    ['joinedAfter', input.joined_after],
-    ['joinedBefore', input.joined_before],
-  ] as const) {
-    if (!value) continue
-    const ms = Date.parse(value)
-    if (Number.isNaN(ms)) return { ok: false, reason: `"${value}" is not a parseable date` }
-    rule[key] = ms
-  }
-
-  if (input.fields?.length) {
-    // Typed against the live definitions: the type comes from the field, never the call.
-    const checked = await checkConditions(ctx.db, input.fields)
-    if (!checked.ok) return { ok: false, reason: checked.errors.join('; ') }
-    rule.conditions = checked.conditions
-  }
-
-  return { ok: true, rule }
-}
+/** The MCP form of `RuleInput`; core turns it into a stored rule. */
+const toRule = (ctx: Ctx, input: z.output<typeof RULE>) => ruleFromInput(ctx.db, input)
 
 export function registerSegments(server: McpServer, ctx: Ctx): void {
   /** Rules store tag ids; a plain-English description needs the names. */

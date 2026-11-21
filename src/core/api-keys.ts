@@ -1,6 +1,6 @@
-import { desc, eq } from 'drizzle-orm'
+import { and, desc, eq, lt, sql } from 'drizzle-orm'
 import type { Db } from '../db/index.ts'
-import { apiKeys } from '../db/schema.ts'
+import { apiKeys, apiRateWindows } from '../db/schema.ts'
 import { randomToken, sha256 } from './ids.ts'
 
 /**
@@ -8,8 +8,8 @@ import { randomToken, sha256 } from './ids.ts'
  *
  * - `send`: `POST /api/send` and `POST /api/sales`, nothing else. The default,
  *   because the commonest key is one pasted into a checkout's webhook.
- * - `read`: reads only. Nothing reads with a key yet; the REST API will (Kōlea
- *   SPEC 20.1). It can neither send nor reach MCP, which is admin-only.
+ * - `read`: the REST API's GETs (`/api/v1`, Kōlea SPEC 20.1), nothing else. It
+ *   can neither send, nor write, nor reach MCP, which is admin-only.
  * - `admin`: everything, MCP included.
  */
 export const KEY_SCOPES = ['send', 'read', 'admin'] as const
@@ -111,4 +111,41 @@ export async function revokeApiKey(
 
   await db.update(apiKeys).set({ revokedAt: new Date() }).where(eq(apiKeys.id, id))
   return { ok: true }
+}
+
+/** Requests a key may make per clock minute on `/api/v1` (Kōlea's default, SPEC 13.5). */
+export const RATE_LIMIT_PER_MINUTE = 120
+
+/**
+ * Count one request against a key's current minute. `ok: false` once the key is
+ * over its limit, with how many seconds until the next minute opens.
+ *
+ * One upsert per request; the first request in a new minute also clears the
+ * key's older buckets, so the table never grows past one row per active key.
+ */
+export async function takeRateSlot(
+  db: Db,
+  apiKeyId: number,
+  now = Date.now(),
+): Promise<{ ok: true; remaining: number } | { ok: false; retryAfter: number }> {
+  const minute = Math.floor(now / 60_000)
+  const rows = await db
+    .insert(apiRateWindows)
+    .values({ apiKeyId, minute, count: 1 })
+    .onConflictDoUpdate({
+      target: [apiRateWindows.apiKeyId, apiRateWindows.minute],
+      set: { count: sql`${apiRateWindows.count} + 1` },
+    })
+    .returning({ count: apiRateWindows.count })
+  const used = rows[0]?.count ?? 1
+
+  if (used === 1) {
+    await db
+      .delete(apiRateWindows)
+      .where(and(eq(apiRateWindows.apiKeyId, apiKeyId), lt(apiRateWindows.minute, minute)))
+  }
+  if (used > RATE_LIMIT_PER_MINUTE) {
+    return { ok: false, retryAfter: Math.max(1, Math.ceil(((minute + 1) * 60_000 - now) / 1000)) }
+  }
+  return { ok: true, remaining: RATE_LIMIT_PER_MINUTE - used }
 }

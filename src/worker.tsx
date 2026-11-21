@@ -5,6 +5,7 @@ import { formsApi } from './api/forms.tsx'
 import { mediaRoutes } from './api/media.ts'
 import { oauthApi } from './api/oauth.ts'
 import { api } from './api/routes.ts'
+import { apiV1 } from './api/v1/index.ts'
 import { tracking } from './api/tracking.ts'
 import { salesApi } from './api/sales.ts'
 import { withActivitySource } from './core/activity.ts'
@@ -120,6 +121,8 @@ app.get('/robots.txt', (c) => c.text('User-agent: *\nDisallow: /\n'))
 // it was refused. Ahead of the routers so it wraps them (`web/audit.ts`).
 app.use('/api/send', auditWrites('key'))
 app.use('/api/sales', auditWrites('key'))
+// The REST API: every write a key makes, refusals included. GETs pass through.
+app.use('/api/v1/*', auditWrites('key'))
 
 app.route('/', prefs)
 app.route('/', testimonialForm)
@@ -127,6 +130,10 @@ app.route('/', testimonialForm)
 // once `TRACKING_HOST` moves new mail elsewhere: every link sent before that
 // still names this host, and always will.
 app.route('/', tracking)
+// The REST API (`/api/v1`). Ahead of `requireOperator`: the bearer key is the
+// credential, and `/api/*` already has an Access Bypass. Before `api` so its
+// own 404 answers any `/api/v1` path it does not have.
+app.route('/', apiV1)
 app.route('/', api)
 // Signup forms: posted to from other people's websites, so public by definition.
 app.route('/', formsApi)

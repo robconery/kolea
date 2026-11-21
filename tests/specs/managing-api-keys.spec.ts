@@ -8,9 +8,9 @@
 // stored. A revoked key stops working on its very next request, on
 // `/api/send` and on MCP alike.
 //
-// Decision: `read` is in the enum now so the REST API can use it later. It
-// reaches nothing that exists today: not `/api/send`, not `/api/sales`, and not
-// MCP, which stays `admin`-only rather than filtering tools by scope.
+// Decision: `read` reaches only the REST API's GETs (`/api/v1`, see
+// the-rest-api.spec.ts): not `/api/send`, not `/api/sales`, and not MCP, which
+// stays `admin`-only rather than filtering tools by scope.
 import { beforeAll, describe, expect, it } from 'bun:test'
 import { count, eq } from 'drizzle-orm'
 import { createApiKey } from '../../src/core/api-keys.ts'

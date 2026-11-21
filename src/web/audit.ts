@@ -6,9 +6,9 @@ import type { Env } from '../types.ts'
 /**
  * ⭐ One middleware writes the audit trail for every mutating request.
  *
- * Mounted twice in `worker.tsx`: after `requireOperator` for the console (the
- * actor is the verified Access email), and on `/api/send` + `/api/sales` for
- * keys (the actor is the key the bearer token names). GET, HEAD and OPTIONS
+ * Mounted in `worker.tsx`: after `requireOperator` for the console (the
+ * actor is the verified Access email), and on `/api/send`, `/api/sales` and
+ * `/api/v1/*` for keys (the actor is the key the bearer token names). GET, HEAD and OPTIONS
  * pass straight through — a read is not a change.
  *
  * It runs the handler first and reads the outcome off the response, so a new
@@ -100,8 +100,11 @@ async function reasonIn(res: Response): Promise<string | null> {
   const type = res.headers.get('content-type') ?? ''
   try {
     if (type.includes('json')) {
+      // `{ error: "..." }` from /api/send, `{ error: { code, message } }` from /api/v1.
       const body = (await res.clone().json()) as { error?: unknown }
-      return typeof body.error === 'string' ? body.error : null
+      if (typeof body.error === 'string') return body.error
+      const message = (body.error as { message?: unknown } | undefined)?.message
+      return typeof message === 'string' ? message : null
     }
     if (type.includes('text/plain')) return (await res.clone().text()).split('\n')[0] ?? null
   } catch {
