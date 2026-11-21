@@ -609,7 +609,10 @@ then  tag them <tag>`}</Code>
                   <span class="pill warn">bearer</span>
                 </td>
                 <td class="muted">
-                  Transactional mail. Takes <span class="mono">idempotency_key</span>.
+                  Transactional mail: a <span class="mono">subject</span> and{' '}
+                  <span class="mono">body</span>, or a stored <span class="mono">template</span>{' '}
+                  slug with <span class="mono">variables</span>. Takes{' '}
+                  <span class="mono">idempotency_key</span>.
                 </td>
               </tr>
               <tr>

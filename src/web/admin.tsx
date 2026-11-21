@@ -647,6 +647,16 @@ admin.get('/settings', async (c) => {
        "body":"Here you go: [link](https://example.com)",
        "idempotency_key":"order-1234"}'`}
           </pre>
+          <p class="muted">
+            Or name a stored <a href="/transactional">transactional template</a> and fill its
+            variables instead of sending a subject and body:
+          </p>
+          <pre class="mono code">
+{`  -d '{"to":"someone@example.com",
+       "template":"order-receipt",
+       "variables":{"order_id":"A-1042"},
+       "idempotency_key":"order-1234"}'`}
+          </pre>
           <p class="faint">
             Create a key with <span class="mono">bun run seed</span> output, or via the API keys
             table. ⚠️ TODO: key management UI.
