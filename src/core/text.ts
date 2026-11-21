@@ -20,20 +20,95 @@ export function escapeHtml(s: string): string {
     .replace(/"/g, '&quot;')
 }
 
+/**
+ * Who a mail is being merged for. `attributes` and `fieldKeys` are optional so
+ * every caller that only knows a name and an address keeps working; supply them
+ * and declared custom fields resolve too (Kōlea SPEC 10.1.3).
+ */
+export interface MergeSubject {
+  email: string
+  name: string | null
+  /** The subscriber's custom field values, `subscribers.attributes`. */
+  attributes?: Record<string, unknown> | null
+  /**
+   * Every field key that is *declared*. A declared field this person has no
+   * value for resolves to its fallback, else nothing; a tag that is not declared
+   * at all is left exactly as written, as it always has been, so the preflight
+   * can still name it as unknown.
+   */
+  fieldKeys?: readonly string[]
+}
+
+/**
+ * A literal merge tag, with an optional fallback after a bar:
+ * `{{first_name}}`, `{{plan|free}}`, `{{ plan | "the free plan" }}`. Kōlea's
+ * syntax, ported as written.
+ */
+export const MERGE_TAG = /\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:\|\s*(?:"([^"]*)"|([^}"]*?))\s*)?\}\}/g
+
+/** A field value as text: `Yes`/`No` for booleans, nothing for anything odd. */
+function fieldText(value: unknown): string {
+  if (value === true) return 'Yes'
+  if (value === false) return 'No'
+  if (typeof value === 'string' || typeof value === 'number') return String(value)
+  return ''
+}
+
+/**
+ * Resolve one tag, or `undefined` when nothing here knows it (the caller then
+ * leaves the tag as written).
+ *
+ * Order: built-ins, then per-message extras, then declared custom fields. A
+ * field can never shadow a built-in or an extra — `createField` refuses those
+ * keys — so the order only matters for data written before that rule existed.
+ */
+export function resolveMergeTag(
+  field: string,
+  fallback: string | undefined,
+  sub: MergeSubject,
+  extras?: Record<string, string>,
+): string | undefined {
+  switch (field) {
+    case 'first_name': {
+      const first = (sub.name ?? '').trim().split(/\s+/)[0] ?? ''
+      return first || fallback || 'there'
+    }
+    case 'name':
+      return sub.name || (fallback ?? (sub.name === '' ? '' : 'there'))
+    case 'email':
+      return sub.email
+  }
+  if (extras && Object.hasOwn(extras, field)) return extras[field] || fallback || extras[field]
+  if (sub.fieldKeys?.includes(field)) {
+    const value = fieldText(sub.attributes?.[field])
+    return value || fallback || ''
+  }
+  return undefined
+}
+
+/**
+ * Merge literal `{{tags}}` in a string.
+ *
+ * `escape` is applied to custom-field values and fallbacks only — they are
+ * whatever a subscriber typed into a form, and a body headed for HTML must not
+ * carry their markup. Names and extras keep their existing behaviour.
+ */
 export function mergeFields(
   body: string,
-  sub: { email: string; name: string | null },
+  sub: MergeSubject,
   extras?: Record<string, string>,
+  escape: (s: string) => string = (s) => s,
 ): string {
-  const first = (sub.name ?? '').trim().split(/\s+/)[0] ?? ''
-  let out = body
-    .replace(/\{\{\s*name\s*\}\}/g, sub.name ?? 'there')
-    .replace(/\{\{\s*first_name\s*\}\}/g, first || 'there')
-    .replace(/\{\{\s*email\s*\}\}/g, sub.email)
-  for (const [field, value] of Object.entries(extras ?? {})) {
-    out = out.replaceAll(`{{${field}}}`, value)
-  }
-  return out
+  return body.replace(MERGE_TAG, (whole, field: string, quoted?: string, bare?: string) => {
+    const fallback = quoted ?? (bare?.trim() || undefined)
+    const isField =
+      !['first_name', 'name', 'email'].includes(field) &&
+      !(extras && Object.hasOwn(extras, field)) &&
+      sub.fieldKeys?.includes(field)
+    const value = resolveMergeTag(field, fallback, sub, extras)
+    if (value === undefined) return whole
+    return isField ? escape(value) : value
+  })
 }
 
 /**

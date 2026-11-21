@@ -906,6 +906,8 @@ const ICONS: Record<string, string> = {
   /* Two overlapping circles: a segment is the part of the list that satisfies
      more than one thing at once. */
   segs: 'M9.6 19a7 7 0 1 0 0-14 7 7 0 0 0 0 14Zm4.8 0a7 7 0 1 0 0-14 7 7 0 0 0 0 14Z',
+  /* A card with labelled lines: the facts a person carries. */
+  fields: 'M4.6 5.4h14.8v13.2H4.6zM7.8 9.4h2.4M12.6 9.4h3.6M7.8 12.6h2.4M12.6 12.6h3.6M7.8 15.6h2.4',
   bc: 'M4 12.2 20.2 4.6l-4.4 15.2-3.9-5.9L4 12.2Zm7.9 1.7 4.9-8',
   seq: 'M5.4 6.6h6.2a3.1 3.1 0 0 1 0 6.2H9a3.1 3.1 0 0 0 0 6.2h6.6M14.6 16.6l2.6 2.4-2.6 2.4M14.6 4.2 17.2 6.6l-2.6 2.4',
   /* Two sheets, one behind the other: a copy waiting to be made. */
@@ -982,6 +984,9 @@ const NAV: ({ grp: string } | { href: string; key: string; label: string })[] = 
   { href: '/segments', key: 'segs', label: 'Segments' },
   // What the people on the list say back, waiting on a yes before the wall.
   { href: '/testimonials', key: 'testi', label: 'Testimonials' },
+  // Next to Segments because that is where a field earns its keep: a value
+  // nobody can ask a question of is a value nobody needed to store.
+  { href: '/fields', key: 'fields', label: 'Custom fields' },
   // ⭐ Mail sits directly under the audience: who is on the list, then what
   // goes out to them — the two screens used every day, at the top.
   { grp: 'Mail' },
@@ -1255,7 +1260,7 @@ export const Layout: FC<
  * the nav doesn't grow an entry per concept — people, the facts you store about
  * them, and the questions you ask of those facts.
  */
-export const AudienceTabs: FC<{ on: 'people' | 'tags' | 'segments' }> = ({ on }) => (
+export const AudienceTabs: FC<{ on: 'people' | 'tags' | 'segments' | 'fields' }> = ({ on }) => (
   <div class="tabs">
     <a href="/subscribers" class={on === 'people' ? 'on' : ''}>
       People
@@ -1265,6 +1270,9 @@ export const AudienceTabs: FC<{ on: 'people' | 'tags' | 'segments' }> = ({ on })
     </a>
     <a href="/segments" class={on === 'segments' ? 'on' : ''}>
       Segments
+    </a>
+    <a href="/fields" class={on === 'fields' ? 'on' : ''}>
+      Custom fields
     </a>
   </div>
 )

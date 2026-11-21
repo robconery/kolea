@@ -14,11 +14,13 @@ import {
   updateBroadcast,
 } from '../../core/broadcasts.ts'
 import { canReceiveBroadcastIn, loadConsentSnapshot } from '../../core/consent.ts'
+import { fieldKeys } from '../../core/fields.ts'
 import { mdToDoc } from '../../core/md-to-doc.ts'
 import { authoredLead, postUrl } from '../../core/posts.ts'
 import { previewHtml, renderEmail } from '../../core/render.ts'
 import { countSegment, describeRule, getSegment, resolveSegment } from '../../core/segments.ts'
 import { sendPreview } from '../../core/sending.ts'
+import { MERGE_TAG } from '../../core/text.ts'
 import type { SegmentRule } from '../../db/schema.ts'
 import { subscribers, tags } from '../../db/schema.ts'
 import { type Ctx, clampLimit, defineTool, fail, failed, ok } from '../kit.ts'
@@ -29,7 +31,7 @@ import { consumePreflight, digestOf, mintPreflight } from '../preflight.ts'
  * verbatim, braces and all — no error, no blank. Exactly the silent failure a
  * preflight exists to surface.
  */
-const KNOWN_MERGE_FIELDS = new Set(['name', 'first_name', 'email'])
+const BUILTIN_MERGE_FIELDS = ['name', 'first_name', 'email']
 
 /**
  * Segment pages the preflight walks. `resolveSegment` pages at 400 and each page
@@ -38,11 +40,13 @@ const KNOWN_MERGE_FIELDS = new Set(['name', 'first_name', 'email'])
  */
 const PREFLIGHT_PAGES = 5
 
-function unknownMergeFields(text: string): string[] {
+/** Tags nothing resolves. Declared custom fields count as known. */
+function unknownMergeFields(text: string, fieldKeys: readonly string[]): string[] {
+  const known = new Set([...BUILTIN_MERGE_FIELDS, ...fieldKeys])
   const found = new Set<string>()
-  for (const m of text.matchAll(/\{\{\s*([a-z0-9_]+)\s*\}\}/gi)) {
-    const field = m[1]!.toLowerCase()
-    if (!KNOWN_MERGE_FIELDS.has(field)) found.add(field)
+  for (const m of text.matchAll(MERGE_TAG)) {
+    const field = m[1]!
+    if (!known.has(field)) found.add(field)
   }
   return [...found]
 }
@@ -110,7 +114,7 @@ export function registerBroadcasts(server: McpServer, ctx: Ctx): void {
     'broadcast_create',
     {
       description:
-        'Create a draft broadcast from markdown. Merge tags {{name}}, {{first_name}} and {{email}} are supported. Give it an audience with segment_id (copies that segment’s rule) or an inline rule; with neither it goes to everyone who can receive broadcasts.',
+        'Create a draft broadcast from markdown. Merge tags {{name}}, {{first_name}}, {{email}} and every custom field key ({{plan}}) are supported, each with an optional fallback: {{plan|free}}. kolea://merge-tags lists the fields. Give it an audience with segment_id (copies that segment’s rule) or an inline rule; with neither it goes to everyone who can receive broadcasts.',
       inputSchema: z.object({
         subject: z.string().min(1),
         body_markdown: z.string().min(1),
@@ -322,15 +326,14 @@ export function registerBroadcasts(server: McpServer, ctx: Ctx): void {
       }
 
       const partial = examined < totalCandidates
-      const sampleName = first
-        ? ((
-            await ctx.db
-              .select({ name: subscribers.name })
-              .from(subscribers)
-              .where(eq(subscribers.id, first.id))
-              .get()
-          )?.name ?? null)
-        : null
+      const sampleRow = first
+        ? await ctx.db
+            .select({ name: subscribers.name, attributes: subscribers.attributes })
+            .from(subscribers)
+            .where(eq(subscribers.id, first.id))
+            .get()
+        : undefined
+      const declared = await fieldKeys(ctx.db)
 
       // Rendered against a real recipient where one exists, so the sample is the
       // mail that will actually land rather than an idealized version of it.
@@ -343,8 +346,13 @@ export function registerBroadcasts(server: McpServer, ctx: Ctx): void {
           scope: { kind: 'broadcast' },
           scopeLabel: ctx.env.FROM_NAME,
           subscriber: first
-            ? { email: first.email, name: sampleName }
-            : { email: 'ada@example.com', name: 'Ada Lovelace' },
+            ? {
+                email: first.email,
+                name: sampleRow?.name ?? null,
+                attributes: sampleRow?.attributes,
+                fieldKeys: declared,
+              }
+            : { email: 'ada@example.com', name: 'Ada Lovelace', fieldKeys: declared },
           subject: b.subject,
           title: b.subject,
           lead: authoredLead(b.excerpt, { json: b.bodyJson, md: b.bodyMd }),
@@ -355,7 +363,12 @@ export function registerBroadcasts(server: McpServer, ctx: Ctx): void {
         },
       )
 
-      const unresolved = unknownMergeFields(`${b.subject} ${b.bodyMd}`)
+      // The document too: a literal `{{plan}}` typed into the editor survives as
+      // text, and only declared fields are resolved from it.
+      const unresolved = unknownMergeFields(
+        `${b.subject} ${b.bodyMd} ${b.bodyJson ? JSON.stringify(b.bodyJson) : ''}`,
+        declared,
+      )
       const allTags = await ctx.db.select().from(tags).orderBy(asc(tags.name)).all()
       const { token, expiresAt } = await mintPreflight(
         ctx.db,

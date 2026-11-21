@@ -1,6 +1,7 @@
 import { type SQL, and, asc, count, eq, gt, gte, inArray, lte, max, notInArray, sql } from 'drizzle-orm'
 import type { Db } from '../db/index.ts'
 import {
+  type FieldCondition,
   type Offer,
   type SegmentRule,
   type Tag,
@@ -11,6 +12,7 @@ import {
   subscriberTags,
   subscribers,
 } from '../db/schema.ts'
+import { describeCondition, jsonPath, opsFor, takesValue } from './fields.ts'
 import { slugify } from './ids.ts'
 
 export type { SegmentRule }
@@ -61,8 +63,94 @@ function ruleFilters(db: Db, rule: SegmentRule): SQL[] {
   if (rule.joinedBefore) filters.push(lte(subscribers.createdAt, new Date(rule.joinedBefore)))
 
   filters.push(...purchaseFilters(db, rule))
+  for (const c of rule.conditions ?? []) filters.push(conditionFilter(c))
 
   return filters
+}
+
+/** Matches nobody. What a condition compiles to when it cannot be compiled safely. */
+const NOBODY = sql`0`
+
+/**
+ * One custom-field test, as a predicate on `subscribers.attributes`.
+ *
+ * Inline, no subquery, no join: a condition costs nothing against the D1 query
+ * budget, and a segment count stays one query however many conditions it has.
+ *
+ * Injection-safe by construction. The json path is built only from a key that
+ * passes `FIELD_KEY` (`jsonPath` returns null otherwise), and both the path and
+ * the value are bound parameters, never spliced. Stored rules were validated
+ * against the definitions on save (`checkConditions`), but a rule is JSON in a
+ * row and can be edited around that — so this re-checks the shape and **fails
+ * closed**: an unknown op, a bad key, an op that doesn't suit the type or a
+ * value of the wrong kind matches nobody. Failing open would be how an
+ * `is not set` typo mails the whole list.
+ *
+ * Comparisons are like-with-like, as in Kōlea: `json_type` pins the stored
+ * value's kind before comparing, so a number field holding the text "5" is not
+ * over 3, and a date (stored as `YYYY-MM-DD` text, which sorts as dates do) is
+ * compared as text.
+ */
+function conditionFilter(c: FieldCondition): SQL {
+  const path = jsonPath(c.key)
+  if (!path || !opsFor(c.type)?.includes(c.op)) return NOBODY
+
+  const attrs = subscribers.attributes
+  const kind = sql`json_type(${attrs}, ${path})`
+  const value = sql`json_extract(${attrs}, ${path})`
+
+  if (c.op === 'is_set') return sql`${kind} is not null`
+  if (c.op === 'is_not_set') return sql`${kind} is null`
+  if (!takesValue(c.op) || c.value === undefined) return NOBODY
+
+  if (c.op === 'contains') {
+    if (typeof c.value !== 'string') return NOBODY
+    const pattern = `%${c.value.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`
+    return sql`(${kind} = 'text' and ${value} like ${pattern} escape '\\')`
+  }
+
+  // The stored kind that a value of this field type must have to be compared.
+  let same: SQL
+  let bound: string | number
+  switch (c.type) {
+    case 'number':
+      if (typeof c.value !== 'number' || !Number.isFinite(c.value)) return NOBODY
+      same = sql`${kind} in ('integer', 'real')`
+      bound = c.value
+      break
+    case 'boolean':
+      // JSON true/false carry their own type names; no value comparison needed.
+      if (typeof c.value !== 'boolean' || c.op !== 'equals') return NOBODY
+      return c.value ? sql`${kind} = 'true'` : sql`${kind} = 'false'`
+    case 'date':
+      if (typeof c.value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(c.value)) return NOBODY
+      same = sql`${kind} = 'text'`
+      bound = c.value
+      break
+    case 'text':
+      if (typeof c.value !== 'string') return NOBODY
+      same = sql`${kind} = 'text'`
+      bound = c.value
+      break
+    default:
+      return NOBODY
+  }
+
+  switch (c.op) {
+    case 'equals':
+      return sql`(${same} and ${value} = ${bound})`
+    // Kōlea's reading: "is not pro" includes the people with no plan at all.
+    // `coalesce` because a missing value makes the inner test NULL, and
+    // `not NULL` is NULL, which a WHERE treats as false.
+    case 'not_equals':
+      return sql`not coalesce((${same} and ${value} = ${bound}), 0)`
+    case 'greater_than':
+      return sql`(${same} and ${value} > ${bound})`
+    case 'less_than':
+      return sql`(${same} and ${value} < ${bound})`
+    default:
+      return NOBODY
+  }
 }
 
 /**
@@ -332,6 +420,7 @@ export function describeRule(
   rule: SegmentRule,
   tags: Pick<Tag, 'id' | 'name'>[],
   offers: Pick<Offer, 'slug' | 'title'>[] = [],
+  fields: { key: string; label: string }[] = [],
 ): string {
   const name = (id: number) => tags.find((t) => t.id === id)?.name ?? `tag ${id}`
   const offerName = (slug: string) => offers.find((o) => o.slug === slug)?.title ?? slug
@@ -386,6 +475,10 @@ export function describeRule(
   }
   if (rule.purchasedAfter) parts.push(`bought since ${day(rule.purchasedAfter)}`)
   if (rule.purchasedBefore) parts.push(`nothing since ${day(rule.purchasedBefore)}`)
+
+  for (const c of rule.conditions ?? []) {
+    parts.push(describeCondition(c, fields.find((f) => f.key === c.key)?.label))
+  }
 
   return parts.length === 0 ? 'Everyone active' : `Active, ${parts.join(', ')}`
 }

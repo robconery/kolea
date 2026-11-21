@@ -108,6 +108,10 @@ formsApi.post('/f/:slug', async (c) => {
   let email = ''
   let name: string | null = null
   let trap: string | null = null
+  // Everything else posted, handed to core, which keeps only defined custom
+  // field keys. A nested `fields` object (JSON) is read the same as top-level keys.
+  const fields: Record<string, unknown> = Object.create(null)
+  const RESERVED = new Set(['email', 'name', TRAP_FIELD])
 
   if (contentType.includes('application/json')) {
     try {
@@ -115,6 +119,10 @@ formsApi.post('/f/:slug', async (c) => {
       email = String(body.email ?? '')
       name = body.name ? String(body.name) : null
       trap = body[TRAP_FIELD] ? String(body[TRAP_FIELD]) : null
+      for (const [k, v] of Object.entries(body)) if (!RESERVED.has(k) && k !== 'fields') fields[k] = v
+      if (body.fields && typeof body.fields === 'object' && !Array.isArray(body.fields)) {
+        Object.assign(fields, body.fields)
+      }
     } catch {
       return c.json({ error: 'body must be JSON' }, 400, CORS)
     }
@@ -123,9 +131,15 @@ formsApi.post('/f/:slug', async (c) => {
     email = String(form.get('email') ?? '')
     name = String(form.get('name') ?? '') || null
     trap = String(form.get(TRAP_FIELD) ?? '') || null
+    for (const [k, v] of form.entries()) {
+      if (RESERVED.has(k) || typeof v !== 'string') continue
+      // `fields[plan]` and plain `plan` both work, so a hand-written form can use either.
+      const m = /^fields\[(.+)\]$/.exec(k)
+      fields[m ? m[1]! : k] = v
+    }
   }
 
-  const result = await submitForm(c.env, db, slug, { email, name, trap })
+  const result = await submitForm(c.env, db, slug, { email, name, trap, fields })
 
   if (result.status === 'unknown_form') {
     return wantsJson ? c.json({ error: 'unknown form' }, 404, CORS) : c.notFound()

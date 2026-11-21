@@ -25,19 +25,21 @@ import { TESTIMONIAL_WALL_PATH, escapeHtml, mergeFields } from './text.ts'
  */
 
 /** What a merge tag renders as with no recipient behind it. */
-function neutral(field: string): string {
+function neutral(field: string, fallback?: unknown): string {
+  const written = typeof fallback === 'string' && fallback.trim() ? fallback.trim() : undefined
   switch (field) {
     case 'name':
     case 'first_name':
-      return 'there'
+      return written ?? 'there'
     // A testimonial link in mail is one reader's own; on a page nobody is that
     // reader, so the words point at the wall everyone can read.
     case 'testimonial_link':
       return TESTIMONIAL_WALL_PATH
     // `email`, `link` and anything else are per-person by definition. Rendering
-    // a placeholder would be worse than rendering nothing.
+    // a placeholder would be worse than rendering nothing. A fallback the
+    // writer chose is not a placeholder, though — it is the copy for "nobody".
     default:
-      return ''
+      return written ?? ''
   }
 }
 
@@ -141,7 +143,7 @@ function renderNode(node: DocNode): string {
     }
 
     case 'mergeTag':
-      return escapeHtml(neutral(String(node.attrs?.field ?? '')))
+      return escapeHtml(neutral(String(node.attrs?.field ?? ''), node.attrs?.fallback))
 
     case 'table':
       // The wrapper is what keeps a wide table from pushing the whole page
@@ -256,7 +258,7 @@ function docText(node: DocNode): string {
   if (node.type === 'text') return node.text ?? ''
   if (node.type === 'mergeTag') {
     const field = String(node.attrs?.field ?? '')
-    return field === 'testimonial_link' ? '' : neutral(field)
+    return field === 'testimonial_link' ? '' : neutral(field, node.attrs?.fallback)
   }
   if (node.type === 'hardBreak') return ' '
   const inner = (node.content ?? []).map(docText).join('')

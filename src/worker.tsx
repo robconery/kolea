@@ -29,6 +29,7 @@ import { cleanupAdmin } from './web/admin-cleanup.tsx'
 import { campaignsAdmin } from './web/admin-campaigns.tsx'
 import { domainsAdmin } from './web/admin-domains.tsx'
 import { conversionsAdmin } from './web/admin-conversions.tsx'
+import { fieldsAdmin } from './web/admin-fields.tsx'
 import { purchaseMailAdmin } from './web/admin-purchase-mail.tsx'
 import { transactionalAdmin } from './web/admin-transactional.tsx'
 import { saleImportAdmin } from './web/admin-sale-import.tsx'
@@ -161,6 +162,7 @@ app.route('/', logsAdmin)
 app.route('/', analyticsSequences)
 app.route('/', analytics)
 app.route('/', tagging)
+app.route('/', fieldsAdmin)
 // The composer's writing help. JSON-only, operator-only, writes no mail.
 app.route('/', aiAdmin)
 app.route('/', aiSettingsAdmin)

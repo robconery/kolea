@@ -3,6 +3,7 @@ import { Hono } from 'hono'
 import { type FeedRow, activityForSubscriber } from '../core/activity.ts'
 import { touchesFor } from '../core/campaigns.ts'
 import { preferencesFor } from '../core/consent.ts'
+import { fieldsOf, updateFieldValues } from '../core/fields.ts'
 import { purchasesForEmail, statsForEmail } from '../core/purchases.ts'
 import { salesForSubscriber } from '../core/sales.ts'
 import { addTags, findOrCreateTag, importCsv, removeTag, upsertSubscriber } from '../core/subscribers.ts'
@@ -263,8 +264,10 @@ audience.get('/subscribers/import', (c) =>
         <div class="card-b">
           <div class="note">
             Needs a header row with <span class="mono">email</span>. Optional:{' '}
-            <span class="mono">name</span>, <span class="mono">tags</span> (semicolon separated).
-            Existing people are updated, never duplicated, and an unsubscribe is never undone.
+            <span class="mono">name</span>, <span class="mono">tags</span> (semicolon separated), and
+            any column headed with a <a href="/fields">custom field</a>'s key. Existing people are
+            updated, never duplicated, and an unsubscribe is never undone. A value that doesn't fit
+            its field is left out and reported; an empty cell never clears a stored value.
           </div>
           <form method="post" action="/subscribers/import">
             <div class="field">
@@ -283,7 +286,13 @@ audience.post('/subscribers/import', async (c) => {
   const db = getDb(c.env)
   const form = await c.req.formData()
   const report = await importCsv(db, String(form.get('csv') ?? ''))
-  const msg = `Imported: ${report.created} created, ${report.updated} updated, ${report.invalid} invalid (${report.rows} rows).`
+  const rejected = report.fieldErrors.length
+    ? ` ${report.fieldErrors.length} field ${report.fieldErrors.length === 1 ? 'value' : 'values'} left out: ${report.fieldErrors
+        .slice(0, 5)
+        .map((e) => `row ${e.row} ${e.field} ${e.error}`)
+        .join('; ')}${report.fieldErrors.length > 5 ? '; …' : ''}.`
+    : ''
+  const msg = `Imported: ${report.created} created, ${report.updated} updated, ${report.invalid} invalid (${report.rows} rows).${rejected}`
   return c.redirect(`/subscribers?flash=${encodeURIComponent(msg)}`)
 })
 
@@ -312,6 +321,7 @@ audience.get('/subscribers/:id', async (c) => {
   if (!sub) return c.notFound()
 
   const prefs = await preferencesFor(db, id)
+  const theirFields = await fieldsOf(db, sub.attributes)
   const theirTags = await db
     .select({ id: tags.id, name: tags.name })
     .from(subscriberTags)
@@ -411,6 +421,58 @@ audience.get('/subscribers/:id', async (c) => {
               ))}
             </tbody>
           </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-h">
+          <h2>Fields</h2>
+          <div class="actions">
+            <a class="btn sm" href="/fields">
+              Manage fields
+            </a>
+          </div>
+        </div>
+        <div class="card-b">
+          {theirFields.length === 0 ? (
+            <span class="faint">
+              No custom fields defined. <a href="/fields">Add one</a> to store a plan, a renewal
+              date, anything.
+            </span>
+          ) : (
+            <form method="post" action={`/subscribers/${id}/fields`}>
+              <div class="row" style="flex-wrap:wrap">
+                {theirFields.map((f) => (
+                  <div class="field" style="min-width:180px">
+                    <label>
+                      {f.label} <span class="faint mono">{`{{${f.key}}}`}</span>
+                    </label>
+                    {f.type === 'boolean' ? (
+                      <select name={`f_${f.key}`}>
+                        <option value="" selected={f.value === null}>
+                          Not set
+                        </option>
+                        <option value="yes" selected={f.value === true}>
+                          Yes
+                        </option>
+                        <option value="no" selected={f.value === false}>
+                          No
+                        </option>
+                      </select>
+                    ) : (
+                      <input
+                        type={f.type === 'number' ? 'number' : f.type === 'date' ? 'date' : 'text'}
+                        step={f.type === 'number' ? 'any' : undefined}
+                        name={`f_${f.key}`}
+                        value={f.value === null ? '' : String(f.value)}
+                      />
+                    )}
+                  </div>
+                ))}
+              </div>
+              <button class="btn sm">Save fields</button>
+            </form>
+          )}
         </div>
       </div>
 
@@ -697,6 +759,28 @@ audience.post('/subscribers/:id/tags', async (c) => {
   if (!name) return c.redirect(`/subscribers/${id}`)
   await addTags(db, id, [await findOrCreateTag(db, name)])
   return c.redirect(`/subscribers/${id}?flash=${encodeURIComponent(`Tagged “${name}”.`)}`)
+})
+
+audience.post('/subscribers/:id/fields', async (c) => {
+  const db = getDb(c.env)
+  const id = Number(c.req.param('id'))
+  const sub = await db.select({ id: subscribers.id }).from(subscribers).where(eq(subscribers.id, id)).get()
+  if (!sub) return c.notFound()
+
+  // Inputs are `f_<key>`, so no other form field can be mistaken for one. A
+  // blank clears the value; an unknown key is ignored (core casts against the
+  // definitions and refuses anything they don't name).
+  const form = await c.req.formData()
+  const values: Record<string, unknown> = Object.create(null)
+  for (const [name, v] of form.entries()) {
+    if (name.startsWith('f_') && typeof v === 'string') values[name.slice(2)] = v
+  }
+  const { errors } = await updateFieldValues(db, id, values, { unknown: 'ignore' })
+  const bad = Object.entries(errors)
+  const msg = bad.length
+    ? `Saved the rest. Not saved: ${bad.map(([k, e]) => `${k} ${e}`).join('; ')}.`
+    : 'Fields saved.'
+  return c.redirect(`/subscribers/${id}?flash=${encodeURIComponent(msg)}`)
 })
 
 audience.post('/subscribers/:id/tags/remove', async (c) => {

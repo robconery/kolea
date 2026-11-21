@@ -2,6 +2,14 @@ import { and, eq, inArray } from 'drizzle-orm'
 import type { Db } from '../db/index.ts'
 import { subscriberTags, subscribers, tags } from '../db/schema.ts'
 import { logActivity } from './activity.ts'
+import {
+  type FieldChanges,
+  type FieldType,
+  castFieldValue,
+  fieldTypes,
+  keyFor,
+  setFieldValues,
+} from './fields.ts'
 import { isValidEmail, normalizeEmail, randomToken, slugify } from './ids.ts'
 import { enrollOnSubscribe, enrollOnTag, exitOnTag } from './sequences.ts'
 import { emitWebhook, subscriberPayload } from './webhooks.ts'
@@ -246,16 +254,40 @@ export interface ImportReport {
   updated: number
   invalid: number
   rows: number
+  /** Custom-field columns the header matched, by key. */
+  fieldColumns: string[]
+  /**
+   * Field values that did not fit their type, one entry per cell. The person on
+   * that row is still imported — only the bad value is left out (Kōlea's import
+   * is lenient the same way: an unreadable attribute is noted, not fatal).
+   * `row` is the 1-based data row, not counting the header.
+   */
+  fieldErrors: { row: number; email: string; field: string; error: string }[]
 }
 
 /**
  * Import CSV. Expects a header row containing at least `email`; `name` and
- * `tags` (semicolon-separated) are optional. A malformed row is counted and
- * skipped, never fatal (SPEC 1.3).
+ * `tags` (semicolon-separated) are optional. Any other column whose header is a
+ * custom field's key (or its label, reduced the same way — "Signup Plan" finds
+ * `signup_plan`) fills that field, cast to its type. Columns that match no field
+ * are ignored, as before. A malformed row is counted and skipped, never fatal
+ * (SPEC 1.3).
+ *
+ * Field values are written with `setFieldValues`, never through
+ * `upsertSubscriber`, so filling a field can't start a sequence. A blank cell
+ * leaves a stored value alone: an export with an empty column must not wipe
+ * what the list already knows.
  */
 export async function importCsv(db: Db, csv: string): Promise<ImportReport> {
   const lines = csv.split(/\r?\n/).filter((l) => l.trim().length > 0)
-  const report: ImportReport = { created: 0, updated: 0, invalid: 0, rows: 0 }
+  const report: ImportReport = {
+    created: 0,
+    updated: 0,
+    invalid: 0,
+    rows: 0,
+    fieldColumns: [],
+    fieldErrors: [],
+  }
   if (lines.length === 0) return report
 
   const header = splitCsvLine(lines[0]!).map((h) => h.trim().toLowerCase())
@@ -263,6 +295,17 @@ export async function importCsv(db: Db, csv: string): Promise<ImportReport> {
   const nameIdx = header.indexOf('name')
   const tagsIdx = header.indexOf('tags')
   if (emailIdx === -1) return report
+
+  // One read of the definitions for the whole file.
+  const types = await fieldTypes(db)
+  const fieldCols: { idx: number; key: string; type: FieldType }[] = []
+  header.forEach((h, idx) => {
+    if (idx === emailIdx || idx === nameIdx || idx === tagsIdx) return
+    const key = types.has(h) ? h : keyFor(h)
+    const type = types.get(key)
+    if (type && !fieldCols.some((c) => c.key === key)) fieldCols.push({ idx, key, type })
+  })
+  report.fieldColumns = fieldCols.map((c) => c.key)
 
   for (const line of lines.slice(1)) {
     report.rows++
@@ -281,7 +324,7 @@ export async function importCsv(db: Db, csv: string): Promise<ImportReport> {
       }
     }
 
-    const { outcome } = await upsertSubscriber(db, {
+    const { outcome, id } = await upsertSubscriber(db, {
       email,
       name: nameIdx >= 0 ? (cells[nameIdx]?.trim() ?? null) : null,
       source: 'import',
@@ -290,6 +333,19 @@ export async function importCsv(db: Db, csv: string): Promise<ImportReport> {
     if (outcome === 'created') report.created++
     else if (outcome === 'invalid') report.invalid++
     else report.updated++
+
+    if (id && outcome !== 'invalid' && fieldCols.length) {
+      const changes: FieldChanges = {}
+      for (const col of fieldCols) {
+        const cast = castFieldValue(col.type, cells[col.idx])
+        if (!cast.ok) {
+          report.fieldErrors.push({ row: report.rows, email, field: col.key, error: cast.error })
+        } else if (cast.value !== null) {
+          changes[col.key] = cast.value
+        }
+      }
+      await setFieldValues(db, id, changes)
+    }
   }
 
   return report
