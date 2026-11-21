@@ -649,8 +649,8 @@ then  tag them <tag>`}</Code>
         <div class="card-b">
           <p class="faint">
             Bearer keys live in the <span class="mono">api_keys</span> table; only the hash is
-            stored, so a leaked database can't be used to post as you. ⚠️ There's no key-management
-            UI yet.
+            stored, so a leaked database can't be used to post as you. Make and revoke them on{' '}
+            <a href="/settings/agents">Agents &amp; keys</a>.
           </p>
         </div>
       </div>

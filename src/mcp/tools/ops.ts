@@ -1,7 +1,8 @@
 import type { McpServer } from '@modelcontextprotocol/server'
 import { and, count, desc, eq, gte, lt } from 'drizzle-orm'
 import * as z from 'zod/v4'
-import { createApiKey, listApiKeys, revokeApiKey } from '../../core/api-keys.ts'
+import { AGENT_SENSITIVE_OFF, agentSendAllowed, agentSensitiveAllowed } from '../../core/agents.ts'
+import { KEY_SCOPES, listApiKeys, mintApiKey, revokeApiKey } from '../../core/api-keys.ts'
 import { revenueTotals } from '../../core/sales.ts'
 import {
   broadcasts,
@@ -13,7 +14,6 @@ import {
   subscribers,
 } from '../../db/schema.ts'
 import { type Ctx, clampLimit, defineTool, fail, failed, money, ok } from '../kit.ts'
-import { sendingAllowed } from '../preflight.ts'
 import { MAX_ROWS, checkQuery } from '../sql.ts'
 
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -169,7 +169,8 @@ export function registerOps(server: McpServer, ctx: Ctx): void {
         provider: ctx.env.EMAIL_PROVIDER,
         from: `${ctx.env.FROM_NAME} <${ctx.env.FROM_EMAIL}>`,
         publicUrl: ctx.env.PUBLIC_URL,
-        mcpSendingEnabled: sendingAllowed(ctx.env),
+        mcpSendingEnabled: await agentSendAllowed(ctx.env, ctx.db),
+        mcpSensitiveEnabled: await agentSensitiveAllowed(ctx.db),
         bindings: {
           queue: Boolean(ctx.env.SEND_QUEUE),
           media: Boolean(ctx.env.MEDIA),
@@ -238,19 +239,21 @@ export function registerOps(server: McpServer, ctx: Ctx): void {
     'apikey_create',
     {
       description:
-        "Mint an API key. The token is shown exactly once and never stored — only its hash is. Scope 'send' reaches the transactional endpoint only; 'admin' also reaches this MCP server, so it can do everything you can.",
+        "Mint an API key. The token is shown exactly once and never stored — only its hash is. Scope 'send' reaches the transactional endpoint only; 'read' is for reading and can neither send nor reach this server; 'admin' also reaches this MCP server, so it can do everything you can. Refused unless the operator has turned on sensitive changes for agents (System > Agents & keys).",
       inputSchema: z.object({
         name: z.string().min(1),
-        scope: z.enum(['send', 'admin']).optional().describe("Defaults to 'send'"),
+        scope: z.enum(KEY_SCOPES).optional().describe("Defaults to 'send'"),
       }),
       annotations: { destructiveHint: true },
     },
     async ({ name, scope }) => {
-      const { id, token } = await createApiKey(ctx.db, name, scope ?? 'send')
+      if (!(await agentSensitiveAllowed(ctx.db))) return fail(AGENT_SENSITIVE_OFF)
+      const minted = await mintApiKey(ctx.db, { name, scope })
+      if (!minted.ok) return failed(minted)
       return ok({
-        id,
-        scope: scope ?? 'send',
-        token,
+        id: minted.id,
+        scope: minted.scope,
+        token: minted.token,
         warning: 'This token is shown once. It cannot be recovered — only revoked.',
       })
     },

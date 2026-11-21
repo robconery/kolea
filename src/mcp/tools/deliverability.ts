@@ -1,6 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/server'
 import { and, desc, eq, inArray } from 'drizzle-orm'
 import * as z from 'zod/v4'
+import { AGENT_SENSITIVE_OFF, agentSendAllowed, agentSendRefusal, agentSensitiveAllowed } from '../../core/agents.ts'
 import {
   canReceiveBroadcastIn,
   canReceiveSequenceIn,
@@ -14,7 +15,7 @@ import { normalizeEmail } from '../../core/ids.ts'
 import { type ResendTarget, resendableIds, sendAgain, undeliveredMail } from '../../core/undelivered.ts'
 import { devOutbox, events, messages, sequences, subscribers, suppressions } from '../../db/schema.ts'
 import { type Ctx, clampLimit, defineTool, fail, failed, ok } from '../kit.ts'
-import { SEND_DISABLED, consumePreflight, digestOf, mintPreflight, sendingAllowed } from '../preflight.ts'
+import { consumePreflight, digestOf, mintPreflight } from '../preflight.ts'
 
 const TARGET = z.object({
   kind: z
@@ -219,11 +220,12 @@ export function registerDeliverability(server: McpServer, ctx: Ctx): void {
     'suppression_remove',
     {
       description:
-        'Lift a suppression. Only do this on an explicit request from the person themselves — a hard bounce or a spam complaint is not something to clear because a send failed.',
+        'Lift a suppression. Only do this on an explicit request from the person themselves — a hard bounce or a spam complaint is not something to clear because a send failed. Refused unless the operator has turned on sensitive changes for agents (System > Agents & keys).',
       inputSchema: z.object({ email: z.string() }),
       annotations: { destructiveHint: true },
     },
     async ({ email }) => {
+      if (!(await agentSensitiveAllowed(ctx.db))) return fail(AGENT_SENSITIVE_OFF)
       const address = normalizeEmail(email)
       const existing = await ctx.db
         .select()
@@ -336,7 +338,7 @@ export function registerDeliverability(server: McpServer, ctx: Ctx): void {
       annotations: { destructiveHint: true, idempotentHint: true },
     },
     async ({ target, preflight_token }) => {
-      if (!sendingAllowed(ctx.env)) return fail(SEND_DISABLED)
+      if (!(await agentSendAllowed(ctx.env, ctx.db))) return fail(agentSendRefusal(ctx.env))
 
       const ids = await resendableIds(ctx.db, target)
       const check = await consumePreflight(

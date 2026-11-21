@@ -2,6 +2,7 @@
 // dropped: it is listed, and it can be sent again once what stopped it is fixed.
 // kolea-pro CLAUDE.md mail rule 2; kolea-pro SPEC 1.7, 1.17, 10.2.2, 10.3.2
 // (Kolea.Pipeline.HeldMail). Big Mailer's own SPEC 3.8 (no double send).
+import { setAgentSwitches } from '../../src/core/agents.ts'
 import { beforeAll, describe, expect, it } from 'bun:test'
 import { eq } from 'drizzle-orm'
 import { cancelBroadcast, startBroadcast } from '../../src/core/broadcasts.ts'
@@ -337,7 +338,8 @@ describe('Feature: sending failed mail again', () => {
     let replay: string
 
     beforeAll(async () => {
-      world = createWorld({ MCP_PATH_SECRET: 'secret-path', MCP_ALLOW_SEND: 'true' })
+      world = createWorld({ MCP_PATH_SECRET: 'secret-path' })
+      await setAgentSwitches(world.db, { allowSend: true })
       const { token } = await createApiKey(world.db, 'agent', 'admin')
       const ada = await aPerson(world, { email: 'ada@example.test' })
       await world.db.insert(messages).values({
@@ -389,7 +391,7 @@ describe('Feature: sending failed mail again', () => {
     })
 
     it('is refused by the send switch', () => {
-      expect(body).toContain('MCP_ALLOW_SEND')
+      expect(body).toContain('Sending via MCP is switched off')
     })
   })
 })

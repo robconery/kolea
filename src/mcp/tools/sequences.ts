@@ -1,6 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/server'
 import { eq } from 'drizzle-orm'
 import * as z from 'zod/v4'
+import { agentSendAllowed, agentSendRefusal } from '../../core/agents.ts'
 import { leaveSequence, rejoinSequence } from '../../core/consent.ts'
 import { normalizeEmail } from '../../core/ids.ts'
 import { mdToDoc } from '../../core/md-to-doc.ts'
@@ -27,7 +28,7 @@ import {
 } from '../../core/sequences.ts'
 import { subscribers, tags } from '../../db/schema.ts'
 import { type Ctx, clampLimit, defineTool, fail, failed, ok } from '../kit.ts'
-import { SEND_DISABLED, consumePreflight, digestOf, mintPreflight, sendingAllowed } from '../preflight.ts'
+import { consumePreflight, digestOf, mintPreflight } from '../preflight.ts'
 
 const TRIGGERS = ['subscribe', 'tag_added', 'manual'] as const
 
@@ -212,7 +213,7 @@ export function registerSequences(server: McpServer, ctx: Ctx): void {
       if (seq.trigger === 'subscribe') {
         warnings.push('Every new subscriber will be enrolled from the moment this goes live.')
       }
-      if (!sendingAllowed(ctx.env)) warnings.push(SEND_DISABLED)
+      if (!(await agentSendAllowed(ctx.env, ctx.db))) warnings.push(agentSendRefusal(ctx.env))
 
       let elapsed = 0
       const schedule = steps.map((s) => {
@@ -260,7 +261,7 @@ export function registerSequences(server: McpServer, ctx: Ctx): void {
       annotations: { destructiveHint: true },
     },
     async ({ id, preflight_token }) => {
-      if (!sendingAllowed(ctx.env)) return fail(SEND_DISABLED)
+      if (!(await agentSendAllowed(ctx.env, ctx.db))) return fail(agentSendRefusal(ctx.env))
 
       const check = await consumePreflight(
         ctx.db,
@@ -489,7 +490,7 @@ export function registerSequences(server: McpServer, ctx: Ctx): void {
       inputSchema: z.object({}),
     },
     async () => {
-      if (!sendingAllowed(ctx.env)) return fail(SEND_DISABLED)
+      if (!(await agentSendAllowed(ctx.env, ctx.db))) return fail(agentSendRefusal(ctx.env))
       return ok({ sent: await tickSequences(ctx.env, ctx.db) })
     },
   )

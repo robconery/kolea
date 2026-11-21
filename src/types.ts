@@ -114,7 +114,11 @@ export interface Env {
    * Unset means the endpoint 404s — MCP is off unless deliberately turned on.
    */
   MCP_PATH_SECRET?: string
-  /** "true" lets MCP tools put mail on the wire. Anything else is a kill switch. */
+  /**
+   * Hard override for agent sending. `"false"` forces it off whatever the admin
+   * switch says; unset (or anything else) lets the switch on System > Agents &
+   * keys decide. It can only take away. See `core/agents.ts`.
+   */
   MCP_ALLOW_SEND?: string
 
   /** Restricted read key: charges, refunds, customers, products, prices. */
