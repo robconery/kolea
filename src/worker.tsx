@@ -30,6 +30,7 @@ import { analyticsSequences } from './web/admin-analytics-sequences.tsx'
 import { audience } from './web/admin-audience.tsx'
 import { cleanupAdmin } from './web/admin-cleanup.tsx'
 import { campaignsAdmin } from './web/admin-campaigns.tsx'
+import { launchesAdmin } from './web/admin-launches.tsx'
 import { domainsAdmin } from './web/admin-domains.tsx'
 import { conversionsAdmin } from './web/admin-conversions.tsx'
 import { fieldsAdmin } from './web/admin-fields.tsx'
@@ -209,6 +210,9 @@ app.route('/', transactionalAdmin)
 app.route('/', saleImportAdmin)
 app.route('/', testimonialsAdmin)
 app.route('/', campaignsAdmin)
+// Launch Studio: seven screens that build a campaign and a paused sequence and
+// hand off to the screens above for anything that sends.
+app.route('/', launchesAdmin)
 app.route('/', conversionsAdmin)
 app.route('/', membersAdmin)
 app.route('/', goalsAdmin)

@@ -2491,6 +2491,90 @@ export type ConversionKind = typeof conversionKinds.$inferSelect
 export type Goal = typeof goals.$inferSelect
 
 /**
+ * ⭐ Launch Studio (Kōlea's `launches`): one push to sell one thing, walked
+ * through seven screens, from describing the offer to reading how it went.
+ *
+ * The row is the studio's memory and nothing else. Everything a launch makes is
+ * an ordinary row somewhere else — the campaign in `campaigns`, the series in
+ * `sequences` (always created PAUSED), the trigger tag in `tags` — so a launch
+ * deleted tomorrow leaves a campaign and a sequence that work exactly as if the
+ * operator had made them by hand. Nothing here sends, activates, schedules or
+ * publishes; the studio hands the operator to the screens that do.
+ *
+ * `step` is the furthest screen reached, and `status` where the launch is in its
+ * life. Both move only through `core/launches/steps.ts`'s `transition`, a pure
+ * function, so "a sequence before a campaign" or "editing a closed launch" is a
+ * refusal there and not a state this table can be talked into.
+ *
+ * Every FK is nullable and `set null` on purpose: each is filled in by a later
+ * step, and deleting the campaign or the sequence by hand must not take the
+ * launch's brief with it. The review screen says what is missing instead.
+ */
+export const launches = sqliteTable(
+  'launches',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    /** Unique; the campaign and sequence names start from it. */
+    slug: text('slug').notNull(),
+    name: text('name').notNull(),
+    step: text('step', {
+      enum: ['offer', 'plan', 'campaign', 'sequence', 'copy', 'handoff', 'review'],
+    })
+      .notNull()
+      .default('offer'),
+    /** `draft` while being built; `handed_off` once the operator has been sent
+        to the existing screens to take it live; `closed` after the review. A
+        closed launch is read-only. */
+    status: text('status', { enum: ['draft', 'handed_off', 'closed'] })
+      .notNull()
+      .default('draft'),
+
+    // The brief, in the operator's words (step 1). Every later step reads it,
+    // and it is what the AI helpers are given, verbatim, as the only facts.
+    /** What is being sold, in a sentence or two. */
+    offer: text('offer'),
+    audience: text('audience'),
+    problem: text('problem'),
+    promise: text('promise'),
+    /** Why the operator cares: the story behind it. */
+    story: text('story'),
+    objections: text('objections'),
+    /** Free text ("$149", "pay what you want"): the brief is prose, not a
+        price list. The price that charges is the store offer's, in cents. */
+    priceNote: text('price_note'),
+    // nullable-fk: optional; set when the thing is sold through the store.
+    storeOfferId: integer('store_offer_id').references(() => storeOffers.id, {
+      onDelete: 'set null',
+    }),
+
+    /** The launch template chosen at step 2. A slug, not an FK: templates are
+        the operator's to delete, and the sequence already copied it. */
+    templateSlug: text('template_slug'),
+    /** The day the operator means to open; a note for the plan, never a schedule. */
+    startsOn: ts('starts_on'),
+
+    // nullable-fk: made or chosen at step 3.
+    campaignId: integer('campaign_id').references(() => campaigns.id, { onDelete: 'set null' }),
+    // nullable-fk: built at step 4, paused, by `createSequenceFromTemplate`.
+    sequenceId: integer('sequence_id').references(() => sequences.id, { onDelete: 'set null' }),
+    // nullable-fk: the `launch-<slug>` tag a tag_added template starts on.
+    triggerTagId: integer('trigger_tag_id').references(() => tags.id, { onDelete: 'set null' }),
+
+    /** The sales angle (step 5): the points to make, in markdown. The operator's
+        to edit; the `launch` helper can write a first pass from the brief. */
+    outline: text('outline'),
+
+    createdAt: ts('created_at').notNull(),
+    updatedAt: ts('updated_at').notNull(),
+    handedOffAt: ts('handed_off_at'),
+    closedAt: ts('closed_at'),
+  },
+  (t) => [uniqueIndex('launches_slug_key').on(t.slug), index('launches_status_idx').on(t.status)],
+)
+
+export type Launch = typeof launches.$inferSelect
+
+/**
  * One row per call to a language model, whoever answered it, successful or not.
  *
  * This is the budget. `core/ai/openrouter.ts` sums `cost_usd` for the current
