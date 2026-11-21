@@ -1041,6 +1041,8 @@ const NAV: ({ grp: string } | { href: string; key: string; label: string })[] = 
   { href: '/settings/ai', key: 'aiset', label: 'AI' },
   // Who may reach the mailer without a browser, and what agents may do.
   { href: '/settings/agents', key: 'agents', label: 'Agents & keys' },
+  // Apps approved over OAuth ("paste a URL into Claude"). Separate from API keys.
+  { href: '/connected-apps', key: 'apps', label: 'Connected apps' },
   { href: '/help', key: 'help', label: 'Help' },
 ]
 

@@ -1465,6 +1465,12 @@ export const mcpCalls = sqliteTable(
     tool: text('tool').notNull(),
     // nullable-fk: a call rejected before the key resolved has no key to point at.
     apiKeyId: integer('api_key_id').references(() => apiKeys.id, { onDelete: 'set null' }),
+    // nullable-fk: set instead of `api_key_id` when the caller came in by OAuth
+    // (`/mcp`, an app the operator approved). A call carries one or the other,
+    // never both — they are two doors into the same tools.
+    oauthGrantId: integer('oauth_grant_id').references((): AnySQLiteColumn => oauthGrants.id, {
+      onDelete: 'set null',
+    }),
     args: text('args', { mode: 'json' }).notNull().$type<Record<string, unknown>>().default({}),
     outcome: text('outcome', { enum: ['ok', 'error', 'denied'] }).notNull(),
     /** First line of the failure, when there was one. Not the whole stack. */
@@ -1524,6 +1530,134 @@ export const preflightTokens = sqliteTable(
     createdAt: ts('created_at').notNull(),
   },
   (t) => [uniqueIndex('preflight_tokens_hash_key').on(t.tokenHash)],
+)
+
+// ─────────────────────────────────────────────────────────── MCP by OAuth
+
+/**
+ * Adding the mailer to Claude by pasting a URL (MCP authorization spec, OAuth
+ * 2.1). The Worker is both the resource server (`/mcp`) and its own
+ * authorization server; the operator approving on the consent page — behind
+ * Cloudflare Access — *is* the authentication. Rules: `core/oauth.ts`.
+ *
+ * A client that registered itself (RFC 7591). Public, no secret: anyone on the
+ * internet can register one, which is why a client is worth nothing until the
+ * operator approves it, and why the consent page shows `redirect_uris` — that
+ * is where the code goes.
+ */
+export const oauthClients = sqliteTable(
+  'oauth_clients',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    /** The opaque public id handed back by registration. Not a secret. */
+    clientId: text('client_id').notNull(),
+    /** Self-declared, so it is a claim, not an identity. Shown escaped, capped at 100. */
+    clientName: text('client_name').notNull(),
+    /**
+     * The exact URIs a code may be sent to: https, or http to loopback (RFC
+     * 8252), never a fragment. Matched exactly — no prefix, no wildcard — since
+     * a loose match is how codes get redirected to an attacker.
+     */
+    redirectUris: text('redirect_uris', { mode: 'json' }).notNull().$type<string[]>(),
+    createdAt: ts('created_at').notNull(),
+  },
+  (t) => [uniqueIndex('oauth_clients_client_id_key').on(t.clientId)],
+)
+
+/**
+ * ⭐ One approval: "this app may use the mailer". The row the operator sees on
+ * Connected apps and revokes; every token hangs off it, so revoking here kills
+ * the access token in hand *and* the refresh token that would mint the next.
+ *
+ * `access` defaults to `read`. An agent reads text strangers wrote (names, form
+ * answers), and that text can steer it, so changing anything is something the
+ * operator ticks on the consent page, never something a client asks its way into.
+ * `write` gets exactly what an admin key gets — the send switch, preflight and
+ * confirm guards still apply on top.
+ *
+ * Revoke, don't delete: `mcp_calls.oauth_grant_id` points here, and "what did
+ * that app do before I cut it off" has to resolve.
+ */
+export const oauthGrants = sqliteTable(
+  'oauth_grants',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    clientId: integer('client_id')
+      .notNull()
+      .references(() => oauthClients.id, { onDelete: 'cascade' }),
+    access: text('access', { enum: ['read', 'write'] })
+      .notNull()
+      .default('read'),
+    /** The redirect URI the approval was for — what the operator saw. */
+    redirectUri: text('redirect_uri').notNull(),
+    /** The Access identity that approved, when Access supplied one. Null under DEV bypass. */
+    approvedBy: text('approved_by'),
+    createdAt: ts('created_at').notNull(),
+    /** Bumped on every MCP call and every refresh. */
+    lastUsedAt: ts('last_used_at'),
+    revokedAt: ts('revoked_at'),
+  },
+  (t) => [index('oauth_grants_client_idx').on(t.clientId)],
+)
+
+/**
+ * A one-time authorization code. Hash only, two minutes, single use, bound to
+ * the client, the exact redirect URI and a PKCE S256 challenge. Redeeming one
+ * sets `used_at` (a conditional update, so two racing exchanges cannot both
+ * win) and `grant_id`; presenting it again revokes that grant (OAuth 2.1
+ * §4.1.3) — a replayed code means somebody else has it too.
+ *
+ * The grant does not exist until the code is redeemed: an approval nobody
+ * exchanged is not a connected app.
+ */
+export const oauthCodes = sqliteTable(
+  'oauth_codes',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    codeHash: text('code_hash').notNull(),
+    clientId: integer('client_id')
+      .notNull()
+      .references(() => oauthClients.id, { onDelete: 'cascade' }),
+    redirectUri: text('redirect_uri').notNull(),
+    /** base64url(SHA-256(verifier)), 43 chars. `plain` is never accepted. */
+    codeChallenge: text('code_challenge').notNull(),
+    access: text('access', { enum: ['read', 'write'] }).notNull(),
+    approvedBy: text('approved_by'),
+    expiresAt: ts('expires_at').notNull(),
+    usedAt: ts('used_at'),
+    // nullable-fk: null until the code is redeemed and the grant exists.
+    grantId: integer('grant_id').references(() => oauthGrants.id, { onDelete: 'cascade' }),
+    createdAt: ts('created_at').notNull(),
+  },
+  (t) => [uniqueIndex('oauth_codes_hash_key').on(t.codeHash)],
+)
+
+/**
+ * Bearer tokens, hash only. `access` lives an hour and is what `/mcp` accepts;
+ * `refresh` lives thirty days and is what the token endpoint accepts. Rotation:
+ * a refresh token is good once — using it sets `used_at` and issues a new pair.
+ * Presenting a used one again revokes the whole grant (OAuth 2.1 §4.3.1),
+ * because only a thief and the rightful client both hold the old one.
+ */
+export const oauthTokens = sqliteTable(
+  'oauth_tokens',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    grantId: integer('grant_id')
+      .notNull()
+      .references(() => oauthGrants.id, { onDelete: 'cascade' }),
+    kind: text('kind', { enum: ['access', 'refresh'] }).notNull(),
+    tokenHash: text('token_hash').notNull(),
+    expiresAt: ts('expires_at').notNull(),
+    /** Refresh tokens only: when it was rotated away. */
+    usedAt: ts('used_at'),
+    revokedAt: ts('revoked_at'),
+    createdAt: ts('created_at').notNull(),
+  },
+  (t) => [
+    uniqueIndex('oauth_tokens_hash_key').on(t.tokenHash),
+    index('oauth_tokens_grant_idx').on(t.grantId),
+  ],
 )
 
 /**

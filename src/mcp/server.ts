@@ -1,5 +1,6 @@
 import { McpServer, createMcpHandler } from '@modelcontextprotocol/server'
 import { verifyApiKey } from '../api/auth.ts'
+import { resourceMetadataUrl, verifyAccessToken } from '../core/oauth.ts'
 import { getDb } from '../db/index.ts'
 import type { Env } from '../types.ts'
 import type { Ctx } from './kit.ts'
@@ -63,15 +64,78 @@ export async function handleMcp(
       status: 401,
       headers: {
         'Content-Type': 'application/json',
-        // Tells a client this is bearer auth without advertising an OAuth flow
-        // we don't run — the operator pastes a key and that's the whole story.
+        // Plain bearer auth, no OAuth discovery: this door takes a pasted admin
+        // key and nothing else. The OAuth door is `/mcp` (`handleOAuthMcp`).
         'WWW-Authenticate': 'Bearer realm="kolea"',
       },
     })
   }
 
-  const ctx: Ctx = { env, db, executionCtx, apiKeyId: key.id }
+  const ctx: Ctx = { env, db, executionCtx, apiKeyId: key.id, oauthGrantId: null, readOnly: false }
+  return await serve(request, ctx, { token: '', clientId: `api-key-${key.id}`, scopes: [key.scope] })
+}
 
+/**
+ * Serve one MCP request on `/mcp`, authenticated by an OAuth access token —
+ * the "paste a URL into Claude" door (see `core/oauth.ts`).
+ *
+ * No path secret here: the URL is meant to be pasted, and a token only exists
+ * because the operator approved the app behind Cloudflare Access. A 401 carries
+ * `WWW-Authenticate` naming the protected resource metadata (RFC 9728 §5.1),
+ * which is how a client discovers where to sign in without being told.
+ *
+ * Past the token, the tools are the same tools with the same guards as an admin
+ * key — send switch, preflight, confirm — plus the read-only gate in `kit.ts`
+ * unless the operator ticked "allow changes".
+ */
+export async function handleOAuthMcp(
+  request: Request,
+  env: Env,
+  executionCtx: ExecutionContext,
+): Promise<Response> {
+  const origin = new URL(request.url).origin
+  const db = getDb(env)
+  const header = request.headers.get('Authorization') ?? undefined
+  const caller = await verifyAccessToken(db, header)
+  if (!caller) {
+    const presented = Boolean(header?.startsWith('Bearer '))
+    const challenge =
+      `Bearer resource_metadata="${resourceMetadataUrl(origin)}", scope="mcp:read"` +
+      (presented
+        ? ', error="invalid_token", error_description="the access token is invalid, expired or revoked"'
+        : '')
+    return new Response(JSON.stringify({ error: presented ? 'invalid_token' : 'unauthorized' }), {
+      status: 401,
+      headers: {
+        'Content-Type': 'application/json',
+        'WWW-Authenticate': challenge,
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Expose-Headers': 'WWW-Authenticate',
+      },
+    })
+  }
+
+  const ctx: Ctx = {
+    env,
+    db,
+    executionCtx,
+    apiKeyId: null,
+    oauthGrantId: caller.grantId,
+    readOnly: caller.access !== 'write',
+  }
+  return await serve(request, ctx, {
+    token: '',
+    clientId: `oauth-grant-${caller.grantId}`,
+    scopes: caller.access === 'write' ? ['mcp:read', 'mcp:write'] : ['mcp:read'],
+  })
+}
+
+/** Build the per-request server and hand it the request. Shared by both doors. */
+async function serve(
+  request: Request,
+  ctx: Ctx,
+  authInfo: { token: string; clientId: string; scopes: string[] },
+): Promise<Response> {
   const handler = createMcpHandler(() => {
     const server = new McpServer({ name: 'kolea', version: '1.0.0' })
 
@@ -96,7 +160,5 @@ export async function handleMcp(
     return server
   })
 
-  return await handler.fetch(request, {
-    authInfo: { token: '', clientId: `api-key-${key.id}`, scopes: [key.scope] },
-  })
+  return await handler.fetch(request, { authInfo })
 }
