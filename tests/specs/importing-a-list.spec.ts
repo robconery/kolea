@@ -3,7 +3,8 @@
 import { beforeAll, describe, expect, it } from 'bun:test'
 import { count, eq } from 'drizzle-orm'
 import { type ImportReport, importCsv, upsertSubscriber } from '../../src/core/subscribers.ts'
-import { subscriberTags, subscribers, tags } from '../../src/db/schema.ts'
+import { sequenceEnrollments, subscriberTags, subscribers, tags } from '../../src/db/schema.ts'
+import { aSequence, aTag } from '../support/factories.ts'
 import { createWorld, type World } from '../support/world.ts'
 
 const header = 'email,name,tags'
@@ -119,6 +120,42 @@ describe('Feature: importing a list of people', () => {
     it('imports the person', async () => {
       const n = (await world.db.select({ n: count() }).from(subscribers).get())?.n
       expect(n).toBe(1)
+    })
+  })
+
+  describe('Scenario: importing into a list with live welcome and tag-started series', () => {
+    // ARCHITECTURE invariant 5: a bulk import must never start mail. Driven
+    // through the console, then a cron tick that would send anything enrolled.
+    let world: World
+    let enrollments: number
+    let outbox: number
+    let tagged: number
+
+    beforeAll(async () => {
+      world = createWorld()
+      const vip = await aTag(world, 'vip')
+      await aSequence(world, { name: 'Welcome', trigger: 'subscribe' })
+      await aSequence(world, { name: 'VIP', trigger: 'tag_added', triggerTagId: vip })
+      await world.post('/subscribers/import', {
+        csv: [header, 'ada@example.test,Ada,vip', 'grace@example.test,Grace,'].join('\n'),
+      })
+      await world.tick()
+      await world.settle()
+      enrollments = (await world.db.select({ n: count() }).from(sequenceEnrollments).get())?.n ?? 0
+      outbox = (await world.outbox()).length
+      tagged = (await world.db.select({ n: count() }).from(subscriberTags).get())?.n ?? 0
+    })
+
+    it('⭐ enrolls nobody in any sequence', () => {
+      expect(enrollments).toBe(0)
+    })
+
+    it('⭐ mails nobody', () => {
+      expect(outbox).toBe(0)
+    })
+
+    it('still applies the tags from the file', () => {
+      expect(tagged).toBe(1)
     })
   })
 

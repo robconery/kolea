@@ -324,12 +324,22 @@ export async function importCsv(db: Db, csv: string): Promise<ImportReport> {
       }
     }
 
+    // ⭐ Invariant 5: a bulk import must never start mail. No subscribe
+    // sequences, and the tags are written straight to the junction rather than
+    // through `addTags`, which would fire `tag_added` sequences and exits.
     const { outcome, id } = await upsertSubscriber(db, {
       email,
       name: nameIdx >= 0 ? (cells[nameIdx]?.trim() ?? null) : null,
       source: 'import',
-      tagIds,
+      triggerSubscribeSequences: false,
     })
+    if (id && outcome !== 'invalid' && tagIds.length) {
+      const now = new Date()
+      await db
+        .insert(subscriberTags)
+        .values(tagIds.map((tagId) => ({ subscriberId: id, tagId, taggedAt: now })))
+        .onConflictDoNothing()
+    }
     if (outcome === 'created') report.created++
     else if (outcome === 'invalid') report.invalid++
     else report.updated++
