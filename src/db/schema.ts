@@ -1730,7 +1730,7 @@ export type ConversionKind = typeof conversionKinds.$inferSelect
 export type Goal = typeof goals.$inferSelect
 
 /**
- * One row per call to a language model (OpenRouter), successful or not.
+ * One row per call to a language model, whoever answered it, successful or not.
  *
  * This is the budget. `core/ai/openrouter.ts` sums `cost_usd` for the current
  * calendar month before every call and refuses once it reaches
@@ -1745,14 +1745,15 @@ export const aiCalls = sqliteTable(
   'ai_calls',
   {
     id: integer('id').primaryKey({ autoIncrement: true }),
-    /** What it was for: `subject`, `cleanup`, `sequence-plan`, `sequence-mail`. */
+    /** What it was for: an `AiTask` (`subject`, `cleanup`, `sequence-plan`, `sequence-mail`, …). */
     task: text('task').notNull(),
     /** The OpenRouter model id that answered, e.g. `anthropic/claude-sonnet-5`. */
     model: text('model').notNull(),
     promptTokens: integer('prompt_tokens').notNull().default(0),
     completionTokens: integer('completion_tokens').notNull().default(0),
     /**
-     * What OpenRouter charged, in US dollars, as it reported it. A real, not
+     * What the call cost, in US dollars: as OpenRouter reported it, or our
+     * estimate when the provider reports no cost (`cost_estimated`). A real, not
      * integer cents: a subject line costs a fraction of a cent, and rounding
      * every call to zero would make the budget a budget for nothing.
      */
@@ -1761,12 +1762,76 @@ export const aiCalls = sqliteTable(
     /** Why it failed, when it did. */
     error: text('error'),
     durationMs: integer('duration_ms').notNull().default(0),
+    /**
+     * Whose endpoint answered: `openrouter` (the install's key or the
+     * operator's own), `anthropic`, `openai`, or `fake` locally. The budget sums
+     * every row whatever the provider; this is for the settings screen.
+     */
+    provider: text('provider', { enum: ['openrouter', 'anthropic', 'openai', 'fake'] })
+      .notNull()
+      .default('openrouter'),
+    /**
+     * True when `cost_usd` is our estimate (tokens × `core/ai/catalogue.ts`'s
+     * list price) rather than a figure the provider reported. Anthropic and
+     * OpenAI report tokens, not money. A model with no list price is recorded
+     * at 0 with this set, and the settings screen says so.
+     */
+    costEstimated: integer('cost_estimated', { mode: 'boolean' }).notNull().default(false),
     createdAt: ts('created_at').notNull(),
   },
   (t) => [index('ai_calls_created_idx').on(t.createdAt)],
 )
 
 export type AiCall = typeof aiCalls.$inferSelect
+
+/**
+ * Which key pays for the writing helpers, and which model each one uses.
+ * Exactly one row (`id = 1`), created on first save. No row means the old
+ * behaviour exactly: the install's `OPENROUTER_KEY` pays and every helper uses
+ * its default (or its `AI_MODEL_*` variable), so an install that never opens
+ * Settings → AI is unchanged.
+ *
+ * Its own table rather than a column on some general settings row: nothing
+ * else reads it, and the agent settings live elsewhere.
+ */
+export const aiSettings = sqliteTable('ai_settings', {
+  id: integer('id').primaryKey(),
+  /**
+   * `env` is the install's `OPENROUTER_KEY`. The others name a row in
+   * `ai_keys`. A payer whose key is missing or unreadable turns the helpers
+   * off with a sentence on the settings screen; it never quietly falls back to
+   * a different key, because which key pays is the operator's decision.
+   */
+  payer: text('payer', { enum: ['env', 'openrouter', 'anthropic', 'openai'] }).notNull().default('env'),
+  /**
+   * Helper task (`subject`, `cleanup`, `sequence-plan`, …) → model id, only
+   * for the helpers the operator changed. Checked against the catalogue on
+   * write and again on read: a choice the paying key cannot serve falls back
+   * to that key's default rather than being sent unchecked.
+   */
+  models: text('models', { mode: 'json' }).notNull().$type<Record<string, string>>().default({}),
+  updatedAt: ts('updated_at').notNull(),
+})
+
+export type AiSettings = typeof aiSettings.$inferSelect
+
+/**
+ * The operator's own model API keys, one per provider, encrypted at rest.
+ *
+ * `ciphertext` is AES-GCM under a key derived from `AI_KEY_ENCRYPTION_SECRET`
+ * (`core/ai/keys.ts`), with the provider name as associated data so a row
+ * cannot be moved to another provider. Without that secret nothing is stored.
+ * The key is never shown again: `last4` is all any screen reads.
+ */
+export const aiKeys = sqliteTable('ai_keys', {
+  provider: text('provider', { enum: ['openrouter', 'anthropic', 'openai'] }).primaryKey(),
+  /** `v1:<iv base64>:<ciphertext base64>`. */
+  ciphertext: text('ciphertext').notNull(),
+  last4: text('last4').notNull(),
+  createdAt: ts('created_at').notNull(),
+})
+
+export type AiKey = typeof aiKeys.$inferSelect
 
 // ─────────────────────────────────────────────────────────── post tags
 //

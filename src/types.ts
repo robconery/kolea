@@ -70,7 +70,19 @@ export interface Env {
    * `core/ai/` is ever called.
    */
   OPENROUTER_KEY?: string
-  /** OpenRouter model ids per job. Defaults live in `core/ai/openrouter.ts`. */
+  /**
+   * 32+ random characters. Encrypts the operator's own model keys (OpenRouter,
+   * Anthropic, OpenAI) saved on Settings → AI, with AES-GCM. A secret, not a
+   * var. Unset means no key can be saved there; the screen says so. Changing it
+   * makes every saved key unreadable until it is pasted again.
+   */
+  AI_KEY_ENCRYPTION_SECRET?: string
+  /** `fake` answers every helper on the machine, with no key and no network. Local and specs only. */
+  AI_PROVIDER?: string
+  /**
+   * Model ids per job, OpenRouter-style. A choice on Settings → AI wins over
+   * these; defaults live in `core/ai/catalogue.ts`.
+   */
   AI_MODEL_SUBJECT?: string
   AI_MODEL_CLEANUP?: string
   AI_MODEL_SEQUENCE?: string

@@ -56,3 +56,9 @@ OPENROUTER_KEY=sk-or-v1-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 # AI_MODEL_SUBJECT=anthropic/claude-sonnet-5
 # AI_MODEL_CLEANUP=anthropic/claude-opus-5.5
 # AI_MODEL_SEQUENCE=anthropic/claude-opus-5.5
+# Optional. Lets Settings → AI store your own OpenRouter, Anthropic or OpenAI
+# key, encrypted (AES-GCM). Unset means no key can be saved there.
+# Generate one with: openssl rand -base64 32
+# AI_KEY_ENCRYPTION_SECRET=
+# Optional, local only: `fake` answers every helper on this machine, no key needed.
+# AI_PROVIDER=fake
