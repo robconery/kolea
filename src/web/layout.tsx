@@ -664,6 +664,64 @@ html:has(.compose-stage){overflow:hidden}
   font:700 clamp(22px,2.2vw,32px)/1.2 var(--display);letter-spacing:-.03em;color:var(--ink)}
 .compose .subj:hover,.compose .subj:focus{box-shadow:none;outline:0;background:none}
 .compose .subj::placeholder{color:rgba(107,102,80,.55)}
+/* The excerpt: a dek under the headline. It grows with what's written in it. */
+.compose-dek{flex:0 0 auto;margin-top:-10px;padding:0 clamp(22px,5vw,74px) 18px}
+.compose .dek{width:100%;min-height:0;padding:0;border:0;border-radius:0;background:none;
+  box-shadow:none;resize:none;field-sizing:content;
+  font:400 15px/1.5 var(--sans);color:var(--muted)}
+.compose .dek:hover,.compose .dek:focus{box-shadow:none;outline:0;background:none}
+.compose .dek:focus{color:var(--ink)}
+.compose .dek::placeholder{color:rgba(107,102,80,.5)}
+
+/* The web half of a broadcast, in the side panel. */
+.seg2{display:grid;grid-template-columns:1fr 1fr;gap:3px;padding:3px;border-radius:99px;
+  background:var(--sunken)}
+.compose .seg2 label{margin:0;cursor:pointer}
+.seg2 input{position:absolute;opacity:0;pointer-events:none}
+.seg2 span{display:block;padding:7px 10px;border-radius:99px;text-align:center;
+  font:600 12.5px/1.2 var(--display);letter-spacing:-.005em;text-transform:none;color:var(--muted);
+  transition:background-color .35s var(--glide),color .35s var(--glide)}
+.seg2 input:checked+span{background:var(--surface);color:var(--ink);box-shadow:var(--shadow-soft)}
+.seg2 input:focus-visible+span{outline:2px solid var(--cyan);outline-offset:1px}
+.web-note{margin:10px 0 0;font-size:12.5px;overflow-wrap:anywhere}
+.web-status p{overflow-wrap:anywhere;font-size:13px}
+.web-acts{display:flex;gap:8px;margin-top:12px}
+.web-only{margin-top:20px;transition:opacity .4s var(--glide)}
+.web-sec:has(input[name=publish_on_send][value=""]:checked) .web-only{opacity:.38}
+.web-never{display:none}
+.web-sec:has(input[name=publish_on_send][value=""]:checked) .web-when{display:none}
+.web-sec:has(input[name=publish_on_send][value=""]:checked) .web-never{display:inline}
+.web-only .field{margin:20px 0 0}
+.compose .web-check{display:flex;gap:9px;align-items:center;margin:16px 0 0;
+  font:13px var(--sans);text-transform:none;letter-spacing:0;color:var(--muted);cursor:pointer}
+.web-slug{margin-top:16px}
+.web-slug summary{cursor:pointer;font:600 10.5px/1 var(--display);text-transform:uppercase;
+  letter-spacing:.15em;color:var(--faint)}
+.web-slug input{margin-top:10px}
+.web-slug p{margin:8px 0 0;font-size:12px}
+
+.fi [hidden]{display:none !important}
+.fi-frame{position:relative;display:grid;place-items:center;aspect-ratio:1.91/1;overflow:hidden;
+  border-radius:10px;background:var(--sunken);font-size:12.5px;color:var(--faint)}
+.fi-frame img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.fi.busy .fi-frame::after{content:'';position:absolute;inset:0;
+  background:linear-gradient(100deg,transparent 30%,rgba(27,26,19,.07) 50%,transparent 70%);
+  background-size:200% 100%;animation:fi-shimmer 1.2s linear infinite}
+@keyframes fi-shimmer{from{background-position:200% 0}to{background-position:-200% 0}}
+.fi-credit{margin:7px 0 0;font-size:11.5px;color:var(--faint)}
+.fi-acts{display:flex;gap:8px;margin-top:10px}
+.fi-q{margin-top:14px}
+.fi-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:8px}
+.fi-grid:empty{display:none}
+.fi-grid button:not(.fi-more){position:relative;display:block;padding:0;border:0;border-radius:7px;overflow:hidden;
+  aspect-ratio:3/2;cursor:pointer;background:var(--sunken);
+  transition:transform .35s var(--spring),box-shadow .35s var(--glide)}
+.fi-grid button:not(.fi-more):hover{transform:scale(1.04);box-shadow:0 0 0 2px var(--cyan)}
+.fi-grid button:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+.fi-grid img{width:100%;height:100%;object-fit:cover;display:block}
+.fi-grid .fi-more{grid-column:1/-1;justify-self:start;margin-top:4px}
+.fi-note{margin:8px 0 0;font-size:12px;color:var(--faint)}
+.fi-note.bad{color:var(--critical)}
 
 .compose-side{position:relative;overflow-y:auto;padding:24px 24px 72px;background:var(--canvas);
   border-left:1px solid var(--hairline)}
@@ -708,6 +766,7 @@ html:has(.compose-stage){overflow:hidden}
   .compose-body{display:block}
   .compose-main{overflow:visible}
   .compose-subject{padding:20px 20px 16px}
+  .compose-dek{padding:0 20px 16px}
   .compose-stats{padding:20px 20px 18px}
   .compose-side{overflow:visible;padding:24px 20px 40px;border-left:0;border-top:1px solid var(--hairline)}
   .compose-foot{position:sticky;bottom:0;z-index:20;background:rgba(251,248,241,.92);

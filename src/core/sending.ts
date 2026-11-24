@@ -1,4 +1,4 @@
-import { eq, inArray } from 'drizzle-orm'
+import { and, eq, inArray, sql } from 'drizzle-orm'
 import type { Db } from '../db/index.ts'
 import { broadcasts, messages, sequenceSteps, sequences, subscribers } from '../db/schema.ts'
 import { ConsoleProvider } from '../providers/console.ts'
@@ -163,6 +163,59 @@ export async function drainQueued(env: Env, db: Db, limit = 500): Promise<number
     pending.map((m) => m.id),
   )
   return pending.length
+}
+
+/**
+ * How long a message waits before its next attempt, given how many it has had.
+ *
+ * 15s, 30s, 1m, 2m, 4m, then 5m. A retry with no wait is spent before whatever
+ * caused the failure has passed — a rate limit's window, a provider's bad
+ * minute — so every attempt meets the same wall and good mail is given up on.
+ * Capped, because a queue delay is a promise to keep the message that long.
+ */
+export function retryDelaySeconds(attempts: number): number {
+  const attempt = Math.max(1, Math.floor(attempts))
+  return Math.min(RETRY_BASE_SECONDS * 2 ** (attempt - 1), RETRY_MAX_SECONDS)
+}
+
+const RETRY_BASE_SECONDS = 15
+const RETRY_MAX_SECONDS = 300
+
+/** What a message's `error` opens with once the queue has stopped trying. */
+export const GAVE_UP = 'gave up after exhausting queue retries'
+
+/**
+ * Write down why a batch is going round again, on every message still waiting.
+ *
+ * The provider path records its own error per message; this is for the failure
+ * that never got that far, where the consumer itself threw. Without it the
+ * only trace is a log line, and a message later given up on says nothing about
+ * what stopped it.
+ */
+export async function noteRetry(db: Db, messageIds: number[], error: string): Promise<void> {
+  const ids = [...new Set(messageIds)]
+  for (let i = 0; i < ids.length; i += 90) {
+    await db
+      .update(messages)
+      .set({ error: error.slice(0, 500) })
+      .where(and(inArray(messages.id, ids.slice(i, i + 90)), eq(messages.status, 'queued')))
+  }
+}
+
+/**
+ * The end of the line for one message: `failed`, keeping the last error it met.
+ *
+ * Only a message still `queued` is touched, so one that went out on its final
+ * attempt is never marked failed after the fact.
+ */
+export async function giveUp(db: Db, messageId: number): Promise<void> {
+  await db
+    .update(messages)
+    .set({
+      status: 'failed',
+      error: sql`${GAVE_UP} || coalesce(': ' || ${messages.error}, '')`,
+    })
+    .where(and(eq(messages.id, messageId), eq(messages.status, 'queued')))
 }
 
 export type SendOutcome =

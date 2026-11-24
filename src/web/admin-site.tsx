@@ -226,7 +226,7 @@ siteAdmin.get('/site', async (c) => {
                 <ul style="margin:6px 0 0;padding-left:18px">
                   {featured.map((p) => (
                     <li>
-                      <a href={`/broadcasts/${p.id}/publishing`}>{p.subject}</a>
+                      <a href={`/broadcasts/${p.id}`}>{p.subject}</a>
                     </li>
                   ))}
                 </ul>
@@ -235,7 +235,7 @@ siteAdmin.get('/site', async (c) => {
                 {featured.length
                   ? 'Featured posts, newest first. '
                   : 'No featured posts yet, so the front page has no "Start here". '}
-                Feature a post from its Publishing screen.
+                Feature a post from the Web panel beside its broadcast.
               </p>
             </div>
 
@@ -253,7 +253,7 @@ siteAdmin.get('/site', async (c) => {
                   ))}
                 </div>
               ) : (
-                <p class="faint" style="margin:8px 0 0">No topics yet. Tag posts on their Publishing screen.</p>
+                <p class="faint" style="margin:8px 0 0">No topics yet. Tag posts in the Web panel beside a broadcast.</p>
               )}
               <p class="faint" style="margin:10px 0 0">Each ticked topic gets a shelf of its newest posts.</p>
             </div>

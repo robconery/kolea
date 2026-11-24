@@ -47,6 +47,14 @@ describe('Feature: the masthead', () => {
       expect(html).toContain('>The Great Internet Garbage Patch</h1>')
     })
 
+    it('sets the headline in the reader’s own system font', () => {
+      expect(/<h1 style="([^"]*)"/.exec(html)?.[1]).toContain('-apple-system,BlinkMacSystemFont')
+    })
+
+    it('never sets the headline in a monospace face', () => {
+      expect(/<h1 style="([^"]*)"/.exec(html)?.[1]).not.toContain('mono')
+    })
+
     it('puts the lead under it', () => {
       expect(html).toContain('>Slop is choking the web.</p>')
     })

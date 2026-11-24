@@ -126,7 +126,9 @@
 .bm-prose pre {
   margin: 0 0 22px;
   background: #1c1f24; color: #e6e1d8; padding: 14px 16px; border-radius: 8px;
-  font: 13px/1.6 var(--e-mono); overflow-x: auto;
+  font: 13px/1.6 var(--e-mono);
+  /* Wraps, because the mail does: see `codeBlock` in render-doc.ts. */
+  white-space: pre-wrap; overflow-wrap: anywhere;
 }
 .bm-prose pre code { background: none; padding: 0; color: inherit; font-size: inherit; }
 

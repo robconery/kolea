@@ -104,7 +104,13 @@ function renderNode(node: DocNode, o: DocRenderOptions): string {
     case 'codeBlock':
       // Syntax highlighting is intentionally dropped: the <span> soup that
       // lowlight produces is fragile across clients, and a mono block reads fine.
-      return `<pre style="margin:0 0 ${BLOCK_GAP};padding:14px 16px;background:#f6f5f3;border:1px solid ${LINE};border-radius:8px;overflow-x:auto"><code style="font:13px/1.6 ${MONO};color:${INK};white-space:pre">${escapeHtml(textOf(node))}</code></pre>`
+      //
+      // ⭐ It wraps, and must. The mail is a table, and a table grows to fit the
+      // widest thing that cannot break — so one long unwrapped line in here
+      // widens the whole column and every paragraph in the mail runs off the
+      // right edge with it. `overflow-x:auto` does not save it: a mail client
+      // sizes the table first and never gets as far as scrolling.
+      return `<pre style="margin:0 0 ${BLOCK_GAP};padding:14px 16px;background:#f6f5f3;border:1px solid ${LINE};border-radius:8px;white-space:pre-wrap;word-wrap:break-word;overflow-wrap:anywhere"><code style="font:13px/1.6 ${MONO};color:${INK};white-space:pre-wrap;word-wrap:break-word;overflow-wrap:anywhere">${escapeHtml(textOf(node))}</code></pre>`
 
     case 'horizontalRule':
       return `<hr style="border:0;border-top:1px solid ${LINE};margin:28px 0" />`

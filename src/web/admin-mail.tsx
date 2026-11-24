@@ -11,9 +11,17 @@ import {
 import { listCampaigns } from '../core/campaigns.ts'
 import { storeMedia } from '../core/media.ts'
 import { setPostTags, tagSlug, tagsForPost } from '../core/post-tags.ts'
-import { clearFeatureImage, postPath, publishPost, setFeatureImage, setPostFeatured, unpublishPost } from '../core/posts.ts'
+import {
+  clearFeatureImage,
+  postPath,
+  publishPost,
+  setFeatureImage,
+  setPostFeatured,
+  uniqueSlug,
+  unpublishPost,
+} from '../core/posts.ts'
 import { postPlainText } from '../core/render-web.ts'
-import { type Photo, searchPhotos, triggerDownload, unsplashConfigured } from '../core/unsplash.ts'
+import { searchPhotos, triggerDownload, unsplashConfigured } from '../core/unsplash.ts'
 import { aiConfigured, modelFor, modelLabel } from '../core/ai/openrouter.ts'
 import { countSegment, describeRule, listSegments } from '../core/segments.ts'
 import {
@@ -154,10 +162,6 @@ const AudiencePicker = ({
         </option>
       ))}
     </select>
-    <p class="faint" style="margin:6px 0 0">
-      A segment's rule is copied onto the broadcast when you pick it, so editing the segment later
-      never changes what an already-sent broadcast targeted. <a href="/segments">Manage segments →</a>
-    </p>
   </div>
 )
 
@@ -256,10 +260,7 @@ mail.get('/broadcasts/new', async (c) => {
               <CampaignPicker all={allCampaigns} value={null} />
             </div>
           ) : null}
-          <div class="side-sec">
-            <h3>Writing</h3>
-            <EditorHint />
-          </div>
+          <WebPanel env={c.env} b={null} topics={[]} mode="draft" />
         </>
       }
       foot={
@@ -270,6 +271,7 @@ mail.get('/broadcasts/new', async (c) => {
       }
     >
       <Subject />
+      <Excerpt />
       <RichEditor bare footer={broadcastFooter} />
     </ComposeLayout>,
   )
@@ -317,6 +319,82 @@ const Subject = ({ value }: { value?: string }) => (
 )
 
 /**
+ * The line under the subject. One field, three jobs: the grey lead under the
+ * mail's title, the inbox preview text, and the card copy on the web. It sits
+ * under the headline because that is where it reads.
+ */
+const Excerpt = ({ value }: { value?: string | null }) => (
+  <div class="compose-dek">
+    <label class="hide-vis" for="excerpt">
+      Excerpt
+    </label>
+    <textarea
+      class="dek"
+      id="excerpt"
+      name="excerpt"
+      rows={1}
+      placeholder="Excerpt: the line under the title, the inbox preview, and the web card"
+    >
+      {value ?? ''}
+    </textarea>
+  </div>
+)
+
+/**
+ * The web fields the composer carries, written as a patch — and only the ones
+ * the form actually had on it, so a page without the panel can't blank them.
+ *
+ * Topics are the exception that is opt-in: every topic typed becomes a row, so
+ * the timed save (which fires mid-word) must not write them. The panel posts
+ * them on its own once the field is left, and every full save writes them too.
+ */
+async function savePostFields(
+  db: Db,
+  id: number,
+  form: FormData,
+  opts: { topics: boolean },
+): Promise<void> {
+  const b = await db.select().from(broadcasts).where(eq(broadcasts.id, id)).get()
+  if (!b) return
+
+  const patch: Partial<typeof broadcasts.$inferInsert> = {}
+  if (form.has('excerpt')) {
+    patch.excerpt = String(form.get('excerpt')).replace(/\s+/g, ' ').trim() || null
+  }
+  // Says the email-or-web choice was on the page. A radio set always posts its
+  // pick, but a form without one posts nothing, which must mean "leave it".
+  if (form.has('publish_on_send_shown')) {
+    patch.publishOnSend = String(form.get('publish_on_send') ?? '') !== ''
+  }
+  if (form.has('web_panel')) {
+    patch.featured = form.has('featured')
+    const slug = String(form.get('slug') ?? '').trim()
+    if (slug) {
+      if (slug !== b.slug) patch.slug = await uniqueSlug(db, id, slug)
+    } else if (!b.publishedAt) {
+      // Blank means "derive it from the subject when it goes up". A live post
+      // keeps its URL: blanking the box is not a reason to break shared links.
+      patch.slug = null
+    }
+  }
+  if (Object.keys(patch).length) await db.update(broadcasts).set(patch).where(eq(broadcasts.id, id))
+
+  if (opts.topics && form.has('topics')) await setPostTags(db, id, readTopics(form))
+}
+
+function readTopics(form: FormData): string[] {
+  return String(form.get('topics') ?? form.get('tags') ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+}
+
+/** A fetch from the side panel wants an answer, not a page. */
+function wantsJson(accept: string | undefined): boolean {
+  return (accept ?? '').includes('application/json')
+}
+
+/**
  * Did the operator press "Send a preview" rather than "Save"?
  *
  * The preview button is a submit inside the composer's own form, so the draft
@@ -358,6 +436,7 @@ mail.post('/broadcasts', async (c) => {
     ...audience,
     campaignId: readCampaignId(form),
   })
+  await savePostFields(db, id, form, { topics: true })
 
   const q = wantsPreview(form)
     ? await previewFlash(c.env, db, { kind: 'broadcast', broadcastId: id, subject })
@@ -391,6 +470,7 @@ mail.post('/broadcasts/autosave', async (c) => {
       ...audience,
       campaignId: readCampaignId(form),
     })
+    await savePostFields(db, id, form, { topics: false })
     return c.json({ ok: true, id, url: `/broadcasts/${id}`, action: `/broadcasts/${id}/edit` })
   }
 
@@ -412,8 +492,22 @@ mail.post('/broadcasts/autosave', async (c) => {
       campaignId: readCampaignId(form),
     })
     .where(eq(broadcasts.id, id))
+  await savePostFields(db, id, form, { topics: false })
 
   return c.json({ ok: true, id, url: `/broadcasts/${id}`, action: `/broadcasts/${id}/edit` })
+})
+
+/** Unsplash results for the side panel's picker, as JSON. */
+mail.get('/photos/search', async (c) => {
+  const q = (c.req.query('q') ?? '').trim()
+  if (!unsplashConfigured(c.env)) return c.json({ ok: false, reason: 'Unsplash is not set up.' }, 404)
+  if (!q) return c.json({ ok: true, photos: [] })
+  try {
+    const page = Math.min(20, Math.max(1, Number(c.req.query('page')) || 1))
+    return c.json({ ok: true, photos: await searchPhotos(c.env, q, page) })
+  } catch (err) {
+    return c.json({ ok: false, reason: err instanceof Error ? err.message : 'Unsplash search failed.' }, 502)
+  }
 })
 
 /** One copy to the operator's own address, answered in JSON for the dialog. */
@@ -454,6 +548,7 @@ mail.get('/broadcasts/:id', async (c) => {
   const editable = b.status === 'draft'
   const segName = choices.segs.find((s) => s.id === b.segmentId)?.name
   const campaign = allCampaigns.find((x) => x.id === b.campaignId)
+  const topics = (await tagsForPost(db, id)).map((t) => t.name)
 
   // A draft is a thing you write, so it opens in the composer. Anything past
   // draft is a thing that happened, so it stays a report — numbers, and the
@@ -509,31 +604,7 @@ mail.get('/broadcasts/:id', async (c) => {
                 ) : null}
               </div>
             ) : null}
-            {c.env.SITE_URL ? (
-              <div class="side-sec">
-                <h3>Web</h3>
-                {/* Checked by default, and the box is the whole decision: a
-                    broadcast is a post unless it's something you'd rather not
-                    have a public URL — a sales push, a note to one segment. */}
-                <label style="text-transform:none;letter-spacing:0;font-size:13px;color:var(--muted);display:flex;gap:9px;align-items:flex-start;margin:0">
-                  <input
-                    type="checkbox"
-                    name="publish_on_send"
-                    checked={b.publishOnSend}
-                    style="width:auto;margin-top:3px"
-                  />
-                  <span>Publish to the web when this sends</span>
-                </label>
-                <p class="faint" style="margin:10px 0 0">
-                  {b.publishedAt ? 'Published' : 'Not published yet'} ·{' '}
-                  <a href={`/broadcasts/${id}/publishing`}>Publishing →</a>
-                </p>
-              </div>
-            ) : null}
-            <div class="side-sec">
-              <h3>Writing</h3>
-              <EditorHint />
-            </div>
+            <WebPanel env={c.env} b={b} topics={topics} mode="draft" />
           </>
         }
         foot={
@@ -545,6 +616,7 @@ mail.get('/broadcasts/:id', async (c) => {
         }
       >
         <Subject value={b.subject} />
+        <Excerpt value={b.excerpt} />
         <RichEditor json={b.bodyJson} md={b.bodyMd} bare footer={broadcastFooter} />
       </ComposeLayout>,
     )
@@ -633,54 +705,35 @@ mail.get('/broadcasts/:id', async (c) => {
               </p>
             ) : null}
           </div>
-          <SideWeb env={c.env} b={b} />
+          <WebPanel env={c.env} b={b} topics={topics} mode={revising ? 'sent' : 'locked'} />
           {/* A sent broadcast can still be mailed to its author, one copy, as many
               times as they like: that is how a change to the email template gets
               looked at in a real inbox. `formaction`, so it never saves the
               editor's contents on the way: a save here rewrites a live page. */}
           <div class="side-sec">
-            <h3>Send it to yourself</h3>
+            <h3>Preview</h3>
             <button
-              class="btn"
+              class="btn sm"
               type="submit"
               formaction={`/broadcasts/${id}/preview`}
               formnovalidate
-              title={`Sends one copy to ${previewAddress(c.env)}`}
+              title={`Sends the saved version, with today's template, to ${previewAddress(c.env)}. Not counted in the numbers.`}
             >
               Send a preview
             </button>
-            <p class="faint" style="margin:8px 0 0">
-              One copy to {previewAddress(c.env)}, built with today's template.{' '}
-              {revising ? 'It sends the saved version, so save first to include an edit. ' : ''}
-              It doesn't count toward this broadcast's numbers.
-            </p>
+            <p class="faint" style="margin:8px 0 0">One copy to {previewAddress(c.env)}.</p>
           </div>
-          <div class="side-sec">
-            <h3>{asMailed ? 'As mailed' : 'Editing sent mail'}</h3>
-            {asMailed ? (
-              <p class="faint" style="margin:0">
-                The copy exactly as it went out. It can't be changed.{' '}
-                <a href={`/broadcasts/${id}`}>Back to the current version</a>
-              </p>
-            ) : (
-              <>
-                <p class="faint" style="margin:0">
-                  This already went out, and saving won't send it again. The change shows up on the
-                  web page and here, and the copy as mailed is kept.
-                </p>
-                {b.revisedAt ? (
-                  <p class="faint" style="margin:8px 0 0">
-                    Edited {fmtDate(b.revisedAt)} ·{' '}
-                    <a href={`/broadcasts/${id}?as=mailed`}>show as mailed</a>
-                  </p>
-                ) : null}
-              </>
-            )}
-          </div>
-          {revising ? (
+          {asMailed ? (
             <div class="side-sec">
-              <h3>Writing</h3>
-              <EditorHint />
+              <p class="faint" style="margin:0">
+                As it went out. <a href={`/broadcasts/${id}`}>Back to the current version</a>
+              </p>
+            </div>
+          ) : b.revisedAt ? (
+            <div class="side-sec">
+              <p class="faint" style="margin:0">
+                Edited {fmtDate(b.revisedAt)} · <a href={`/broadcasts/${id}?as=mailed`}>show as mailed</a>
+              </p>
             </div>
           ) : null}
         </>
@@ -763,6 +816,7 @@ mail.get('/broadcasts/:id', async (c) => {
       ) : (
         <>
           <Subject value={b.subject} />
+          <Excerpt value={b.excerpt} />
           <RichEditor json={b.bodyJson} md={b.bodyMd} bare footer={broadcastFooter} />
         </>
       )}
@@ -770,238 +824,253 @@ mail.get('/broadcasts/:id', async (c) => {
   )
 })
 
-/** The web status, for the composer's side panel. Nothing when there is no public site. */
-const SideWeb: FC<{ env: Env; b: Broadcast }> = ({ env, b }) => {
-  if (!env.SITE_URL) return null
-  const url = b.slug ? `${env.SITE_URL.replace(/\/$/, '')}/${b.slug}` : ''
-  return (
-    <div class="side-sec">
-      <h3>On the web</h3>
-      {b.publishedAt ? (
-        <p style="margin:0">
-          Published {fmtDate(b.publishedAt)} at <a href={url}>{url}</a>
-        </p>
-      ) : (
-        <p class="faint" style="margin:0">
-          Not on the public site. Publishing sends nothing; it puts this piece on a page.
-        </p>
-      )}
-      <p style="margin:10px 0 0">
-        <a href={`/broadcasts/${b.id}/publishing`}>{b.publishedAt ? 'Manage' : 'Publish'} →</a>
-      </p>
-    </div>
-  )
+/** The URL segment a topic name will get — for showing the URL before it exists. */
+function topicSlug(name: string | undefined): string | null {
+  return name ? tagSlug(name) || null : null
 }
 
 /**
- * The publishing screen: the featured image and the post's URL and card copy.
+ * ⭐ The web half of a broadcast, in the composer's side panel: whether it goes
+ * on the site at all, the featured image, the topics, and the URL.
  *
- * Deliberately its own page rather than a panel on the broadcast. It works the
- * same whatever state the broadcast is in — draft, sent, or imported from Kit —
- * and it holds four separate forms, which no composer screen could.
- */
-mail.get('/broadcasts/:id/publishing', async (c) => {
-  const db = getDb(c.env)
-  const id = Number(c.req.param('id'))
-  const b = await db.select().from(broadcasts).where(eq(broadcasts.id, id)).get()
-  if (!b) return c.notFound()
-  if (!c.env.SITE_URL) {
-    return c.redirect(`/broadcasts/${id}?flash=No public site is configured.&kind=warn`)
-  }
-
-  // The Unsplash picker is a GET round trip, not a fetch: `?photo_q=` re-renders
-  // this page with results. No JavaScript, and the search survives a refresh
-  // because it is in the URL.
-  const photoQuery = (c.req.query('photo_q') ?? '').trim()
-  let photos: Photo[] = []
-  let photoError: string | null = null
-  if (photoQuery && unsplashConfigured(c.env)) {
-    try {
-      photos = await searchPhotos(c.env, photoQuery)
-    } catch (err) {
-      photoError = err instanceof Error ? err.message : 'Unsplash search failed.'
-    }
-  }
-
-  return c.html(
-    <Layout title={`Publishing · ${b.subject}`} nav="bc">
-      <div class="head">
-        <div>
-          <h1>Publishing</h1>
-          <div class="sub">
-            <a href={`/broadcasts/${id}`}>← {b.subject || 'Untitled'}</a> · {statusPill(b.status)}
-          </div>
-        </div>
-      </div>
-
-      <Flash msg={c.req.query('flash')} kind={c.req.query('kind')} />
-
-      <FeatureImage env={c.env} b={b} photos={photos} query={photoQuery} photoError={photoError} />
-      <Publishing env={c.env} b={b} topics={(await tagsForPost(db, id)).map((t) => t.name)} />
-    </Layout>,
-  )
-})
-
-/**
- * Picking the picture that fronts the post — on the card, in the OG preview, and
- * at the top of the page.
+ * It used to be a screen of its own, reached by a link, which made the picture
+ * and the card copy an errand run after the writing. Now it sits beside the
+ * writing, and the excerpt sits under the subject.
  *
- * Three plain HTML forms, no JavaScript. Upload posts a file; the Unsplash
- * search is a GET that re-renders this page with results; choosing one posts the
- * photo's fields back. They are siblings rather than one form because forms
- * cannot nest, and the publish form sits right below them.
+ * The featured image is the one part that is not a form field: it is uploaded or
+ * picked from Unsplash by `client/web-panel.ts`, which saves it the moment it is
+ * chosen. Everything else rides in the composer's own form and is saved with it.
+ *
+ * `mode` is what the broadcast is: a `draft` chooses email-and-web or email
+ * only, and goes up when it sends; `sent` mail that is being revised publishes
+ * or comes down through its own Save; `locked` (mid-send, or the as-mailed
+ * copy) has no Save, so its buttons post straight to the publish routes.
  */
-const FeatureImage: FC<{
+const WebPanel: FC<{
   env: Env
-  b: Broadcast
-  photos: Photo[]
-  query: string
-  photoError: string | null
-}> = ({ env, b, photos, query, photoError }) => {
+  b: Broadcast | null
+  topics: string[]
+  mode: 'draft' | 'sent' | 'locked'
+}> = ({ env, b, topics, mode }) => {
   if (!env.SITE_URL) return null
+  const origin = env.SITE_URL.replace(/\/$/, '')
+  const live = Boolean(b?.publishedAt)
+  const path = postPath(b?.slug || 'from-the-subject', topicSlug(topics[0]))
+  const url = `${origin}${path}`
   const stock = unsplashConfigured(env)
 
   return (
-    <div class="card">
-      <div class="card-h">
-        <h2>Featured image</h2>
-        {b.featureImage ? (
-          <form method="post" action={`/broadcasts/${b.id}/feature-image/clear`}>
-            <button class="btn">Remove</button>
-          </form>
-        ) : null}
-      </div>
-      <div class="card-b">
-        {b.featureImage ? (
-          <figure style="margin:0 0 22px">
-            <img
-              src={b.featureImage}
-              alt=""
-              style="width:100%;max-height:320px;object-fit:cover;border-radius:12px;display:block"
-            />
-            {b.featureImageCredit ? (
-              <figcaption class="faint" style="margin-top:9px;font-size:12.5px">
-                Photo by{' '}
-                <a href={b.featureImageCreditUrl ?? '#'} target="_blank" rel="noopener">
-                  {b.featureImageCredit}
-                </a>{' '}
-                on Unsplash — shown under the image on the post.
-              </figcaption>
-            ) : null}
-          </figure>
-        ) : (
-          <p class="faint" style="margin:0 0 22px">
-            No image set. The post falls back to the first image in the body, and to a text-only
-            card if there isn't one.
+    <div
+      class="side-sec web-sec"
+      data-web-panel
+      data-unsplash={stock ? '1' : undefined}
+    >
+      <h3>Web</h3>
+      <input type="hidden" name="web_panel" value="1" />
+
+      {mode === 'draft' ? (
+        <>
+          {/* A broadcast is a post unless it's something you'd rather not have
+              a public URL for — a sales push, a note to one segment. */}
+          <input type="hidden" name="publish_on_send_shown" value="1" />
+          <div class="seg2" role="radiogroup" aria-label="Where this goes">
+            <label>
+              <input type="radio" name="publish_on_send" value="on" checked={b ? b.publishOnSend : true} />
+              <span>Email + web</span>
+            </label>
+            <label>
+              <input type="radio" name="publish_on_send" value="" checked={b ? !b.publishOnSend : false} />
+              <span>Email only</span>
+            </label>
+          </div>
+          <p class="faint web-note">
+            {live ? (
+              <>
+                Already live at <a href={url}>{url}</a>
+              </>
+            ) : (
+              <>
+                <span class="web-when">Goes up at {path} when it sends.</span>
+                <span class="web-never">No web page. It only goes to inboxes.</span>
+              </>
+            )}
           </p>
-        )}
-
-        <h3>Upload</h3>
-        <form
-          method="post"
-          action={`/broadcasts/${b.id}/feature-image/upload`}
-          enctype="multipart/form-data"
-          style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 28px"
-        >
-          <input type="file" name="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif" required />
-          <button class="btn primary">Upload</button>
-        </form>
-
-        <h3>Unsplash</h3>
-        {stock ? (
-          <>
-            <form
-              method="get"
-              action={`/broadcasts/${b.id}/publishing`}
-              style="display:flex;gap:10px;margin:0 0 18px;flex-wrap:wrap"
-            >
-              <input
-                type="text"
-                name="photo_q"
-                value={query}
-                placeholder="ocean, shorebird, empty desk…"
-                style="flex:1;min-width:200px"
-              />
-              <button class="btn">Search</button>
-            </form>
-
-            {photoError ? <p class="faint">{photoError}</p> : null}
-            {query && !photoError && photos.length === 0 ? (
-              <p class="faint">Nothing found for “{query}”.</p>
-            ) : null}
-
-            <div style="display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(150px,1fr))">
-              {photos.map((p) => (
-                // One form per photo: the button IS the choice, and every field
-                // it needs travels with it. Nothing is held in a session between
-                // the search and the pick.
-                <form method="post" action={`/broadcasts/${b.id}/feature-image/unsplash`}>
-                  <input type="hidden" name="url" value={p.url} />
-                  <input type="hidden" name="credit" value={p.credit} />
-                  <input type="hidden" name="credit_url" value={p.creditUrl} />
-                  <input type="hidden" name="download_location" value={p.downloadLocation} />
-                  <button
-                    type="submit"
-                    title={p.alt || `Photo by ${p.credit}`}
-                    style={`display:block;width:100%;padding:0;border:1px solid rgba(148,190,255,.16);border-radius:10px;overflow:hidden;cursor:pointer;background:${p.color ?? 'transparent'}`}
-                  >
-                    <img
-                      src={p.thumbUrl}
-                      alt={p.alt}
-                      loading="lazy"
-                      style="width:100%;aspect-ratio:3/2;object-fit:cover;display:block"
-                    />
-                    <span
-                      style="display:block;padding:7px 9px;font-size:11.5px;text-align:left;background:rgba(3,10,26,.82);color:#9db2d4"
-                    >
-                      {p.credit}
-                    </span>
+        </>
+      ) : (
+        <div class="web-status">
+          {live ? (
+            <p style="margin:0">
+              <span class="pill ok">Live</span> <a href={url}>{path}</a>
+            </p>
+          ) : (
+            <p class="faint" style="margin:0">
+              Not on the web.
+            </p>
+          )}
+          <div class="web-acts">
+            {mode === 'sent' ? (
+              // Through the composer's own Save, so an edit in the body goes up
+              // with it rather than being dropped on the way.
+              <button class="btn sm" name="web" value={live ? 'unpublish' : 'publish'}>
+                {live ? 'Take down' : 'Publish'}
+              </button>
+            ) : (
+              <>
+                <button class="btn sm" formaction={`/broadcasts/${b?.id}/publish`} formnovalidate>
+                  {live ? 'Update' : 'Publish'}
+                </button>
+                {live ? (
+                  <button class="btn sm" formaction={`/broadcasts/${b?.id}/unpublish`} formnovalidate>
+                    Take down
                   </button>
-                </form>
-              ))}
-            </div>
-          </>
-        ) : (
-          <p class="faint" style="margin:0">
-            Set the <code>UNSPLASH_ACCESS_KEY</code> secret to search stock photos here. Upload
-            works without it.
-          </p>
-        )}
+                ) : null}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      <div class="web-only">
+        <FeaturedImage b={b} stock={stock} />
+
+        <div class="field">
+          <label for="topics">Topics</label>
+          <input
+            type="text"
+            id="topics"
+            name="topics"
+            value={topics.join(', ')}
+            placeholder="AI, Databases"
+            autocomplete="off"
+            data-topics
+          />
+        </div>
+
+        <label class="web-check">
+          <input type="checkbox" name="featured" checked={b?.featured ?? false} />
+          <span>Feature it on the front page</span>
+        </label>
+
+        <details class="web-slug">
+          <summary>URL</summary>
+          <input
+            type="text"
+            name="slug"
+            value={b?.slug ?? ''}
+            placeholder="from the subject"
+            autocomplete="off"
+            aria-label="URL slug"
+          />
+          {live ? <p class="faint">Changing it breaks links people have shared.</p> : null}
+        </details>
       </div>
     </div>
   )
 }
+
+/**
+ * The picture that fronts the post — on the card, in the share preview, and at
+ * the top of the page. Rendered here; driven by `client/web-panel.ts`.
+ *
+ * None of these controls has a `name`: they are not part of the composer's
+ * form, and the file and the search box must never ride along with a save.
+ */
+const FeaturedImage: FC<{ b: Broadcast | null; stock: boolean }> = ({ b, stock }) => (
+  <div class="fi" data-fi>
+    <div class="fi-frame" data-fi-frame>
+      {b?.featureImage ? <img src={b.featureImage} alt="" /> : <span>No featured image</span>}
+    </div>
+    <p class="fi-credit" data-fi-credit hidden={!b?.featureImageCredit}>
+      {b?.featureImageCredit ? (
+        <>
+          Photo by{' '}
+          <a href={b.featureImageCreditUrl ?? '#'} target="_blank" rel="noopener">
+            {b.featureImageCredit}
+          </a>{' '}
+          on Unsplash
+        </>
+      ) : null}
+    </p>
+    <div class="fi-acts">
+      <button type="button" class="btn sm" data-fi-upload>
+        Upload
+      </button>
+      <button type="button" class="btn sm" data-fi-clear hidden={!b?.featureImage}>
+        Remove
+      </button>
+      <input type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif" hidden data-fi-file />
+    </div>
+    {stock ? (
+      <>
+        <input type="search" class="fi-q" placeholder="Search Unsplash" autocomplete="off" data-fi-q />
+        <div class="fi-grid" data-fi-results />
+      </>
+    ) : null}
+    <p class="fi-note" data-fi-note hidden />
+  </div>
+)
+
+/** What a panel request gets back: the image as it now stands. */
+function imageJson(b: Pick<Broadcast, 'featureImage' | 'featureImageCredit' | 'featureImageCreditUrl'> | undefined) {
+  return {
+    ok: true,
+    image: b?.featureImage
+      ? { url: b.featureImage, credit: b.featureImageCredit, creditUrl: b.featureImageCreditUrl }
+      : null,
+  }
+}
+
+async function currentImage(db: Db, id: number) {
+  return await db
+    .select({
+      featureImage: broadcasts.featureImage,
+      featureImageCredit: broadcasts.featureImageCredit,
+      featureImageCreditUrl: broadcasts.featureImageCreditUrl,
+    })
+    .from(broadcasts)
+    .where(eq(broadcasts.id, id))
+    .get()
+}
+
+/** The old publishing screen. Everything on it lives in the composer now. */
+mail.get('/broadcasts/:id/publishing', (c) => c.redirect(`/broadcasts/${c.req.param('id')}`))
 
 mail.post('/broadcasts/:id/feature-image/upload', async (c) => {
   const db = getDb(c.env)
   const id = Number(c.req.param('id'))
+  const json = wantsJson(c.req.header('accept'))
+  const refuse = (message: string) =>
+    json
+      ? c.json({ ok: false, reason: message }, 422)
+      : c.redirect(`/broadcasts/${id}?flash=${encodeURIComponent(message)}&kind=warn`)
 
+  if (!(await currentImage(db, id))) return c.notFound()
   const form = await c.req.formData()
   const file = form.get('file')
-  if (!(file instanceof File)) {
-    return c.redirect(`/broadcasts/${id}/publishing?flash=Pick a file first.&kind=warn`)
-  }
+  if (!(file instanceof File)) return refuse('Pick a file first.')
 
   const stored = await storeMedia(c.env, db, file)
-  if (!stored.ok) {
-    return c.redirect(`/broadcasts/${id}/publishing?flash=${encodeURIComponent(stored.message)}&kind=warn`)
-  }
+  if (!stored.ok) return refuse(stored.message)
 
   // An uploaded image is the operator's own, so no credit line.
   await setFeatureImage(db, id, { url: stored.url })
-  return c.redirect(`/broadcasts/${id}/publishing?flash=Featured image set.`)
+  return json ? c.json(imageJson(await currentImage(db, id))) : c.redirect(`/broadcasts/${id}?flash=Featured image set.`)
 })
 
 mail.post('/broadcasts/:id/feature-image/unsplash', async (c) => {
   const db = getDb(c.env)
   const id = Number(c.req.param('id'))
+  const json = wantsJson(c.req.header('accept'))
   const form = await c.req.formData()
 
+  if (!(await currentImage(db, id))) return c.notFound()
   const url = String(form.get('url') ?? '')
-  // Only Unsplash's own CDN, and only from this form. The field is posted by a
-  // browser, so it is not trustworthy just because we rendered it a moment ago.
+  // Only Unsplash's own CDN. The field is posted by a browser, so it is not
+  // trustworthy just because we rendered it a moment ago.
   if (!/^https:\/\/images\.unsplash\.com\//.test(url)) {
-    return c.redirect(`/broadcasts/${id}/publishing?flash=That isn't an Unsplash image.&kind=warn`)
+    return json
+      ? c.json({ ok: false, reason: "That isn't an Unsplash image." }, 422)
+      : c.redirect(`/broadcasts/${id}?flash=That isn't an Unsplash image.&kind=warn`)
   }
 
   await setFeatureImage(db, id, {
@@ -1013,116 +1082,47 @@ mail.post('/broadcasts/:id/feature-image/unsplash', async (c) => {
   // Required by the API guidelines, and only ever on an actual pick.
   c.executionCtx.waitUntil(triggerDownload(c.env, String(form.get('download_location') ?? '')))
 
-  return c.redirect(`/broadcasts/${id}?flash=Featured image set.`)
+  return json ? c.json(imageJson(await currentImage(db, id))) : c.redirect(`/broadcasts/${id}?flash=Featured image set.`)
 })
 
 mail.post('/broadcasts/:id/feature-image/clear', async (c) => {
-  const id = Number(c.req.param('id'))
-  await clearFeatureImage(getDb(c.env), id)
-  return c.redirect(`/broadcasts/${id}/publishing?flash=Featured image removed.`)
-})
-
-/** The URL segment a topic name will get — for showing the URL before it exists. */
-function topicSlug(name: string | undefined): string | null {
-  return name ? tagSlug(name) || null : null
-}
-
-/**
- * Put this broadcast on the public site, or take it down.
- *
- * Lives on the report view — the screen for mail that has already happened —
- * rather than in the composer. Writing and publishing are separate acts here on
- * purpose: the piece goes to the list first, and the web page is a second,
- * deliberate decision made afterwards. (MCP can publish anything at any point;
- * this is the screen, not the rule.)
- */
-const Publishing: FC<{ env: Env; b: Broadcast; topics: string[] }> = ({ env, b, topics }) => {
-  // No public site configured means nothing to publish to, so the card would be
-  // a button that does nothing visible.
-  if (!env.SITE_URL) return null
-  const origin = env.SITE_URL.replace(/\/$/, '')
-  const live = Boolean(b.publishedAt)
-  const url = b.slug ? `${origin}${postPath(b.slug, topicSlug(topics[0]))}` : ''
-
-  return (
-    <div class="card">
-      <div class="card-h">
-        <h2>{live ? 'Published' : 'Publish to the web'}</h2>
-        {live ? (
-          <form method="post" action={`/broadcasts/${b.id}/unpublish`}>
-            <button class="btn">Take down</button>
-          </form>
-        ) : null}
-      </div>
-      <div class="card-b">
-        {live ? (
-          <p style="margin:0 0 18px">
-            Live at <a href={url}>{url}</a> · published {fmtDate(b.publishedAt)}
-          </p>
-        ) : (
-          <p class="faint" style="margin:0 0 18px">
-            Goes up at <code>{origin}{postPath(b.slug || 'slug-from-the-subject', topicSlug(topics[0]))}</code>. Nothing is mailed
-            and nothing about the send changes.
-          </p>
-        )}
-
-        <form method="post" action={`/broadcasts/${b.id}/publish`} class="stack">
-          <label>
-            <span>URL slug</span>
-            <input type="text" name="slug" value={b.slug ?? ''} placeholder="derived from the subject" />
-          </label>
-          <p class="faint" style="margin:-8px 0 4px;font-size:12.5px">
-            Leave as-is once it's live — changing it breaks every link anyone has shared.
-          </p>
-          <label>
-            <span>Topics</span>
-            <input type="text" name="tags" value={topics.join(', ')} placeholder="AI, Databases" />
-          </label>
-          <p class="faint" style="margin:-8px 0 4px;font-size:12.5px">
-            Comma-separated. The first is the topic in the URL. These tag the <em>post</em>, never the people
-            who got it. Old links keep working if you change it: the site redirects.
-          </p>
-          <label style="display:flex;gap:10px;align-items:center;text-transform:none;letter-spacing:0;font:14px var(--sans)">
-            <input type="checkbox" name="featured" checked={b.featured} />
-            <span>Featured: show it in the front page's "Start here"</span>
-          </label>
-          <label>
-            <span>Excerpt</span>
-            <textarea name="excerpt" rows={3} placeholder="derived from the first lines of the body">
-              {b.excerpt ?? ''}
-            </textarea>
-          </label>
-          <div>
-            <button class="btn primary">{live ? 'Update' : 'Publish'}</button>
-          </div>
-        </form>
-      </div>
-    </div>
-  )
-}
-
-mail.post('/broadcasts/:id/publish', async (c) => {
   const db = getDb(c.env)
   const id = Number(c.req.param('id'))
-  const form = await c.req.formData()
+  await clearFeatureImage(db, id)
+  return wantsJson(c.req.header('accept'))
+    ? c.json(imageJson(undefined))
+    : c.redirect(`/broadcasts/${id}?flash=Featured image removed.`)
+})
 
+/**
+ * Topics, saved when the field is left. The timed save skips them (a topic
+ * typed half-way is a row nobody wanted), so this is what keeps them from
+ * living only in the browser.
+ */
+mail.post('/broadcasts/:id/topics', async (c) => {
+  const db = getDb(c.env)
+  const id = Number(c.req.param('id'))
+  if (!(await currentImage(db, id))) return c.json({ ok: false, reason: 'that broadcast is gone' }, 404)
+  const tags = await setPostTags(db, id, readTopics(await c.req.formData()))
+  return c.json({ ok: true, topics: tags.map((t) => t.name), primary: tags[0]?.slug ?? null })
+})
+
+/** Publish (or refresh) the post from the fields on the form. */
+async function publishFromForm(db: Db, id: number, form: FormData): Promise<string> {
   const post = await publishPost(db, id, {
     slug: String(form.get('slug') ?? '').trim() || null,
     excerpt: String(form.get('excerpt') ?? '').trim() || null,
   })
   await setPostFeatured(db, id, form.get('featured') !== null)
-  const tags = await setPostTags(
-    db,
-    id,
-    String(form.get('tags') ?? '')
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean),
-  )
+  const tags = await setPostTags(db, id, readTopics(form))
+  return postPath(post.slug, tags[0]?.slug)
+}
 
-  return c.redirect(
-    `/broadcasts/${id}/publishing?flash=${encodeURIComponent(`Published at ${postPath(post.slug, tags[0]?.slug)}`)}`,
-  )
+mail.post('/broadcasts/:id/publish', async (c) => {
+  const db = getDb(c.env)
+  const id = Number(c.req.param('id'))
+  const path = await publishFromForm(db, id, await c.req.formData())
+  return c.redirect(`/broadcasts/${id}?flash=${encodeURIComponent(`Published at ${path}`)}`)
 })
 
 mail.post('/broadcasts/:id/unpublish', async (c) => {
@@ -1130,7 +1130,7 @@ mail.post('/broadcasts/:id/unpublish', async (c) => {
   const id = Number(c.req.param('id'))
   await unpublishPost(db, id)
   // The slug is kept, so putting it back restores the same URL.
-  return c.redirect(`/broadcasts/${id}/publishing?flash=Taken down.&kind=warn`)
+  return c.redirect(`/broadcasts/${id}?flash=Taken down.&kind=warn`)
 })
 
 mail.post('/broadcasts/:id/edit', async (c) => {
@@ -1157,12 +1157,9 @@ mail.post('/broadcasts/:id/edit', async (c) => {
       ...readEditorBody(form),
       ...audience,
       campaignId: readCampaignId(form),
-      // Only the full-form save writes this. Autosave posts a subset, and an
-      // unchecked checkbox posts nothing at all — so reading it there would
-      // silently switch publishing off every few seconds while you typed.
-      publishOnSend: form.get('publish_on_send') !== null,
     })
     .where(eq(broadcasts.id, id))
+  await savePostFields(db, id, form, { topics: true })
 
   if (wantsPreview(form)) {
     return c.redirect(
@@ -1214,6 +1211,19 @@ mail.post('/broadcasts/:id/revise', async (c) => {
     return c.redirect(
       `/broadcasts/${id}?flash=${encodeURIComponent(`Not saved: ${result.reason}.`)}&kind=warn`,
     )
+  }
+  await savePostFields(db, id, form, { topics: true })
+
+  // Publish and Take down in the side panel are this form's submits, so the
+  // edit on screen goes up (or is kept) along with the decision.
+  const web = String(form.get('web') ?? '')
+  if (web === 'publish') {
+    const path = await publishFromForm(db, id, form)
+    return c.redirect(`/broadcasts/${id}?flash=${encodeURIComponent(`Saved and published at ${path}. Nothing was sent.`)}`)
+  }
+  if (web === 'unpublish') {
+    await unpublishPost(db, id)
+    return c.redirect(`/broadcasts/${id}?flash=${encodeURIComponent('Saved and taken down. Nothing was sent.')}&kind=warn`)
   }
   return c.redirect(`/broadcasts/${id}?flash=${encodeURIComponent('Saved. Nothing was sent.')}`)
 })

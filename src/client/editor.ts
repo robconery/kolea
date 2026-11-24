@@ -38,6 +38,7 @@ import { SlopLint, type SlopState } from './extensions/slop-lint.ts'
 import { buildBubbleMenu } from './bubble-menu.ts'
 import { attachComposer, markDirty } from './composer.ts'
 import { attachSlopPanel } from './slop-panel.ts'
+import { attachWebPanel } from './web-panel.ts'
 import { attachAi } from './ai.ts'
 
 // A curated language set rather than lowlight's `common`, which drags in ~40
@@ -341,3 +342,6 @@ function mountReader(host: HTMLElement): void {
 
 document.querySelectorAll<HTMLElement>('[data-editor]').forEach(mount)
 document.querySelectorAll<HTMLElement>('[data-reader]').forEach(mountReader)
+// After the editors, so a new draft's composer is attached before the panel
+// asks it to save one into existence.
+document.querySelectorAll<HTMLFormElement>('form.compose').forEach(attachWebPanel)

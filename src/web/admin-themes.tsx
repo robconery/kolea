@@ -155,8 +155,8 @@ themesAdmin.get('/themes', async (c) => {
         <div class="card-b">
           <p class="faint" style="margin:0 0 14px">
             Post tags. A post's first tag is its topic and the first part of its URL: tag a post “AI” and it lives
-            at <code>/ai/its-slug</code>, and <code>/ai</code> lists everything tagged AI. Tag posts on their
-            Publishing screen. The busiest topics are the site's navigation.
+            at <code>/ai/its-slug</code>, and <code>/ai</code> lists everything tagged AI. Tag posts in the
+            Web panel beside a broadcast. The busiest topics are the site's navigation.
           </p>
           {topics.length ? (
             <table>

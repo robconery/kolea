@@ -283,7 +283,7 @@ function mastheadHtml(title: string, lead: string | null, postUrl: string | null
   const forwarded = postUrl
     ? `<p style="margin:0 0 28px;font:13px/1.5 ${FOOT_FONT};color:#8b8b8b;text-align:right">Forwarded this email? <a href="${escapeHtml(`${siteOrigin(postUrl)}/subscribe`)}" style="color:#8b8b8b;text-decoration:underline">Subscribe here</a> for more</p>`
     : ''
-  const h1 = `<h1 style="margin:0 0 14px;font:700 34px/1.2 ${TITLE_FONT};color:#1a1a1a;letter-spacing:-0.01em">${escapeHtml(title)}</h1>`
+  const h1 = `<h1 style="margin:0 0 14px;font:700 34px/1.2 ${FOOT_FONT};color:#1a1a1a;letter-spacing:-0.02em">${escapeHtml(title)}</h1>`
   const sub = lead
     ? `<p style="margin:0 0 26px;font:19px/1.5 ${FOOT_FONT};color:#6b6b6b">${escapeHtml(lead)}</p>`
     : ''
@@ -326,8 +326,6 @@ function siteOrigin(postUrl: string): string {
   return new URL(postUrl).origin
 }
 
-const TITLE_FONT = `'SF Mono',ui-monospace,Menlo,Consolas,'Liberation Mono',monospace`
-
 const FOOT_FONT = `-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif`
 
 function footerText(ctx: RenderContext): string {
@@ -351,6 +349,10 @@ function rewriteLinks(html: string, ctx: RenderContext): string {
  * `preheader` is the inbox preview line: hidden in the body, read by the client.
  * Padded out with zero-width joiners so the client doesn't fill the rest of the
  * preview with the first words of the body, which it would otherwise do.
+ *
+ * The column is `table-layout:fixed`, so its width comes from the table and
+ * never from what is inside it. Without that, anything unbreakable in the body
+ * (a long line of code, a bare URL) sets the width of the whole mail.
  */
 function shell(inner: string, footer: string, pixel: string, preheader: string | null): string {
   const hidden = preheader
@@ -361,8 +363,8 @@ function shell(inner: string, footer: string, pixel: string, preheader: string |
 <body style="margin:0;padding:0;background:#ffffff">
 ${hidden}<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff">
 <tr><td align="center" style="padding:28px 20px">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:620px">
-<tr><td style="padding:0;font:17px/1.7 -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#1f1f1f">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:620px;table-layout:fixed">
+<tr><td style="padding:0;font:17px/1.7 -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#1f1f1f;word-wrap:break-word;overflow-wrap:break-word">
 ${inner}
 </td></tr>
 ${

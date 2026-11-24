@@ -8,7 +8,13 @@
 import { beforeAll, describe, expect, it } from 'bun:test'
 import { count, eq } from 'drizzle-orm'
 import { startBroadcast } from '../../src/core/broadcasts.ts'
-import { type SendOutcome, sendMessage, sendMessages } from '../../src/core/sending.ts'
+import {
+  GAVE_UP,
+  type SendOutcome,
+  retryDelaySeconds,
+  sendMessage,
+  sendMessages,
+} from '../../src/core/sending.ts'
 import type { Message } from '../../src/db/schema.ts'
 import { messages, suppressions } from '../../src/db/schema.ts'
 import worker from '../../src/worker.tsx'
@@ -233,6 +239,117 @@ describe('Feature: a send that has to be attempted twice', () => {
 
     it('acks it, because there is nowhere further for it to go', () => {
       expect(acked).toHaveLength(1)
+    })
+  })
+
+  describe('Scenario: a message given up on after the provider turned it away', () => {
+    // SPEC 4.2, "with the error recorded". Giving up used to overwrite the
+    // error the message had met, which left a failed send with no cause.
+    let row: Message | undefined
+
+    beforeAll(async () => {
+      const world = createWorld()
+      const queued = await threeQueuedMessages(world)
+      await world.db
+        .update(messages)
+        .set({ status: 'queued', sentAt: null, error: 'resend batch 429: rate limit exceeded' })
+
+      const { batch } = sendBatchOf([queued[0]!.id], 'big-mailer-send-dlq')
+      await worker.queue(batch, world.env)
+
+      row = await world.db.select().from(messages).where(eq(messages.id, queued[0]!.id)).get()
+    })
+
+    it('records that we gave up', () => {
+      expect(row?.error).toContain(GAVE_UP)
+    })
+
+    it('keeps the error that stopped it  ⭐', () => {
+      expect(row?.error).toContain('resend batch 429: rate limit exceeded')
+    })
+  })
+
+  describe('Scenario: a batch the consumer could not process at all', () => {
+    // The provider is named but has no key, so the consumer throws before
+    // anything can reach the wire. It stands in for every failure that happens
+    // before a message has a result of its own.
+    let world: World
+    let acked: number[]
+    let retried: number[]
+    let delays: (number | undefined)[]
+    let rows: Message[]
+    let mailsAfterwards: number
+
+    beforeAll(async () => {
+      world = createWorld()
+      const queued = await threeQueuedMessages(world)
+      await world.db.update(messages).set({ status: 'queued', sentAt: null })
+      const before = (await world.outbox()).length
+
+      const sent = sendBatchOf(queued.map((m) => m.id))
+      acked = sent.acked
+      retried = sent.retried
+      delays = sent.delays
+      await worker.queue(sent.batch, { ...world.env, EMAIL_PROVIDER: 'resend', RESEND_API_KEY: undefined })
+
+      rows = await world.db.select().from(messages).all()
+      mailsAfterwards = (await world.outbox()).length - before
+    })
+
+    it('sends nothing', () => {
+      expect(mailsAfterwards).toBe(0)
+    })
+
+    it('sends every message round again', () => {
+      expect(retried).toHaveLength(3)
+    })
+
+    it('acks none of them', () => {
+      expect(acked).toHaveLength(0)
+    })
+
+    it('waits before the next attempt  ⭐', () => {
+      expect(delays).toEqual([15])
+    })
+
+    it('leaves them queued, so the next attempt can send them', () => {
+      expect(rows.map((r) => r.status)).toEqual(['queued', 'queued', 'queued'])
+    })
+
+    it('writes down why on each of them', () => {
+      expect(rows.every((r) => r.error?.startsWith('consumer threw: '))).toBe(true)
+    })
+  })
+
+  describe('Scenario: a batch failing for the fourth time', () => {
+    let delays: (number | undefined)[]
+
+    beforeAll(async () => {
+      const world = createWorld()
+      const queued = await threeQueuedMessages(world)
+      await world.db.update(messages).set({ status: 'queued', sentAt: null })
+
+      const sent = sendBatchOf(queued.map((m) => m.id), 'big-mailer-send', 4)
+      delays = sent.delays
+      await worker.queue(sent.batch, { ...world.env, EMAIL_PROVIDER: 'resend', RESEND_API_KEY: undefined })
+    })
+
+    it('waits longer than it did the first time', () => {
+      expect(delays).toEqual([120])
+    })
+  })
+
+  describe('Scenario: the wait between attempts', () => {
+    it('starts at fifteen seconds', () => {
+      expect(retryDelaySeconds(1)).toBe(15)
+    })
+
+    it('doubles with each attempt', () => {
+      expect([2, 3, 4, 5].map(retryDelaySeconds)).toEqual([30, 60, 120, 240])
+    })
+
+    it('never exceeds five minutes', () => {
+      expect(retryDelaySeconds(40)).toBe(300)
     })
   })
 

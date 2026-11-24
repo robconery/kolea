@@ -539,7 +539,7 @@ them as reference implementations, not as a general-purpose tool.
 | Images in email are broken | `PUBLIC_URL` didn't match the real host at send time. Mail already delivered cannot be fixed. |
 | Deploy fails with `Hostname … already has externally managed DNS records [code: 100117]` | The public site's hostname still has A/CNAME records from whatever served it before. Export them, delete them, redeploy. |
 | The public site shows a Cloudflare login | Its hostname is inside the Access application. Access apps match by hostname; scope the Allow app to the admin host exactly. |
-| The public site is empty, "Nothing published yet" | Correct until you publish something. Publishing is one deliberate act per post, on `/broadcasts/:id/publishing`. There is no bulk publish anywhere, by design. |
+| The public site is empty, "Nothing published yet" | Correct until you publish something. Publishing is one deliberate act per post: pick **Email + web** on the draft, or **Publish** in the Web panel of a sent broadcast. There is no bulk publish anywhere, by design. |
 | The blog isn't being indexed | Check `https://yoursite/robots.txt`. If it says `Disallow: /`, the asset is shadowing the Worker — `assets.run_worker_first` needs `/robots.txt`. |
 | The Unsplash picker doesn't appear | `UNSPLASH_ACCESS_KEY` isn't set, or it's the *Secret key* rather than the *Access Key* — the API returns 401 for the wrong one. `wrangler dev` also won't reload `.dev.vars`; restart it. |
 | Editor body silently never saves | A renamed TipTap extension option. Nothing server-side catches this — run `bun run smoke`. |

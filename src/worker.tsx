@@ -7,7 +7,7 @@ import { api } from './api/routes.ts'
 import { salesApi } from './api/sales.ts'
 import { withActivitySource } from './core/activity.ts'
 import { sendBroadcastNow } from './core/broadcasts.ts'
-import { sendMessages } from './core/sending.ts'
+import { giveUp, noteRetry, retryDelaySeconds, sendMessages } from './core/sending.ts'
 import { tickSequences } from './core/sequences.ts'
 import { syncStripeCatalog } from './core/stripe-catalog.ts'
 import { syncStripe } from './core/stripe.ts'
@@ -238,27 +238,43 @@ async function consumeBatch(batch: MessageBatch<SendJob>, env: Env) {
   // quietly stopped existing is the worst possible failure for a mailer.
   if (batch.queue.endsWith('-dlq')) {
     for (const msg of batch.messages) {
-      await db
-        .update(messages)
-        .set({ status: 'failed', error: 'gave up after exhausting queue retries' })
-        .where(and(eq(messages.id, msg.body.messageId), eq(messages.status, 'queued')))
+      await giveUp(db, msg.body.messageId)
       msg.ack()
     }
+    console.error(JSON.stringify({ at: 'queue', event: 'gave_up', messages: batch.messages.length }))
     return
   }
 
+  const ids = batch.messages.map((m) => m.body.messageId)
+
   try {
-    const outcomes = await sendMessages(
-      env,
-      db,
-      batch.messages.map((m) => m.body.messageId),
-    )
+    const outcomes = await sendMessages(env, db, ids)
+
+    // One log line per distinct error, not per message: a rate-limited batch is
+    // a hundred copies of the same sentence.
+    const retried = new Map<string, number>()
     for (const msg of batch.messages) {
       const outcome = outcomes.get(msg.body.messageId)
-      if (outcome?.status === 'failed' && outcome.retryable) msg.retry()
-      else msg.ack()
+      if (outcome?.status === 'failed' && outcome.retryable) {
+        msg.retry({ delaySeconds: retryDelaySeconds(msg.attempts) })
+        retried.set(outcome.error, (retried.get(outcome.error) ?? 0) + 1)
+      } else msg.ack()
     }
-  } catch {
-    batch.retryAll()
+    for (const [error, n] of retried) {
+      console.warn(JSON.stringify({ at: 'queue', event: 'retry', messages: n, error }))
+    }
+  } catch (err) {
+    // The consumer itself failed — the database, the provider's network, a bug —
+    // before any message had a result of its own. Say why on the rows, because
+    // the log line is gone in a week, then send the whole batch round again.
+    const error = `consumer threw: ${err instanceof Error ? err.message : String(err)}`
+    console.error(JSON.stringify({ at: 'queue', event: 'threw', messages: ids.length, error }))
+    try {
+      await noteRetry(db, ids, error)
+    } catch {
+      /* the database may be what failed; the retry still has to happen */
+    }
+    const attempts = Math.max(1, ...batch.messages.map((m) => m.attempts))
+    batch.retryAll({ delaySeconds: retryDelaySeconds(attempts) })
   }
 }

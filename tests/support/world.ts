@@ -172,22 +172,34 @@ export function createWorld(overrides: Partial<Env> = {}): World {
   }
 }
 
-/** Convenience for the queue-consumer specs: one batch of message ids. */
-export function sendBatchOf(messageIds: number[], queue = 'big-mailer-send') {
+/**
+ * Convenience for the queue-consumer specs: one batch of message ids.
+ *
+ * `attempts` is how many times the queue has already delivered the batch, and
+ * `delays` collects the wait each retry asked for, in seconds.
+ */
+export function sendBatchOf(messageIds: number[], queue = 'big-mailer-send', attempts = 1) {
   const acked: number[] = []
   const retried: number[] = []
+  const delays: (number | undefined)[] = []
   const batch = {
     queue,
     messages: messageIds.map((messageId) => ({
       id: `msg-${messageId}`,
       timestamp: new Date(),
       body: { messageId } as SendJob,
-      attempts: 1,
+      attempts,
       ack: () => acked.push(messageId),
-      retry: () => retried.push(messageId),
+      retry: (options?: QueueRetryOptions) => {
+        retried.push(messageId)
+        delays.push(options?.delaySeconds)
+      },
     })),
-    retryAll: () => retried.push(...messageIds),
+    retryAll: (options?: QueueRetryOptions) => {
+      retried.push(...messageIds)
+      delays.push(options?.delaySeconds)
+    },
     ackAll: () => acked.push(...messageIds),
   }
-  return { batch: batch as unknown as MessageBatch<SendJob>, acked, retried }
+  return { batch: batch as unknown as MessageBatch<SendJob>, acked, retried, delays }
 }

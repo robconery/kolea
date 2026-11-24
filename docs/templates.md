@@ -187,7 +187,7 @@ empty unless the operator has set it up**, so every section must be wrapped in a
 
 | Value | What it is |
 |---|---|
-| `start_here` | Posts marked **Featured** on their Publishing screen, newest first |
+| `start_here` | Posts marked **Featured** in the Web panel beside the broadcast, newest first |
 | `shelves` | One per topic ticked "show on the front page": each has `tag` and `posts` (its three newest) |
 | `latest` | The six newest posts. Use it as a fallback when there's no `start_here` and no `shelves` |
 | `post_count` | How many posts are published; link to `/writing` for all of them |
