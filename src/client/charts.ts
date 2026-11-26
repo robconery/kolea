@@ -31,7 +31,7 @@ type Spec =
 
 /** The ordinal ramp, mirrored from `src/web/charts.tsx`. Light → deep. */
 const RAMP = ['#2BB3A3', '#0B6B63', '#3B679A', '#7B4F9E']
-const INK = '#1B1A13'
+const INK = '#1A1A16'
 const FAINT = '#6B6650'
 const GRID = 'rgba(27,26,19,.08)'
 const SANS = "'Geist',ui-sans-serif,system-ui,Helvetica,sans-serif"

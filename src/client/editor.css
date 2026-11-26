@@ -23,7 +23,7 @@
      plumage. The page it wraps is paper, because that is what the mail will
      actually look like. */
   --e-ui: 'Geist', ui-sans-serif, system-ui, Helvetica, sans-serif;
-  --e-ui-ink: #1B1A13;
+  --e-ui-ink: #1A1A16;
   --e-ui-muted: #57533F;
   --e-ui-faint: #6B6650;
   --e-ui-line: rgba(27, 26, 19, 0.1);
@@ -31,7 +31,7 @@
   --e-ui-sunken: #F3EEE2;
   --e-ui-hover: rgba(27, 26, 19, 0.06);
   --e-ui-lifted: 0 0 0 1px rgba(27, 26, 19, 0.1), 0 1px 2px rgba(27, 26, 19, 0.06), 0 16px 40px -12px rgba(27, 26, 19, 0.18);
-  --e-spark: #F5B731;
+  --e-spark: #C9A659;
   --e-beam: #0B6B63;
   --e-paper: #fff;
   --e-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Helvetica, Arial, sans-serif;
@@ -727,7 +727,7 @@
 }
 .bm-scan-act:hover { background: var(--e-ui-sunken); }
 .bm-scan-act.primary { background: var(--e-spark); color: var(--e-ui-ink); font-weight: 600; box-shadow: inset 0 -2px 0 rgba(27, 26, 19, 0.14); }
-.bm-scan-act.primary:hover { background: #E6A516; }
+.bm-scan-act.primary:hover { background: #B8944A; }
 
 @keyframes bm-scan-in {
   from { opacity: 0; transform: translateY(-6px); }
@@ -842,7 +842,7 @@
 .bm-ai-result .bad { color: #B3261E; }
 
 .bm-ai-clean { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--e-ui-line); }
-/* The button is the admin's own `.btn.primary`, the same marigold as Save. Only
+/* The button is the admin's own `.btn.primary`, the same gold as Save. Only
    its width and its busy state are set here: `.btn:disabled` fades to near
    invisible, which reads as broken during a minute-long rewrite. */
 .bm-ai-clean .btn { width: 100%; justify-content: center; }
@@ -913,7 +913,7 @@
   height: 38px;
   margin: 0 auto 14px;
   border-radius: 50%;
-  background: conic-gradient(from 0deg, #0B6B63, #2BB3A3, #F5B731, transparent 75%);
+  background: conic-gradient(from 0deg, #0B6B63, #2BB3A3, #C9A659, transparent 75%);
   -webkit-mask: radial-gradient(circle, transparent 13px, #000 14px);
   mask: radial-gradient(circle, transparent 13px, #000 14px);
   animation: bm-ai-spin 1.1s linear infinite;

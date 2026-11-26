@@ -22,6 +22,7 @@ import { slugify } from './ids.ts'
  */
 export const RESERVED_TAG_SLUGS = new Set([
   'about',
+  'apple-touch-icon.png',
   'assets',
   'author',
   'd',
@@ -30,7 +31,6 @@ export const RESERVED_TAG_SLUGS = new Set([
   'favicon.png',
   'feed.xml',
   'logo.png',
-  'logo_200.png',
   'media',
   'p',
   'page',

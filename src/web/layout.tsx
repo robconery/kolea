@@ -9,7 +9,7 @@ import type { Campaign, DocNode } from '../db/schema.ts'
  * control room. A cream canvas; a narrow plumage rail of section icons with
  * the current section's pages docked beside it on a sunken column; the work in
  * crisp surface panels, each a hairline ring plus a soft contact shadow. One
- * marigold button per screen, lagoon for links, focus and the lit nav item.
+ * gold button per screen, lagoon for links, focus and the lit nav item.
  *
  * Rules that keep it fast on a Worker with no framework:
  *   · One stylesheet, inlined. No CSS build, no utility runtime.
@@ -23,12 +23,12 @@ export const CSS = `
 @layer base {
 :root{
   /* The palette is the bird: the kolea's breeding plumage (near-black olive),
-     its marigold speckle, its cream eye-stripe, and the lagoon it winters on.
+     its gold speckle, its cream eye-stripe, and the lagoon it winters on.
      Same tokens as the hosted Kōlea, so the two read as one family. */
-  --canvas:#FBF8F1;          /* page background, cream-tinted */
+  --canvas:#F9F7EF;          /* page background: sky */
   --surface:#FFFDF8;         /* panels */
   --sunken:#F3EEE2;          /* wells, the docked column, table hover */
-  --ink:#1B1A13;             /* primary text: plumage */
+  --ink:#1A1A16;             /* primary text: night */
   --muted:#57533F;           /* secondary text */
   --faint:#6B6650;           /* tertiary, placeholders, idle icons */
   --hairline:rgba(27,26,19,.10); /* the only border colour */
@@ -37,11 +37,12 @@ export const CSS = `
   /* Lagoon: links, focus, the lit nav item, chart series. Text-safe. */
   --accent:#0B6B63; --accent-hover:#08564F; --accent-bright:#2BB3A3;
   --accent-soft:rgba(11,107,99,.10);
-  /* Marigold: the primary action. A fill only, always with ink on it. */
-  --spark:#F5B731; --spark-hover:#E6A516; --spark-deep:#D48A0B;
-  --spark-soft:rgba(245,183,49,.18);
+  /* Plover gold: the primary action. A fill only, always with ink on it.
+     The deep one is the plover in shadow, and is text-safe on cream. */
+  --spark:#C9A659; --spark-hover:#B8944A; --spark-deep:#7B6127;
+  --spark-soft:rgba(201,166,89,.22);
   /* The rail: plumage, with cream text. */
-  --rail:#1B1A13; --rail-raised:#2A2920; --rail-ink:#F4EAD0; --rail-muted:#B5AE92;
+  --rail:#1A1A16; --rail-raised:#2A2920; --rail-ink:#F4EAD0; --rail-muted:#B5AE92;
   /* Status: dots, pills, chart marks. Never large fills, never small text. */
   --positive:#2E7D3A; --caution:#B4530C; --critical:#B3261E;
   --positive-soft:rgba(46,125,58,.11); --caution-soft:rgba(180,83,12,.11);
@@ -59,11 +60,13 @@ export const CSS = `
   /* Depth: a hairline ring plus a soft contact shadow. Only overlays lift. */
   --shadow-soft:0 1px 0 rgba(27,26,19,.04),0 1px 3px rgba(27,26,19,.05);
   --shadow-lifted:0 1px 2px rgba(27,26,19,.06),0 16px 40px -12px rgba(27,26,19,.18);
-  --shadow-press:inset 0 -2px 0 rgba(27,26,19,.14); /* the marigold button's lip */
+  --shadow-press:inset 0 -2px 0 rgba(27,26,19,.14); /* the gold button's lip */
   --ring:0 0 0 1px var(--hairline);
 
   --sans:'Geist',ui-sans-serif,system-ui,-apple-system,'Segoe UI',Helvetica,sans-serif;
   --display:var(--sans);
+  /* The wordmark's face, and nothing else's. One weight: never bold it. */
+  --wordmark:'Righteous',var(--sans);
   --mono:'Geist Mono',ui-monospace,SFMono-Regular,'SF Mono',Menlo,monospace;
   /* One curve for nearly everything: ease-out-quint, settled at 180ms. */
   --settle:cubic-bezier(.22,1,.36,1);
@@ -108,10 +111,9 @@ code,kbd,pre,samp{font-family:var(--mono)}
 .rail{position:fixed;top:0;bottom:0;left:0;z-index:40;display:flex}
 .rail-bar{width:var(--rail-w);flex:0 0 auto;display:flex;flex-direction:column;align-items:center;
   padding:12px 0;background:var(--rail);color:var(--rail-ink)}
-.mark{width:40px;height:40px;flex:0 0 auto;display:grid;place-items:center;overflow:hidden;
-  border-radius:10px;background:var(--spark);box-shadow:var(--shadow-press);margin:0 0 16px;
+.mark{width:40px;height:40px;flex:0 0 auto;display:block;margin:0 0 16px;
   transition:transform .3s var(--spring)}
-.mark img{width:30px;height:auto;display:block}
+.mark img{width:100%;height:100%;display:block}
 .mark:hover{transform:rotate(-6deg)}
 .rail-nav{flex:1;min-height:0;display:flex;flex-direction:column;align-items:center;gap:4px}
 .rail-nav .pin{margin-top:auto}
@@ -196,9 +198,8 @@ code,kbd,pre,samp{font-family:var(--mono)}
 /* The wordmark, for the phone bar and the sheet. */
 .brand{display:inline-flex;align-items:center;gap:10px;color:var(--ink)}
 .brand:hover{color:var(--ink)}
-.brand .mark{width:32px;height:32px;margin:0;border-radius:8px}
-.brand .mark img{width:24px}
-.brand .wm{font:700 18px/1 var(--display);letter-spacing:-.02em}
+.brand .mark{width:32px;height:32px;margin:0}
+.brand .wm{font:400 20px/1 var(--wordmark);letter-spacing:-.01em}
 }
 
 /* ─────────────────────────────────────────────────── the working surface */
@@ -244,7 +245,7 @@ code,kbd,pre,samp{font-family:var(--mono)}
 .tabs a.on{background:var(--surface);color:var(--ink);font-weight:600;
   box-shadow:var(--ring),var(--shadow-soft)}
 
-/* An explanatory note: a marigold wash with a hairline ring, never a dark block. */
+/* An explanatory note: a gold wash with a hairline ring, never a dark block. */
 .note{position:relative;margin:0 0 20px;padding:12px 16px;border-radius:12px;
   font-size:14px;color:var(--ink);background:var(--spark-soft);
   box-shadow:inset 0 0 0 1px var(--hairline)}
@@ -259,7 +260,7 @@ code,kbd,pre,samp{font-family:var(--mono)}
 .flash.warn{background:var(--caution-soft);box-shadow:inset 0 0 0 1px rgba(180,83,12,.18)}
 .flash.warn::before{background:var(--caution)}
 
-/* Empty: a glyph in a marigold circle, kept soft so the action leads. */
+/* Empty: a glyph in a gold circle, kept soft so the action leads. */
 .empty{padding:48px 20px;text-align:center;color:var(--faint)}
 .empty::before{content:'';display:block;width:44px;height:44px;margin:0 auto 16px;border-radius:50%;
   background:var(--spark-soft) no-repeat center/22px url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%231B1A13' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 13.6h4.2l1.3 2.5h5l1.3-2.5H20M6.5 4.8h11l2.5 8.8v5.6H4v-5.6l2.5-8.8Z'/%3E%3C/svg%3E")}
@@ -281,7 +282,7 @@ pre.code,.card pre{background:var(--sunken);padding:16px 18px;border-radius:12px
 
 /* ─────────────────────────────────────────────────────── the controls */
 @layer controls {
-/* Pills. One marigold per screen; icons that mean travel trail the label in
+/* Pills. One gold per screen; icons that mean travel trail the label in
    a black circle. Pressed buttons scale to .98. */
 .btn{position:relative;display:inline-flex;align-items:center;justify-content:center;gap:8px;
   height:40px;padding:0 16px;border-radius:99px;border:0;cursor:pointer;white-space:nowrap;
@@ -1082,7 +1083,7 @@ const NAV: ({ grp: string } | { href: string; key: string; label: string })[] = 
 ]
 
 const FONTS =
-  'https://fonts.googleapis.com/css2?family=Geist:wght@400..700&family=Geist+Mono:wght@400;500&display=swap'
+  'https://fonts.googleapis.com/css2?family=Geist:wght@400..700&family=Geist+Mono:wght@400;500&family=Righteous&display=swap'
 
 /** One section of the rail: its icon, and the pages that dock beside it. */
 interface Section {
@@ -1119,16 +1120,20 @@ const DASHBOARD = { href: '/', key: 'home', label: 'Dashboard' }
 
 const sectionOf = (nav?: string) => SECTIONS.find((s) => s.items.some((it) => it.key === nav))
 
-const Mark: FC = () => (
+/**
+ * The kōlea on its tile, served from `public/img/`. The cream tile goes on the
+ * dark rail, where the bird's black body would vanish into a dark one; the dark
+ * tile goes on cream.
+ */
+const Mark: FC<{ tone?: 'rail' | 'light' }> = ({ tone = 'rail' }) => (
   <span class="mark" aria-hidden="true">
-    {/* The bird itself, perched on a marigold tile. Served from `public/`. */}
-    <img src="/logo_200.png" alt="" width="30" height="29" />
+    <img src={tone === 'rail' ? '/img/tile-light.png' : '/img/tile-dark.png'} alt="" width="40" height="40" />
   </span>
 )
 
-const Brand: FC = () => (
+const Brand: FC<{ tone?: 'rail' | 'light' }> = ({ tone = 'light' }) => (
   <a class="brand" href="/">
-    <Mark />
+    <Mark tone={tone} />
     <span class="wm">Kōlea</span>
   </a>
 )
@@ -1224,16 +1229,24 @@ const Burger: FC = () => (
   </label>
 )
 
+/** The site icons: the kōlea on its cream tile, at the sizes browsers and phones ask for. */
+const Icons: FC = () => (
+  <>
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="icon" type="image/png" sizes="96x96" href="/favicon.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  </>
+)
+
 /** The `<head>` every admin page shares. */
 const Head: FC<{ title: string }> = ({ title }) => (
   <>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta name="color-scheme" content="light" />
-    <meta name="theme-color" content="#FBF8F1" />
+    <meta name="theme-color" content="#F9F7EF" />
     <title>{title} · Kōlea</title>
-    <link rel="icon" href="/favicon.ico" sizes="any" />
-    <link rel="icon" href="/favicon.png" type="image/png" />
+    <Icons />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="" />
     <link rel="stylesheet" href={FONTS} />
@@ -1379,6 +1392,7 @@ export const PublicLayout: FC<PropsWithChildren<{ title: string }>> = ({ title, 
       <meta name="viewport" content="width=device-width,initial-scale=1" />
       <meta name="color-scheme" content="light" />
       <title>{title}</title>
+      <Icons />
       <link rel="preconnect" href="https://fonts.googleapis.com" />
       <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="" />
       <link rel="stylesheet" href={FONTS} />
