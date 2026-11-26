@@ -2,6 +2,10 @@
   "name": "big-mailer",
   "type": "module",
   "private": true,
+  "engines": {
+    "bun": ">=1.2",
+    "node": ">=22"
+  },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260804.1",
     "@playwright/test": "1.62.1",
@@ -44,7 +48,8 @@
     "zod": "^4.4.3"
   },
   "scripts": {
-    "dev": "bun run build:theme && bun run build:client && wrangler dev",
+    "setup": "bun scripts/onboard.ts local",
+    "dev": "bun scripts/onboard.ts ready && bun run build:theme && bun run build:client && wrangler dev",
     "build:client": "bun build src/client/editor.ts --outdir public --target browser --minify --entry-naming editor.js && bun build src/client/charts.ts --outdir public --target browser --minify --entry-naming charts.js && cp src/client/editor.css public/editor.css",
     "watch:client": "bun build src/client/editor.ts --outdir public --target browser --entry-naming editor.js --watch",
     "db:generate": "drizzle-kit generate",

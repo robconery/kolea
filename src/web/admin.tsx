@@ -130,7 +130,7 @@ admin.get('/', async (c) => {
 
       {(subs?.n ?? 0) === 0 ? (
         <div class="note">
-          <strong>Empty database.</strong> Hit <em>Seed demo data</em> above for twelve people, two
+          <strong>Empty database.</strong> Hit <em>Seed demo data</em> above for twelve people and you, two
           live series, and a sent broadcast, then open the Outbox to read the mail.
         </div>
       ) : null}

@@ -179,7 +179,7 @@ export function createWorld(overrides: Partial<Env> = {}): World {
  * `delays` holds the wait asked for with each retry, in the order of `retried`;
  * a retry that asked for none records 0, which is what the queue would do.
  */
-export function sendBatchOf(messageIds: number[], queue = 'big-mailer-send', attempts = 1) {
+export function sendBatchOf(messageIds: number[], queue = 'kolea-send', attempts = 1) {
   return queueBatchOf(
     messageIds.map((messageId) => ({ messageId })),
     queue,
@@ -188,7 +188,7 @@ export function sendBatchOf(messageIds: number[], queue = 'big-mailer-send', att
 }
 
 /** The same, for jobs that carry more than an id. */
-export function queueBatchOf(jobs: SendJob[], queue = 'big-mailer-send', attempts = 1) {
+export function queueBatchOf(jobs: SendJob[], queue = 'kolea-send', attempts = 1) {
   const acked: number[] = []
   const retried: number[] = []
   const delays: number[] = []

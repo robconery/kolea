@@ -10,9 +10,11 @@ Single operator. Not multi-tenant, no visual builder, no self-run SMTP. See `doc
 
 Domain: email marketing / transactional email.
 
-> Cloudflare resources (Worker, D1, queues) are still named `big-mailer`. That is
-> deliberate — they are bound to live production data. Kōlea is the brand, `big-mailer`
-> is the infrastructure. Don't "fix" the mismatch without a cutover plan.
+> `wrangler.template.jsonc` is the only config in the repo. `wrangler.jsonc` is the
+> operator's own and is gitignored: `bun run setup` writes a local-only one, `/onboard`
+> renders the real one. Resource names (`kolea-*` in the template) are arbitrary, and an
+> install may run under other names. Never rename a live install's resources without a
+> cutover plan: they are bound to production data.
 
 ## 📚 Docs — read before you write
 
@@ -66,6 +68,7 @@ Two implementations of one rule is how consent gets broken.
 ## ▶️ Commands
 
 - Install: `bun install`
+- First run: `bun run setup` (local-only `wrangler.jsonc`, `.dev.vars`, local migrations)
 - Dev: `bun run dev` (builds the client bundle, then `wrangler dev` on :8787)
 - Typecheck: `bun run typecheck` — Worker, browser bundle, scripts, and tests, separately
 - Migrations: `bun run db:generate` (drizzle-kit) → `bun run db:migrate`. Never hand-write one

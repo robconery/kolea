@@ -51,9 +51,11 @@ export default defineConfig({
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
 
   webServer: {
+    // `local-config` writes a local-only wrangler.jsonc when there is none (a
+    // fresh clone has none) and leaves an existing one alone.
     // `bunx wrangler`, never a bare `wrangler`: a stale global install talks to
     // a different local-state format and the D1 binding fails at runtime.
-    command: `bun run build:client && bunx wrangler d1 migrations apply big-mailer --local --persist-to ${STATE} && bunx wrangler dev --port ${PORT} --persist-to ${STATE}`,
+    command: `bun scripts/onboard.ts local-config && bun run build:client && bunx wrangler d1 migrations apply DB --local --persist-to ${STATE} && bunx wrangler dev --port ${PORT} --persist-to ${STATE}`,
     url: BASE_URL,
     reuseExistingServer: !process.env.CI,
     timeout: 180_000,

@@ -63,7 +63,7 @@ const KINDS: Kind[] = [
 ]
 
 async function d1(command: string): Promise<unknown[]> {
-  const args = ['d1', 'execute', 'big-mailer', '--json', '--command', command]
+  const args = ['d1', 'execute', 'DB', '--json', '--command', command]
   args.push(remote ? '--remote' : '--local')
   if (remote) args.push('--env', 'production')
 

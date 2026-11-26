@@ -9,7 +9,9 @@
  *   bun scripts/onboard.ts status            what's done, what's next
  *   bun scripts/onboard.ts set KEY=value     record an answer   (.onboard/state.json)
  *   bun scripts/onboard.ts secret KEY=value  record a secret    (.onboard/secrets.env, 0600)
- *   bun scripts/onboard.ts local             .dev.vars + local migrations
+ *   bun scripts/onboard.ts local-config      a local-only wrangler.jsonc, if there is none
+ *   bun scripts/onboard.ts local             local config + .dev.vars + local migrations
+ *   bun scripts/onboard.ts ready             is this clone set up to run locally? (`bun run dev` asks)
  *   bun scripts/onboard.ts verify            what the Cloudflare token can do
  *   bun scripts/onboard.ts zones             the domains on the account
  *   bun scripts/onboard.ts preflight         zone exists, hostnames are free
@@ -38,13 +40,6 @@ const STATE = `${DIR}/state.json`
 const SECRETS = `${DIR}/secrets.env`
 const TEMPLATE = 'wrangler.template.jsonc'
 const WRANGLER = 'wrangler.jsonc'
-
-/**
- * The upstream install's database. A clone still carrying it in wrangler.jsonc
- * hasn't been onboarded yet; an account that can actually *open* it is the
- * upstream production install, and nothing here may write over that.
- */
-const UPSTREAM_D1 = '1828a8a7-4b54-48ca-afae-58bd845edc2d'
 
 const DB_NAME = 'kolea'
 /** wrangler addresses the database by binding, so no command depends on its name. */
@@ -75,11 +70,34 @@ const WORKER_SECRETS = [
   'OPENROUTER_KEY',
 ]
 
-const GENERATED_HEADER = `// 🐦 Kōlea: rendered by \`bun scripts/onboard.ts render\` from ${TEMPLATE}
+/** First line of every file this script writes. `render` only overwrites a file that has it. */
+const MARKER = '// 🐦 Kōlea: rendered by `bun scripts/onboard.ts'
+
+const GENERATED_HEADER = `${MARKER} render\` from ${TEMPLATE}
 // and your answers in ${STATE}. Edit freely: it's yours now. Re-running render
 // overwrites it, so change the answer (\`onboard.ts set KEY=value\`) or the
 // template if you want an edit to survive that.
 `
+
+const LOCAL_HEADER = `${MARKER} local-config\` from ${TEMPLATE}.
+// LOCAL ONLY. It runs \`bun run dev\` and the browser tests, and it cannot
+// deploy: the production values below are still {{PLACEHOLDERS}}. Run /onboard
+// (or \`bun scripts/onboard.ts render\`) to fill them in for your own account.
+`
+
+/** Where `wrangler d1 migrations apply --local` keeps the local database. */
+const LOCAL_D1 = '.wrangler/state/v3/d1'
+
+/**
+ * Who a fresh clone runs locally as until the operator says who they are: the
+ * made-up operator the demo data, the tests and the screenshots all use.
+ */
+const LOCAL_DEFAULTS: State = {
+  FROM_EMAIL: 'mara@example.com',
+  FROM_NAME: 'Mara Quinn',
+  SITE_TITLE: 'Field Notes',
+  SITE_TAGLINE: 'Short essays on running a small software business.',
+}
 
 const SOCIAL_KEYS =['website', 'github', 'linkedin', 'x', 'mastodon', 'bluesky', 'youtube']
 
@@ -205,13 +223,6 @@ async function zoneFor(s: State): Promise<Zone> {
   return z
 }
 
-/** Does this account own the upstream production database? */
-async function isUpstreamAccount(s: State): Promise<boolean> {
-  if (!s.CLOUDFLARE_ACCOUNT_ID) return false
-  const r = await cfRaw('GET', `/accounts/${s.CLOUDFLARE_ACCOUNT_ID}/d1/database/${UPSTREAM_D1}`)
-  return r.success
-}
-
 // ─────────────────────────────────────────────────────────── wrangler
 
 /**
@@ -243,6 +254,16 @@ async function run(cmd: string[], env?: Record<string, string>, stdin?: string):
   })
   const code = await proc.exited
   if (code !== 0) fail(`${cmd.slice(0, 3).join(' ')} exited ${code}`)
+}
+
+/** The same, saying nothing unless it fails. Then it says everything. */
+async function runQuiet(cmd: string[]): Promise<void> {
+  const proc = Bun.spawn(cmd, { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' })
+  const [out, err] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()])
+  if ((await proc.exited) !== 0) {
+    console.error(out, err)
+    fail(`${cmd.slice(0, 3).join(' ')} failed. Its output is above.`)
+  }
 }
 
 // ─────────────────────────────────────────────────────────── resend
@@ -317,8 +338,9 @@ const commands: Record<string, (args: string[]) => Promise<void>> = {
       ['Seeded (profile, form, admin key)', has('SEEDED')],
       ['Checks passed', has('CHECKED')],
     ]
-    const wr = existsSync(WRANGLER) ? readFileSync(WRANGLER, 'utf8') : ''
-    if (wr.includes(UPSTREAM_D1)) info('wrangler.jsonc still carries the upstream install’s values (not onboarded yet).')
+    const config = configState()
+    if (config === 'absent') info('No wrangler.jsonc yet. For local use: bun scripts/onboard.ts local')
+    if (config === 'local') info('wrangler.jsonc is the local-only one: its production values are still placeholders.')
     for (const [label, done] of steps) console.log(`${done ? '✅' : '⬜'} ${label}`)
     const next = steps.find(([, d]) => !d)
     console.log(next ? `\nNext: ${next[0]}` : '\nAll done. 🐦')
@@ -347,7 +369,29 @@ const commands: Record<string, (args: string[]) => Promise<void>> = {
     ok(`Stored ${args.map((a) => a.split('=')[0]).join(', ')} in ${SECRETS} (never printed)`)
   },
 
+  async 'local-config'() {
+    if (existsSync(WRANGLER)) {
+      info(`${WRANGLER} already exists; leaving it alone.`)
+      return
+    }
+    // Answers already on file are used. Everything production needs stays a
+    // placeholder, which is what keeps this file from ever being deployed.
+    const s = readState()
+    const values: State = { ...LOCAL_DEFAULTS }
+    for (const k of Object.keys(LOCAL_DEFAULTS)) if (s[k]) values[k] = s[k] as string
+    const tpl = readFileSync(TEMPLATE, 'utf8')
+    writeFileSync(WRANGLER, `${LOCAL_HEADER}${renderTemplate(tpl.slice(tpl.search(/^\{/m)), values)}`)
+    ok(`Wrote a local-only ${WRANGLER} from ${TEMPLATE}`)
+  },
+
+  async ready() {
+    const missing = configState() === 'absent' ? WRANGLER : !existsSync(LOCAL_D1) ? 'The local database' : null
+    if (missing) fail(`${missing} isn’t there yet. Run this once first:  bun run setup`)
+  },
+
   async local() {
+    await requireRuntimes()
+    await commands['local-config']!([])
     if (existsSync('.dev.vars')) {
       info('.dev.vars already exists; leaving it alone.')
     } else {
@@ -363,7 +407,9 @@ const commands: Record<string, (args: string[]) => Promise<void>> = {
       )
       ok('Wrote .dev.vars (console mail, MCP on a random local path)')
     }
-    await run(['bun', 'run', 'db:migrate'])
+    // Quietly: wrangler redraws its table once per migration, which buries the
+    // three lines that matter under several hundred that don't.
+    await runQuiet(['bunx', 'wrangler', 'd1', 'migrations', 'apply', DB_BINDING, '--local'])
     ok('Local database ready. Next: bun run dev → http://localhost:8787 → "Seed demo data"')
   },
 
@@ -421,10 +467,6 @@ const commands: Record<string, (args: string[]) => Promise<void>> = {
       bad('Zero Trust isn’t set up on this account yet: one.dash.cloudflare.com → pick a team name → Free plan')
     }
 
-    if (await isUpstreamAccount(s)) {
-      bad('This account owns the UPSTREAM production database. Onboarding will not write to it.')
-      process.exit(1)
-    }
     console.log(missing ? `\n${missing} thing(s) to fix, then run verify again.` : '\nThe token can do everything onboarding needs.')
     if (missing) process.exit(1)
   },
@@ -472,7 +514,6 @@ const commands: Record<string, (args: string[]) => Promise<void>> = {
     const dbs = await cfAll<{ uuid: string; name: string }>(`/accounts/${acct}/d1/database?name=${DB_NAME}`)
     let db = dbs.find((d) => d.name === DB_NAME)
     if (db) {
-      if (db.uuid === UPSTREAM_D1) fail('That is the upstream production database. Stopping.')
       ok(`D1 ${DB_NAME} already exists (${db.uuid}), reusing it`)
     } else {
       db = await cf<{ uuid: string; name: string }>('POST', `/accounts/${acct}/d1/database`, { name: DB_NAME })
@@ -566,11 +607,13 @@ const commands: Record<string, (args: string[]) => Promise<void>> = {
     info(`Team ${s.CF_ACCESS_TEAM_DOMAIN}, AUD ${admin.aud.slice(0, 12)}…`)
   },
 
-  async render() {
+  async render(args) {
     const s = readState()
     need(s, 'D1_DATABASE_ID', 'ADMIN_HOST', 'FROM_EMAIL', 'FROM_NAME', 'CF_ACCESS_TEAM_DOMAIN', 'CF_ACCESS_AUD')
-    if (s.D1_DATABASE_ID === UPSTREAM_D1 || (await isUpstreamAccount(s))) {
-      fail('This is the upstream production install. render will not overwrite its wrangler.jsonc.')
+    // A config written by hand is somebody's live install. Never write over it
+    // unasked: only a file this script wrote is replaced without --force.
+    if (configState() === 'own' && !args.includes('--force')) {
+      fail(`${WRANGLER} wasn’t written by this script, so render won’t overwrite it. Move it aside, or pass --force.`)
     }
     // Mail goes on the wire only once Resend has verified the domain. Until then
     // "console" keeps the deploy harmless: everything lands in the Outbox.
@@ -853,14 +896,54 @@ const commands: Record<string, (args: string[]) => Promise<void>> = {
 
 // ─────────────────────────────────────────────────────────── helpers
 
+/**
+ * Bun runs the scripts and wrangler runs on Node. Too old a version of either
+ * fails later with an error that names neither, so say it here.
+ */
+async function requireRuntimes(): Promise<void> {
+  const [bunMajor = 0, bunMinor = 0] = Bun.version.split('.').map(Number)
+  if (bunMajor < 1 || (bunMajor === 1 && bunMinor < 2)) {
+    fail(`Kōlea needs Bun 1.2 or newer, and this is ${Bun.version}. Update with: bun upgrade`)
+  }
+  let node = ''
+  try {
+    const proc = Bun.spawn(['node', '--version'], { stdout: 'pipe', stderr: 'ignore' })
+    node = (await new Response(proc.stdout).text()).trim()
+    await proc.exited
+  } catch {
+    // not on the PATH: handled below
+  }
+  const nodeMajor = Number(/^v(\d+)/.exec(node)?.[1] ?? 0)
+  if (nodeMajor < 22) {
+    fail(
+      `The local server (wrangler) needs Node 22 or newer, and ${node ? `this is ${node}` : 'there is no node on your PATH'}. ` +
+        'Install it from https://nodejs.org and run this again.',
+    )
+  }
+}
+
 function randomHex(bytes: number): string {
   return Buffer.from(crypto.getRandomValues(new Uint8Array(bytes))).toString('hex')
 }
 
-/** Refuse to touch production until wrangler.jsonc is this person's, not upstream's. */
-function guardRendered(s: State): void {
+/**
+ * Where wrangler.jsonc stands. A fresh clone has none. `local` is the local-only
+ * file: template placeholders are still in it, so it cannot deploy. `rendered`
+ * came from `render`. `own` is a complete config this script did not write.
+ */
+function configState(): 'absent' | 'local' | 'rendered' | 'own' {
+  if (!existsSync(WRANGLER)) return 'absent'
   const wr = readFileSync(WRANGLER, 'utf8')
-  if (wr.includes(UPSTREAM_D1) || !s.RENDERED) fail('wrangler.jsonc hasn’t been rendered for your account yet. Run render first.')
+  if (/\{\{[#/]?[A-Za-z_ ]+\}\}/.test(wr)) return 'local'
+  return wr.startsWith(MARKER) ? 'rendered' : 'own'
+}
+
+/** Refuse to touch production until wrangler.jsonc has been rendered for this person's account. */
+function guardRendered(s: State): void {
+  const config = configState()
+  if (config === 'absent' || config === 'local' || !s.RENDERED) {
+    fail('wrangler.jsonc hasn’t been rendered for your account yet. Run render first.')
+  }
 }
 
 /** `{{KEY}}` and `{{#if KEY}} … {{/if}}` — the whole template language. */

@@ -10,9 +10,14 @@
 > 🐦 **Or let Claude Code do it:** open it in the repo and type `/onboard`. It asks
 > one question at a time and runs these same steps through
 > [`scripts/onboard.ts`](../scripts/onboard.ts), using only a Cloudflare API
-> token. It fills `wrangler.jsonc` in from
+> token. It writes your `wrangler.jsonc` from
 > [`wrangler.template.jsonc`](../wrangler.template.jsonc), and it deploys only
 > when you say so. This page is the reference for what it's doing.
+>
+> 📄 **About `wrangler.jsonc`:** the repo ships only the template. Your
+> `wrangler.jsonc` is gitignored, so a fresh clone has none. `bun run setup`
+> writes a local-only one, and `/onboard` (or the steps in Part 2) makes the
+> real one.
 
 ---
 
@@ -38,9 +43,15 @@ Cloudflare-managed, and `wrangler dev` emulates all three locally.
 git clone https://github.com/robconery/kolea.git
 cd kolea
 bun install
-bun run db:migrate     # applies migrations to the local D1 database
+bun run setup          # local wrangler.jsonc + .dev.vars + local migrations
 bun run dev            # → http://localhost:8787
 ```
+
+`bun run setup` is `bun scripts/onboard.ts local`. It writes a local-only
+`wrangler.jsonc` from the template (only if you have none), a minimal
+`.dev.vars` (only if you have none), and applies the migrations to the local D1
+database. The local config cannot deploy: its production values are still
+`{{PLACEHOLDERS}}`.
 
 Open <http://localhost:8787> and click **Seed demo data**: twelve people, two
 live series, a sent broadcast, and a draft that shows off every editor block.
@@ -119,16 +130,17 @@ Before anything else, know what you cannot take back:
 bunx wrangler login
 ```
 
-Start your config from the template, not from the checked-in `wrangler.jsonc`
-(that one is the upstream author's own install):
+Start your config from the template. If `bun run setup` already wrote a
+local-only `wrangler.jsonc`, keep working in that one. Otherwise:
 
 ```bash
 cp wrangler.template.jsonc wrangler.jsonc
 ```
 
 Then replace every `{{PLACEHOLDER}}` as you go, and delete the `{{#if SITE_HOST}}`
-blocks if you aren't running the public site (or keep what's inside them if you
-are). The resources are named `kolea-*`. The names are internal, and every command
+and `{{/if}}` markers if you copied the template by hand (drop what's between
+them too if you aren't running the public site). `wrangler.jsonc` is gitignored:
+it holds your account's ids and never goes in a commit. The resources are named `kolea-*`. The names are internal, and every command
 here addresses the database by its binding, `DB`, so nothing depends on them. If
 you do rename them, change **every** occurrence, including the duplicates under
 `env.production`.
@@ -151,7 +163,7 @@ It prints a `database_id`. Put it into `wrangler.jsonc` in **both** places:
 > Every binding declared at the top level must be repeated verbatim under
 > `env.production`. Miss one and production deploys without a database, bucket,
 > or queue — `env.DB` is simply `undefined` at runtime, and the first request
-> 500s. The checked-in config already has both copies; keep them in sync.
+> 500s. The template already has both copies; keep them in sync.
 
 ### Step 3 — Create the buckets and the queues
 

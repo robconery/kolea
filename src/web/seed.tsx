@@ -6,7 +6,7 @@ import { slugify } from '../core/ids.ts'
 import { enroll, tickSequences } from '../core/sequences.ts'
 import { sendBroadcastNow, startBroadcast } from '../core/broadcasts.ts'
 import { createSegment } from '../core/segments.ts'
-import { drainQueued } from '../core/sending.ts'
+import { drainQueued, previewAddress } from '../core/sending.ts'
 import { findOrCreateTag, upsertSubscriber } from '../core/subscribers.ts'
 import { getDb } from '../db/index.ts'
 import {
@@ -275,6 +275,17 @@ Ada`,
     segment: { includeTagIds: [tagIds.get('customer')!] },
     status: 'draft',
     createdAt: new Date(),
+  })
+
+  // The operator, on their own list. A preview only ever goes to the operator's
+  // address, and only if that address is a subscriber, so without this the
+  // first "Send a preview" on a fresh install is refused. Added last and
+  // without the subscribe trigger: the seeded sends above stay twelve people.
+  await upsertSubscriber(db, {
+    email: previewAddress(c.env),
+    name: c.env.FROM_NAME,
+    source: 'seed',
+    triggerSubscribeSequences: false,
   })
 
   // A saved segment and a live auto-tag rule, so both screens have something

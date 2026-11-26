@@ -9,7 +9,7 @@
 // The sad half is about the wait before that second attempt. A retry with no
 // delay arrives while whatever was wrong is still wrong, so a few bad seconds
 // spend the whole retry budget and good mail is written off as failed.
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { beforeAll, describe, expect, it, spyOn } from 'bun:test'
 import { count, eq } from 'drizzle-orm'
@@ -91,7 +91,7 @@ async function deliverUntilSettled(
   const waits: number[] = []
   for (let attempt = 1; ; attempt++) {
     beforeEach(attempt)
-    const { batch, retried, delays } = sendBatchOf(ids, 'big-mailer-send', attempt)
+    const { batch, retried, delays } = sendBatchOf(ids, 'kolea-send', attempt)
     await worker.queue(batch, world.env)
     if (retried.length === 0) return { waits, deadLettered: false }
     if (attempt > maxRetries) return { waits, deadLettered: true }
@@ -100,17 +100,26 @@ async function deliverUntilSettled(
 }
 
 /**
- * `max_retries` of every send consumer in the configs this repo ships. Read as
- * text: the template's placeholders make it not quite JSON.
+ * `max_retries` of every send consumer in a config file. Read as text: the
+ * template's placeholders make it not quite JSON.
+ */
+function retryBudgetsIn(file: string): number[] {
+  const path = join(import.meta.dir, '../..', file)
+  if (!existsSync(path)) return []
+  const text = readFileSync(path, 'utf8')
+  // The send consumer is the one with somewhere to dead-letter to.
+  return [...text.matchAll(/\{[^{}]*"dead_letter_queue"[^{}]*\}/g)].map((block) =>
+    Number(/"max_retries":\s*(\d+)/.exec(block[0])?.[1]),
+  )
+}
+
+/**
+ * The template is the one config this repo ships. `wrangler.jsonc` is the
+ * operator's own, gitignored and absent on a fresh clone; when it is there, it
+ * is held to the same budget, because it is the one that actually deploys.
  */
 function shippedRetryBudgets(): number[] {
-  return ['wrangler.template.jsonc', 'wrangler.jsonc'].flatMap((file) => {
-    const text = readFileSync(join(import.meta.dir, '../..', file), 'utf8')
-    // The send consumer is the one with somewhere to dead-letter to.
-    return [...text.matchAll(/\{[^{}]*"dead_letter_queue"[^{}]*\}/g)].map((block) =>
-      Number(/"max_retries":\s*(\d+)/.exec(block[0])?.[1]),
-    )
-  })
+  return [...retryBudgetsIn('wrangler.template.jsonc'), ...retryBudgetsIn('wrangler.jsonc')]
 }
 
 /** Answer every call to the provider's API with `response`. Nothing else may be fetched. */
@@ -402,7 +411,7 @@ describe('Feature: a send that has to be attempted twice', () => {
       await world.db.update(messages).set({ status: 'queued', sentAt: null })
       const before = (await world.outbox()).length
 
-      const { batch, acked: a } = sendBatchOf([queued[0]!.id], 'big-mailer-send-dlq')
+      const { batch, acked: a } = sendBatchOf([queued[0]!.id], 'kolea-dlq')
       acked = a
       await worker.queue(batch, world.env)
 
@@ -440,7 +449,7 @@ describe('Feature: a send that has to be attempted twice', () => {
         .set({ error: 'provider 429: rate limit exceeded' })
         .where(eq(messages.id, queued[0]!.id))
 
-      const { batch } = sendBatchOf([queued[0]!.id], 'big-mailer-send-dlq')
+      const { batch } = sendBatchOf([queued[0]!.id], 'kolea-dlq')
       await worker.queue(batch, world.env)
       row = await world.db.select().from(messages).where(eq(messages.id, queued[0]!.id)).get()
     })
@@ -522,7 +531,7 @@ describe('Feature: a send that has to be attempted twice', () => {
       const world = createWorld()
       const queued = await threeMessagesStillWaiting(world)
       const waitAfter = async (attempt: number) => {
-        const sent = sendBatchOf([queued[0]!.id], 'big-mailer-send', attempt)
+        const sent = sendBatchOf([queued[0]!.id], 'kolea-send', attempt)
         await worker.queue(sent.batch, world.env)
         return sent.delays[0]!
       }
@@ -603,7 +612,8 @@ describe('Feature: a send that has to be attempted twice', () => {
   describe('Scenario: the retry budget as shipped', () => {
     // The wait is in the code and the number of retries is in the config, and
     // only together do they say how long a message is given. Jitter at its
-    // least generous, for every send consumer in both configs.
+    // least generous, for every send consumer in the template and in the
+    // operator's own config when there is one.
     const leastPatience = Math.min(
       ...shippedRetryBudgets().map((retries) => {
         let seconds = 0
@@ -614,8 +624,8 @@ describe('Feature: a send that has to be attempted twice', () => {
       }),
     )
 
-    it('covers both environments in both config files', () => {
-      expect(shippedRetryBudgets()).toHaveLength(4)
+    it('covers both environments in the config template', () => {
+      expect(retryBudgetsIn('wrangler.template.jsonc')).toHaveLength(2)
     })
 
     it('gives a message at least twenty minutes before giving up', () => {
@@ -686,7 +696,7 @@ describe('Feature: a send that has to be attempted twice', () => {
 
       send = sendBatchOf(ids)
       await worker.queue(send.batch, down)
-      dead = sendBatchOf(ids, 'big-mailer-send-dlq')
+      dead = sendBatchOf(ids, 'kolea-dlq')
       await worker.queue(dead.batch, down)
 
       stillQueued = (await world.db.select().from(messages).where(eq(messages.status, 'queued')).all())
@@ -740,7 +750,7 @@ describe('Feature: a send that has to be attempted twice', () => {
       tripsForThree = three.trips
       batchWrites = three.batches
       tripsForOne = (await tripsToWork(1)).trips
-      giveUpTrips = (await tripsToWork(3, 'big-mailer-send-dlq')).trips
+      giveUpTrips = (await tripsToWork(3, 'kolea-dlq')).trips
     })
 
     it('writes every result in a single batch', () => {
@@ -783,7 +793,7 @@ describe('Feature: a send that has to be attempted twice', () => {
       // The queue delivers what it was handed, and then, as queues do, the
       // original messages once more for good measure.
       await worker.queue(queueBatchOf(held.map((job) => job.body)).batch, env)
-      await worker.queue(sendBatchOf(ids, 'big-mailer-send', 2).batch, env)
+      await worker.queue(sendBatchOf(ids, 'kolea-send', 2).batch, env)
 
       rows = await world.db.select().from(messages).all()
       mails = (await world.outbox()).length - before
@@ -846,7 +856,7 @@ describe('Feature: a send that has to be attempted twice', () => {
 
       // Out of retries, it arrives on the dead-letter queue. It is still a
       // send that happened.
-      dead = queueBatchOf([job], 'big-mailer-send-dlq')
+      dead = queueBatchOf([job], 'kolea-dlq')
       await worker.queue(dead.batch, world.env)
 
       row = await world.db.select().from(messages).where(eq(messages.id, job.messageId)).get()
@@ -887,7 +897,7 @@ describe('Feature: a send that has to be attempted twice', () => {
       const watched = await watchingTheProvider(async () => {
         await worker.queue(first.batch, env)
         // Redelivered, and in a different order.
-        await worker.queue(sendBatchOf([...ids].reverse(), 'big-mailer-send', 2).batch, env)
+        await worker.queue(sendBatchOf([...ids].reverse(), 'kolea-send', 2).batch, env)
       })
       requests = watched.requests
       sent = (await world.db.select().from(messages).where(eq(messages.status, 'sent')).all()).length

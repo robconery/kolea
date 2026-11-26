@@ -429,7 +429,7 @@ await Bun.write(file, text)
 // `bunx wrangler`, never bare `wrangler`: a stale global install talks to a
 // different local D1 and the rows land where nothing is looking for them.
 const proc = Bun.spawn(
-  ['bunx', 'wrangler', 'd1', 'execute', 'big-mailer', '--local', '--file', file],
+  ['bunx', 'wrangler', 'd1', 'execute', 'DB', '--local', '--file', file],
   { stdout: 'inherit', stderr: 'inherit' },
 )
 const code = await proc.exited

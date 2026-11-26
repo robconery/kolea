@@ -23,6 +23,10 @@ yarn-error.log*
 
 .claude/settings.local.json
 
+# Your own wrangler config. The repo ships wrangler.template.jsonc only;
+# `bun run setup` or /onboard writes this file, and it holds your account's ids.
+wrangler.jsonc
+
 # wrangler local state + local secrets
 .wrangler/
 .dev.vars

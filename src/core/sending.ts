@@ -60,7 +60,10 @@ export async function sendPreview(
   const email = normalizeEmail(to)
   const sub = await db.select().from(subscribers).where(eq(subscribers.email, email)).get()
   if (!sub) {
-    return { ok: false, reason: `${email} is not a subscriber, so there is nobody to send to.` }
+    return {
+      ok: false,
+      reason: `${email} is not a subscriber, so there is nobody to send to. Add that address under Audience, Subscribers, then send the preview again.`,
+    }
   }
 
   const snapshot = await loadConsentSnapshot(

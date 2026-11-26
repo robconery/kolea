@@ -1,16 +1,28 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// 🐦 Kōlea — the wrangler config TEMPLATE.
+// 🐦 Kōlea: the wrangler config TEMPLATE, and the only config in the repo.
 //
-// `/onboard` (or `bun scripts/onboard.ts render`) fills this in from your answers
-// in `.onboard/state.json` and writes the result to `wrangler.jsonc`. Edit THIS
-// file when the shape of the config changes; edit `wrangler.jsonc` (or re-run
-// render) when your values change.
+// `wrangler.jsonc` is yours and is gitignored. A fresh clone has none.
+//
+//   bun scripts/onboard.ts local    writes a local-only wrangler.jsonc from this
+//                                   file (enough for `bun run dev` and the tests)
+//   bun scripts/onboard.ts render   fills this in from your answers in
+//                                   `.onboard/state.json` (`/onboard` runs it)
+//
+// Edit THIS file when the shape of the config changes. Edit `wrangler.jsonc`
+// (or re-run render) when your values change.
 //
 //   {{KEY}}                      replaced with the value of KEY
 //   {{#if KEY}} … {{/if}}        kept only when KEY is set (no nesting)
 //
-// Resources are named `kolea-*`. Nothing outside your Cloudflare account sees
-// the names, and the commands address the database by its binding (`DB`).
+// Resources are named `kolea-*`. The names are arbitrary: nothing outside your
+// Cloudflare account sees them, and every command addresses the database by
+// its binding (`DB`). An install that already runs under other names keeps
+// them in its own wrangler.jsonc.
+//
+// Secrets never go in here. They are set with
+// `bunx wrangler secret put NAME --env production` (locally: `.dev.vars`).
+// One optional secret worth knowing about: POSTAL_ADDRESS, the mailing address
+// printed in every footer. CAN-SPAM requires one on commercial mail.
 // ─────────────────────────────────────────────────────────────────────────────
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
@@ -34,6 +46,9 @@
 			"binding": "DB",
 			"database_name": "kolea",
 			"database_id": "{{D1_DATABASE_ID}}",
+			// What `bun run dev` and every `--local` command use instead of the id
+			// above, so your local data stays put when the real id is filled in.
+			"preview_database_id": "kolea-local",
 			"migrations_dir": "migrations"
 		}
 	],
@@ -210,7 +225,11 @@
 				"SITE_AUTHOR": "{{FROM_NAME}}",
 				// A `forms.slug`. Onboarding creates this form; renaming it hides the box.
 				"SITE_FORM_SLUG": "newsletter",
-				{{/if}}"DEV_AUTH_BYPASS": "false",
+				{{/if}}// Optional. Where a buyer manages what they own on your storefront. Fills
+				// the account_url merge tag in purchase mail. Unset, the tag is empty and
+				// the "grab them from your dashboard" line is left out.
+				// "ACCOUNT_URL": "https://example.com/account",
+				"DEV_AUTH_BYPASS": "false",
 				// Both required: `web/auth.ts` fails closed and refuses everyone without them.
 				"CF_ACCESS_TEAM_DOMAIN": "{{CF_ACCESS_TEAM_DOMAIN}}",
 				"CF_ACCESS_AUD": "{{CF_ACCESS_AUD}}",

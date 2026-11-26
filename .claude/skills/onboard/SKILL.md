@@ -51,9 +51,11 @@ These come from `CLAUDE.md` and they are not negotiable here either.
   earlier yes doesn't carry over.
 - **Always go through the script** (it uses `--env production`). A bare
   `wrangler deploy` publishes the admin console with no login.
-- **Never overwrite the upstream install.** If `status` or `render` reports the
-  upstream `wrangler.jsonc` belongs to the account the token opens, stop: this
-  is the upstream maintainer's own production, not a fresh clone.
+- **Never overwrite a config you didn't write.** A fresh clone has no
+  `wrangler.jsonc`; `local` writes a local-only one whose production values are
+  still `{{PLACEHOLDERS}}`. If `render` refuses because the file "wasn't written
+  by this script", stop: that is somebody's hand-made, possibly live, install.
+  Ask before passing `--force`.
 - **Never echo a secret back** into the conversation once it's stored. Say
   "saved" and move on. The single exception is the admin API key that `seed`
   prints once; they need to copy it.
@@ -86,8 +88,9 @@ Then run `status`. Then the first question.
 ### 🏝 Local
 
 1. `bun install` if `node_modules` is missing.
-2. `bun scripts/onboard.ts local`: writes a minimal `.dev.vars` (only if
-   there isn't one already) and applies migrations to the local D1.
+2. `bun scripts/onboard.ts local`: writes a local-only `wrangler.jsonc` from
+   the template and a minimal `.dev.vars` (each only if there isn't one
+   already), then applies migrations to the local D1.
 3. Start `bun run dev` in the background. Tell them to open
    <http://localhost:8787>, click **Seed demo data**, then read the
    **Outbox**. Point them at README § "A tour of the console" for what each
@@ -204,9 +207,9 @@ the login protection; about a minute"), then run in order:
    sentence why: *tracking pixels, unsubscribe pages and signup forms have to
    open for everyone, and each of those paths does its own checking.*
 3. `bun scripts/onboard.ts render`: writes `wrangler.jsonc` from
-   `wrangler.template.jsonc`. Show them the `git diff --stat` and mention that
-   the file is now theirs. It'll conflict on a future `git pull` from upstream,
-   and they should keep their side.
+   `wrangler.template.jsonc`. Mention that the file is theirs: it is
+   gitignored, so a `git pull` from upstream never touches it. When the template
+   gains something new, re-running `render` picks it up.
 
 ## 7 · Mail: Resend
 
