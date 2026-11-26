@@ -15,7 +15,7 @@ import { createWorld, type World } from '../support/world.ts'
 const SITE = 'https://site.example.test'
 
 function siteWorld(): World {
-  return createWorld({ SITE_URL: SITE, SITE_TITLE: 'Big Machine', SITE_AUTHOR: 'Rob Conery', SITE_FORM_SLUG: 'newsletter' })
+  return createWorld({ SITE_URL: SITE, SITE_TITLE: 'Field Notes', SITE_AUTHOR: 'Mara Quinn', SITE_FORM_SLUG: 'newsletter' })
 }
 
 async function aPost(w: World, subject: string, topics: string[] = []): Promise<number> {
@@ -55,7 +55,7 @@ describe('Feature: the front page sells the writer', () => {
     })
 
     it('names the site from the environment', () => {
-      expect(html).toContain('Big Machine</h1>')
+      expect(html).toContain('Field Notes</h1>')
     })
 
     it('falls back to the latest posts when nothing is featured', () => {
@@ -80,11 +80,11 @@ describe('Feature: the front page sells the writer', () => {
       w = siteWorld()
       await aPost(w, 'Anything')
       await saveSite(w, {
-        title: 'Rob Writes',
+        title: 'Mara Writes',
         tagline: 'Candid notes.',
-        author_name: 'Rob C',
+        author_name: 'Mara Q',
         short_bio: 'I write about code.\n\nAnd business.',
-        social_github: 'https://github.com/robconery',
+        social_github: 'https://github.com/maraquinn',
         body_json: doc('The long story of how I got here.'),
       })
       home = await page(w, '/')
@@ -92,7 +92,7 @@ describe('Feature: the front page sells the writer', () => {
     })
 
     it('renames the site', () => {
-      expect(home).toContain('<title>Rob Writes</title>')
+      expect(home).toContain('<title>Mara Writes</title>')
     })
 
     it('leads with the tagline', () => {
@@ -108,7 +108,7 @@ describe('Feature: the front page sells the writer', () => {
     })
 
     it('lists the author’s links', () => {
-      expect(home).toContain('href="https://github.com/robconery"')
+      expect(home).toContain('href="https://github.com/maraquinn"')
     })
 
     it('serves the long bio at /about', async () => {
@@ -126,7 +126,7 @@ describe('Feature: the front page sells the writer', () => {
     })
 
     it('keeps the environment’s value', () => {
-      expect(html).toContain('Big Machine</h1>')
+      expect(html).toContain('Field Notes</h1>')
     })
   })
 

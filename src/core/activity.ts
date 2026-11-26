@@ -199,7 +199,7 @@ export interface DayPoint {
  * somebody ever comes back, so the history of departures only exists here.
  *
  * `import` rows are excluded, which is the whole reason that column exists:
- * backfilling 13.7k people would otherwise show as the best day in list history.
+ * backfilling thousands of people would otherwise show as the best day in list history.
  */
 export async function growthByDay(db: Db, days = 90): Promise<DayPoint[]> {
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000)

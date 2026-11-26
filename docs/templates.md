@@ -30,7 +30,7 @@ upload it.
 
 **To change a theme:**
 1. Copy the theme's folder (`themes/nightdrive/`, say) somewhere new.
-2. Change `"name"` in its `package.json` (e.g. `"nightdrive-rob"`). Built-in names are reserved.
+2. Change `"name"` in its `package.json` (e.g. `"nightdrive-mine"`). Built-in names are reserved.
 3. Ask Claude for the change, giving it this document and the files (see [prompts](#-prompts-for-claude)).
 4. Zip the folder so `package.json` sits at the root of the zip (a single wrapping folder is fine too).
 5. Admin → **Themes** → *Install a theme* → upload the zip.
@@ -139,7 +139,7 @@ output is then passed to `default.hbs` as `{{{body}}}`.
 | Value | What it is |
 |---|---|
 | `@site.title`, `@site.description` | The site's name and tagline (Profile screen, falling back to the `SITE_*` settings) |
-| `@site.url` | The site's origin, e.g. `https://a.bigmachine.io` |
+| `@site.url` | The site's origin, e.g. `https://example.com` |
 | `@site.author` | The author's name |
 | `@site.navigation` | Home, Writing, About (when there's a long bio), then the busiest topics: each has `label`, `url`, `hue`, `hue_cool` |
 | `@site.signup_action` | Where a subscribe form posts. **Empty when signups are off; always check it** |

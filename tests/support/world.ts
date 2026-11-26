@@ -102,10 +102,10 @@ export function createWorld(overrides: Partial<Env> = {}): World {
     ASSETS: { fetch: async () => new Response('not found', { status: 404 }) } as unknown as Fetcher,
 
     EMAIL_PROVIDER: 'console',
-    FROM_EMAIL: 'rob@example.test',
-    FROM_NAME: 'Rob',
+    FROM_EMAIL: 'mara@example.test',
+    FROM_NAME: 'Mara',
     PUBLIC_URL,
-    PREVIEW_EMAIL: 'rob@example.test',
+    PREVIEW_EMAIL: 'mara@example.test',
 
     // The admin console is behind Cloudflare Access in production. A spec that
     // wants to prove the gate exists creates its own world without this.

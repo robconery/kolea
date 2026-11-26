@@ -4,7 +4,7 @@
  * Lives on its own, importing nothing, because two very different callers need
  * exactly the same statements and must never drift apart: the Worker
  * (`core/purchases.ts`, via Drizzle) and the offline backfill
- * (`scripts/import-neon-purchases.ts`, via `wrangler d1 execute`). A rollup that
+ * (an operator's sync script, via `wrangler d1 execute`). A rollup that
  * disagrees with itself depending on who rebuilt it is worse than no rollup.
  *
  * Wholesale rebuild, never an increment. `purchases` is a mirror — rows can be

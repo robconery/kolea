@@ -4,9 +4,9 @@
  * This is the text a model is handed whenever it writes or rewrites words that
  * will go out under the operator's name. It lives in code on purpose: it is
  * part of the product, it ships with the Worker, and it changes in a commit
- * like any other rule. It is derived from Rob Conery's own writing guide (built
- * from 126 of his published posts and his rewrites of AI drafts), with the
- * personal quirks taken out and the rules about plain, readable prose kept.
+ * like any other rule. It started from the project author's personal writing
+ * guide, with the personal quirks taken out and the rules about plain,
+ * readable prose kept.
  *
  * It pairs with `src/slop/`, which catches the same failures after the fact.
  * The guide says what to write; the detector points at what got through.

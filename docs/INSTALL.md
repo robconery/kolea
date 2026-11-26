@@ -509,8 +509,7 @@ later.
 >
 > **Bulk imports must never go through `upsertSubscriber()`.** It fires
 > `enrollOnSubscribe()`, so importing N people into a live `subscribe` sequence
-> mails all N of them, immediately. Import as direct SQL — see
-> `scripts/import-kit.ts` for the pattern — or pass
+> mails all N of them, immediately. Import as direct SQL, or pass
 > `triggerSubscribeSequences: false`.
 >
 > Three more rules that make an import safe:
@@ -523,10 +522,6 @@ later.
 >   Consent only ever moves one way without the person asking.
 > - **Import with `EMAIL_PROVIDER=console` first**, check the Outbox, then flip
 >   the provider back.
-
-`scripts/` has working importers for Kit (ConvertKit) subscribers and content,
-and for a Neon-backed storefront. They are written for one specific setup — read
-them as reference implementations, not as a general-purpose tool.
 
 ---
 

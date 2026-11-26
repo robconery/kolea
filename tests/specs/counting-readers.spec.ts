@@ -14,7 +14,7 @@ const SITE = 'https://site.example.test'
 const BROWSER = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 Safari/605.1.15'
 
 function siteWorld(): World {
-  return createWorld({ SITE_URL: SITE, SITE_TITLE: 'Big Machine', SITE_AUTHOR: 'Rob Conery' })
+  return createWorld({ SITE_URL: SITE, SITE_TITLE: 'Field Notes', SITE_AUTHOR: 'Mara Quinn' })
 }
 
 async function aPost(w: World, subject: string): Promise<{ id: number; slug: string }> {

@@ -31,7 +31,7 @@ export interface Env {
   PUBLIC_URL: string
 
   /**
-   * The public site's own origin, e.g. `https://a.bigmachine.io`.
+   * The public site's own origin, e.g. `https://example.com`.
    *
    * Hostname dispatch, not a path prefix: `worker.tsx` routes a request whose
    * host matches this to the public site app and everything else to the admin
@@ -62,6 +62,15 @@ export interface Env {
    * box entirely — consent has to land somewhere real or not be collected.
    */
   SITE_FORM_SLUG?: string
+
+  /**
+   * Where a buyer manages what they own on your storefront, e.g.
+   * `https://example.com/account`. Fills `{{account_url}}` in purchase mail and
+   * the "grab them from your dashboard" line under `{{downloads}}`.
+   *
+   * Unset, `{{account_url}}` is empty and the dashboard line is left out.
+   */
+  ACCOUNT_URL?: string
 
   /**
    * Where "send a preview" goes, and the only address it may ever go to.

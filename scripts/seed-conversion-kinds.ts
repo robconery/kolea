@@ -1,5 +1,5 @@
 /**
- * Seed the three conversion kinds Rob described, idempotently.
+ * Seed three starter conversion kinds, idempotently.
  *
  * Kinds are data, not an enum — so they have to start somewhere, and a fresh
  * `conversion_kinds` table means `classifyKind` matches nothing and no sale ever
@@ -10,8 +10,8 @@
  * things and doubling revenue. So the catch-all sits at 100, behind everything.
  *
  * Everything here is editable afterwards at `/goals` — including `cohort`, whose
- * offer list is a starting guess (The Pivot is a 4-week intensive, which is a
- * cohort by any reading; add the others as you run them).
+ * offer list is only an example (`spring-workshop` stands in for a live,
+ * time-boxed course; swap in the offer slugs of the cohorts you actually run).
  *
  *   bun scripts/seed-conversion-kinds.ts --local
  *   bun scripts/seed-conversion-kinds.ts --remote
@@ -48,7 +48,7 @@ const KINDS: Kind[] = [
     slug: 'cohort',
     label: 'Joined a cohort',
     ruleType: 'offer_in',
-    ruleValue: 'ai-pivot',
+    ruleValue: 'spring-workshop',
     priority: 20,
     why: 'a cohort is just a specific offer; edit the list at /goals',
   },
@@ -84,8 +84,8 @@ async function d1(command: string): Promise<unknown[]> {
 const q = (v: string | null) => (v === null ? 'null' : `'${v.replace(/'/g, "''")}'`)
 const now = Date.now()
 
-// `insert or ignore` on the unique slug: re-running never clobbers an edit Rob
-// made in the admin, which is the whole point of the kinds being editable.
+// `insert or ignore` on the unique slug: re-running never clobbers an edit the
+// operator made in the admin, which is the whole point of the kinds being editable.
 const values = KINDS.map(
   (k) =>
     `(${q(k.slug)}, ${q(k.label)}, ${q(k.ruleType)}, ${q(k.ruleValue)}, ${k.priority}, 1, ${now})`,

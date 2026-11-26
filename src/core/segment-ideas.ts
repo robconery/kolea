@@ -17,7 +17,7 @@ import { countSegment } from './segments.ts'
  *
  * Every idea reports a size from `countSegment`, the same function a broadcast
  * uses, so a suggestion can never advertise an audience the send won't produce.
- * Nothing here writes anything — an idea becomes real only when Rob clicks.
+ * Nothing here writes anything — an idea becomes real only when the operator clicks.
  */
 
 export interface SegmentIdea {

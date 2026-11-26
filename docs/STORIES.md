@@ -19,9 +19,9 @@ There are only four, and the whole consent model turns on telling them apart.
 
 | Role | Who | Reaches the system through |
 |---|---|---|
-| **the list owner** | Rob. One operator, no team, no other customers. | The admin console, behind Cloudflare Access |
+| **the list owner** | The operator. One person, no team, no other customers. | The admin console, behind Cloudflare Access |
 | **a reader** | Somebody on the list. Never logs in, never has an account. | A link in an email: the preference center, tracking, downloads |
-| **a consuming app** | Big Admin, a checkout, anything of Rob's that needs to mail somebody. | `POST /api/send` with a bearer key |
+| **a consuming app** | A storefront, a checkout, anything of the operator's that needs to mail somebody. | `POST /api/send` with a bearer key |
 | **an agent** | Claude, over MCP. | `/mcp/:secret`, the same `core/` rules as everyone else |
 
 ## ✅ Definition of Ready
@@ -159,9 +159,8 @@ AC8 — a CSV with no email column imports nothing
   Then  the report says 0 created
 ```
 
-**Out of scope:** the bulk-import path used for real migrations
-(`scripts/import-kit.ts`), which deliberately bypasses `upsertSubscriber` —
-see invariant 5.
+**Out of scope:** the bulk-import path used for real migrations (direct SQL),
+which deliberately bypasses `upsertSubscriber`. See invariant 5.
 
 ---
 

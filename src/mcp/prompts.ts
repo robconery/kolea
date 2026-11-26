@@ -113,7 +113,7 @@ export function registerPrompts(server: McpServer): void {
           `Draft a broadcast about: ${topic}.`,
           audience ? `Audience: ${audience}.` : 'Ask me who it should go to before you build the audience.',
           '',
-          'Write it in my voice — use the `rob-writing` skill if it is available.',
+          'Write it in my voice. If you have a writing-style skill or guide for me, use it.',
           'Check `kolea://merge-tags` before using any {{tag}}.',
           '',
           'Then:',

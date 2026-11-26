@@ -18,7 +18,7 @@ import { slugify } from './ids.ts'
 
 /**
  * Tag slugs that would shadow a fixed route on the public site. A tag named
- * "Author" gets `author-tag`, so `/author/rob` keeps meaning the author page.
+ * "Author" gets `author-tag`, so `/author/ada` keeps meaning the author page.
  */
 export const RESERVED_TAG_SLUGS = new Set([
   'about',

@@ -213,7 +213,7 @@ describe('Feature: sending a broadcast to the list', () => {
     // id than the cursor, so the next page picks them up and mails them a
     // broadcast that was dispatched before they existed.
     //
-    // At 13.7k subscribers a send spans several minutely ticks, so the window
+    // On a list of thousands a send spans several minutely ticks, so the window
     // is real, not theoretical. It is not obviously wrong — arguably a newcomer
     // *should* get today's newsletter — but SPEC says otherwise, and the two
     // need reconciling. Raise it before changing either.

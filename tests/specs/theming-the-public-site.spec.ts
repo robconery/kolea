@@ -19,7 +19,7 @@ import { createWorld, type World } from '../support/world.ts'
 const SITE = 'https://site.example.test'
 
 function siteWorld(): World {
-  return createWorld({ SITE_URL: SITE, SITE_TITLE: 'Big Machine', SITE_AUTHOR: 'Rob Conery', SITE_FORM_SLUG: 'newsletter' })
+  return createWorld({ SITE_URL: SITE, SITE_TITLE: 'Field Notes', SITE_AUTHOR: 'Mara Quinn', SITE_FORM_SLUG: 'newsletter' })
 }
 
 async function aPost(w: World, subject: string, topics: string[] = []): Promise<{ id: number; slug: string }> {
@@ -356,7 +356,7 @@ describe('Feature: installing a Ghost theme', () => {
     })
 
     it('renders the archive with the theme’s index.hbs', () => {
-      expect(html).toContain('<h1 class="tiny-Center">Big Machine</h1>')
+      expect(html).toContain('<h1 class="tiny-Center">Field Notes</h1>')
     })
 
     it('renders the theme’s partials', () => {

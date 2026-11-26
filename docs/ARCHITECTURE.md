@@ -50,7 +50,7 @@ lands in a stranger's inbox.
    between.
 5. **Bulk writes never go through `upsertSubscriber()`.** It fires
    `enrollOnSubscribe()`, so importing N people into a live `subscribe` sequence
-   mails all N. Use direct SQL (`scripts/import-kit.ts`) or pass
+   mails all N. Use direct SQL or pass
    `triggerSubscribeSequences: false`.
 6. **Imported and backfilled content arrives inert.** Broadcasts land
    `status: 'sent'` with `sent_at` set; sequences land `is_active: 0`. The
@@ -421,7 +421,7 @@ catching it in every tool description.
 
 | Limit | Consequence in this codebase |
 |---|---|
-| **D1: 1,000 queries per Worker invocation** | Everything that loops over people is paged. Broadcasts materialize across ticks with a cursor. Segment predicates hit pre-aggregated `purchase_stats` rather than summing 31k `purchases` rows. |
+| **D1: 1,000 queries per Worker invocation** | Everything that loops over people is paged. Broadcasts materialize across ticks with a cursor. Segment predicates hit pre-aggregated `purchase_stats` rather than summing every `purchases` row. |
 | **D1: single-threaded writes** | Tracking events are written per-event and kept narrow, not aggregated on write. |
 | **Queues: batches of 100** | `sendBatch()` chunk size, and the queue consumer's page size. |
 | **Queues autoscale to 250 consumers** | Pinned to `max_concurrency: 6`. One batch = one provider request, so batch concurrency **is** the request rate. Unpinned, it buries Resend's 10 req/s limit (per team, not per key) under 429s. Six batches of 100 ≈ 600 emails/sec of headroom. |

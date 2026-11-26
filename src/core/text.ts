@@ -8,7 +8,7 @@
  * renderers look related when the whole point is that they are not.
  *
  * Nothing in here touches a database or a request. That is what lets an offline
- * script (`scripts/publish-archive.ts`) reuse the real rules instead of writing
+ * script reuse the real rules instead of writing
  * a second copy of them.
  */
 

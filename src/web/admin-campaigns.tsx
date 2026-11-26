@@ -1392,7 +1392,7 @@ campaignsAdmin.get('/sales', async (c) => {
   -H 'Content-Type: application/json' \\
   -d '{"email":"buyer@example.com",
        "amount_cents":4900,
-       "product":"The Imposter Handbook",
+       "product":"The Field Guide",
        "external_id":"ch_3Qx...",
        "tags":["customer"],
        "end_sequence":"launch-drip"}'`}
@@ -1423,7 +1423,7 @@ campaignsAdmin.get('/sales', async (c) => {
               </div>
               <div class="field">
                 <label>Product</label>
-                <input type="text" name="product" placeholder="The Imposter Handbook" />
+                <input type="text" name="product" placeholder="The Field Guide" />
               </div>
               <div class="field">
                 <label>Campaign</label>

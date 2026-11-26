@@ -46,7 +46,7 @@ audience.get('/subscribers', async (c) => {
       .select()
       .from(subscribers)
       .where(filters.length ? and(...filters) : undefined)
-      // Newest joiner first. Not `id` — the Kit import inserted 13.7k people in
+      // Newest joiner first. Not `id` — a bulk import inserts people in
       // CSV order, so ids no longer track signup date at all. `id` stays as the
       // tiebreaker for the same-timestamp rows a bulk import produces.
       .orderBy(desc(subscribers.createdAt), desc(subscribers.id))
@@ -266,7 +266,7 @@ audience.get('/subscribers/import', (c) =>
           <form method="post" action="/subscribers/import">
             <div class="field">
               <label>CSV</label>
-              <textarea name="csv" placeholder="email,name,tags&#10;rob@example.com,Rob,customer;ruby" />
+              <textarea name="csv" placeholder="email,name,tags&#10;ada@example.com,Ada,customer;ruby" />
             </div>
             <button class="btn primary">Import</button>
           </form>

@@ -5,8 +5,8 @@
  * renders its empty state and none of the design decisions can be judged. This
  * fills in enough of a world to see it working:
  *
- *   · the 13 Kit sequences from the ConvertKit report, with their engagement
- *     rates carried onto `imported_*` (the same shape the real backfill writes)
+ *   · 13 made-up Kit-era sequences, with their engagement rates carried onto
+ *     `imported_*` (the same shape a real Kit import writes)
  *   · two *live* sequences with real `messages` + `events` history, so the step
  *     waterfall, the retention curve and the Signal score all have something to
  *     draw — and so the live-vs-imported split is visible side by side
@@ -53,21 +53,21 @@ interface KitSeq {
   unsubscribed: number
 }
 
-/** Transcribed from the Kit sequences report. Rates are percents, over recipients. */
+/** Invented, in the shape of a Kit sequences report. Rates are percents, over recipients. */
 const KIT: KitSeq[] = [
-  { name: 'AI Deadlines Personal Followup', emails: 1, days: 1, subscribers: 0, openRate: 82.22, clickRate: 22.22, unsubscribed: 1 },
-  { name: 'AI Deadlines Post', emails: 1, days: 2, subscribers: 0, openRate: 100, clickRate: 0, unsubscribed: 0 },
-  { name: 'AI Pro Free Signup', emails: 4, days: 5, subscribers: 100, openRate: 69.02, clickRate: 15.6, unsubscribed: 7 },
-  { name: 'AI Pro Upgrade', emails: 7, days: 17, subscribers: 341, openRate: 76.21, clickRate: 4.9, unsubscribed: 17 },
-  { name: 'Cohort Interest', emails: 6, days: 8, subscribers: 282, openRate: 74.26, clickRate: 12.13, unsubscribed: 16 },
-  { name: 'Imposter Post', emails: 2, days: 14, subscribers: 386, openRate: 76.26, clickRate: 17.53, unsubscribed: 80 },
-  { name: 'Imposter Second Video Upgrade', emails: 6, days: 6, subscribers: 21, openRate: 68.42, clickRate: 24.29, unsubscribed: 4 },
-  { name: 'Little SQL Sequence', emails: 5, days: 5, subscribers: 0, openRate: 0, clickRate: 0, unsubscribed: 0 },
+  { name: 'Launch Week Followup', emails: 1, days: 1, subscribers: 0, openRate: 82.22, clickRate: 22.22, unsubscribed: 1 },
+  { name: 'Launch Week Post', emails: 1, days: 2, subscribers: 0, openRate: 100, clickRate: 0, unsubscribed: 0 },
+  { name: 'Course Free Signup', emails: 4, days: 5, subscribers: 100, openRate: 69.02, clickRate: 15.6, unsubscribed: 7 },
+  { name: 'Course Upgrade', emails: 7, days: 17, subscribers: 341, openRate: 76.21, clickRate: 4.9, unsubscribed: 17 },
+  { name: 'Workshop Interest', emails: 6, days: 8, subscribers: 282, openRate: 74.26, clickRate: 12.13, unsubscribed: 16 },
+  { name: 'Field Guide Post', emails: 2, days: 14, subscribers: 386, openRate: 76.26, clickRate: 17.53, unsubscribed: 80 },
+  { name: 'Field Guide Video Upgrade', emails: 6, days: 6, subscribers: 21, openRate: 68.42, clickRate: 24.29, unsubscribed: 4 },
+  { name: 'Little Book Sequence', emails: 5, days: 5, subscribers: 0, openRate: 0, clickRate: 0, unsubscribed: 0 },
   { name: 'Newsletter Welcome', emails: 5, days: 7, subscribers: 8, openRate: 47.73, clickRate: 6.82, unsubscribed: 0 },
-  { name: 'Pivot Application', emails: 1, days: 0, subscribers: 0, openRate: 90.91, clickRate: 0, unsubscribed: 0 },
-  { name: 'Post Crap Code', emails: 5, days: 4, subscribers: 0, openRate: 80.95, clickRate: 28.57, unsubscribed: 1 },
-  { name: 'SQL Orbit Post', emails: 2, days: 8, subscribers: 61, openRate: 80.43, clickRate: 28.09, unsubscribed: 6 },
-  { name: 'Wealth OS Signup', emails: 0, days: 0, subscribers: 0, openRate: 0, clickRate: 0, unsubscribed: 0 },
+  { name: 'Mentoring Application', emails: 1, days: 0, subscribers: 0, openRate: 90.91, clickRate: 0, unsubscribed: 0 },
+  { name: 'Refactoring Post', emails: 5, days: 4, subscribers: 0, openRate: 80.95, clickRate: 28.57, unsubscribed: 1 },
+  { name: 'Database Basics Post', emails: 2, days: 8, subscribers: 61, openRate: 80.43, clickRate: 28.09, unsubscribed: 6 },
+  { name: 'Podcast Signup', emails: 0, days: 0, subscribers: 0, openRate: 0, clickRate: 0, unsubscribed: 0 },
 ]
 
 /** The two that get real, live history — one that sells, one that welcomes. */
@@ -188,7 +188,7 @@ if (clean) {
   //    can reach them (core/sequences.ts gates every one of them on isActive).
   for (const k of KIT) {
     const slug = `demo-kit-${slugify(k.name)}`
-    // If the real Kit import already brought this sequence in, leave it alone
+    // If a sequence with this name is already here, leave it alone
     // and just attach the figures — a second copy of every sequence is how a
     // leaderboard becomes unreadable, and how somebody edits the wrong one.
     sql.push(

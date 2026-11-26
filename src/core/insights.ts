@@ -7,7 +7,7 @@ import type { Db } from '../db/index.ts'
  * Every query here is scoped one of two ways, and the difference matters more
  * than any single figure:
  *
- *   - **Storefront-wide** — all 21k buyers. What the business did.
+ *   - **Storefront-wide** — every buyer. What the business did.
  *   - **Reachable** — buyers who are active subscribers. What this mailer can
  *     act on.
  *

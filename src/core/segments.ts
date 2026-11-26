@@ -69,10 +69,10 @@ function ruleFilters(db: Db, rule: SegmentRule): SQL[] {
  * The purchase half of a rule, resolved against the commerce mirror.
  *
  * Every clause is `subscribers.email IN (<indexed subquery>)`, never a join:
- * `purchases` is keyed by email rather than subscriber id (21k people have
- * bought something, 13.7k are on the list — see the schema comment), and the
+ * `purchases` is keyed by email rather than subscriber id (buyers and list members
+ * are different sets of people; see the schema comment), and the
  * spend and recency tests read the pre-aggregated `purchase_stats` rollup so a
- * segment count never aggregates 31k order rows.
+ * segment count never aggregates every order row.
  *
  * A buyer with no `purchase_stats` row simply isn't in any of these subqueries,
  * so "spent at least anything" correctly excludes people who never bought.
@@ -303,7 +303,7 @@ export async function retagDraftBroadcasts(
  * Plain-English rule summary for tables and audience labels.
  *
  * `offers` is optional so every existing caller keeps working; pass it and offer
- * slugs render as the titles Rob knows them by instead of as kebab-case.
+ * slugs render as the titles the operator knows them by instead of as kebab-case.
  */
 export function describeRule(
   rule: SegmentRule,

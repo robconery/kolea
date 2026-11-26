@@ -53,7 +53,7 @@ These come from `CLAUDE.md` and they are not negotiable here either.
   `wrangler deploy` publishes the admin console with no login.
 - **Never overwrite the upstream install.** If `status` or `render` reports the
   upstream `wrangler.jsonc` belongs to the account the token opens, stop: this
-  is Rob's own production, not a fresh clone.
+  is the upstream maintainer's own production, not a fresh clone.
 - **Never echo a secret back** into the conversation once it's stored. Say
   "saved" and move on. The single exception is the admin API key that `seed`
   prints once; they need to copy it.

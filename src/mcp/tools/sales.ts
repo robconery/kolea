@@ -332,7 +332,7 @@ export function registerSales(server: McpServer, ctx: Ctx): void {
     'purchase_template_upsert',
     {
       description:
-        'Create or update the post-purchase template for one offer sku. The sku is the one on the Stripe product (metadata.sku) — "cohort", "yearly", "imposter-second" — or "*" for the fallback. Body is markdown. Placeholders: {{first_name}}, {{offer_name}}, {{account_url}}, {{downloads}}, {{discord_url}}. This only writes the template; it never sends anything.',
+        'Create or update the post-purchase template for one offer sku. The sku is the one on the Stripe product (metadata.sku) — "cohort", "yearly", "field-guide" — or "*" for the fallback. Body is markdown. Placeholders: {{first_name}}, {{offer_name}}, {{account_url}}, {{downloads}}, {{discord_url}}. This only writes the template; it never sends anything.',
       inputSchema: z.object({
         offer_slug: z.string(),
         name: z.string(),
@@ -383,7 +383,7 @@ export function registerSales(server: McpServer, ctx: Ctx): void {
       annotations: { readOnlyHint: true },
     },
     async ({ sale_id }) => {
-      const planned = await planPurchaseMail(ctx.db, sale_id)
+      const planned = await planPurchaseMail(ctx.env, ctx.db, sale_id)
       if (!planned.ok) return fail(planned.reason)
       const items = await purchasedItems(ctx.db, sale_id)
 

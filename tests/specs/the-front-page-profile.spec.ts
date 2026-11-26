@@ -21,7 +21,7 @@ describe('Feature: the front page profile', () => {
     let html: string
 
     beforeAll(async () => {
-      w = createWorld({ SITE_URL: SITE, SITE_TITLE: 'Big Machine' })
+      w = createWorld({ SITE_URL: SITE, SITE_TITLE: 'Field Notes' })
       await publishPost(w.db, await aBroadcast(w, { subject: 'Anything' }))
       await saveSite(w, {
         profile_lede: 'I make AI pay off.',
@@ -101,15 +101,15 @@ describe('Feature: the front page profile', () => {
       await publishPost(w.db, await aBroadcast(w, { subject: 'Anything' }))
       await saveSite(w, {
         short_bio: 'Hi.',
-        social_github: 'https://github.com/robconery',
-        social_mastodon: 'https://mastodon.social/@robconery',
+        social_github: 'https://github.com/maraquinn',
+        social_mastodon: 'https://mastodon.social/@maraquinn',
       })
       html = await (await w.fetch(`${SITE}/`)).text()
     })
 
     it('stores each under its key', async () => {
       const profile = readProfile((await getSiteSettings(w.db))?.profile)
-      expect(profile.social).toEqual({ github: 'https://github.com/robconery', mastodon: 'https://mastodon.social/@robconery' })
+      expect(profile.social).toEqual({ github: 'https://github.com/maraquinn', mastodon: 'https://mastodon.social/@maraquinn' })
     })
 
     it('shows them on the front page, named', () => {
@@ -123,7 +123,7 @@ describe('Feature: the front page profile', () => {
 
   describe('Scenario: a social profile that is not a URL', () => {
     it('is refused', () => {
-      expect(validateProfile({ social: { github: 'robconery' } }).ok).toBe(false)
+      expect(validateProfile({ social: { github: 'maraquinn' } }).ok).toBe(false)
     })
   })
 

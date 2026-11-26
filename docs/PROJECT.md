@@ -4,8 +4,8 @@
 
 ## Problem
 
-Email for Rob's products and newsletter is split across a paid ESP (broadcast) and
-whatever the apps do themselves (transactional). The list, the sending, and the
+Email for a solo operator's products and newsletter is usually split across a paid
+ESP (broadcast) and whatever the apps do themselves (transactional). The list, the sending, and the
 engagement data live in someone else's system, and the ESP bill scales with
 subscriber count rather than with use.
 
@@ -18,16 +18,16 @@ transactional sending as a separate scattered concern.
 
 ## Who it's for
 
-- 👤 **Rob only.** Single operator, his own lists and his own apps.
+- 👤 **One operator.** A single person running their own lists and their own apps.
 - 🚫 **Not** other customers, not a team, not the public. No signup, no billing, no orgs.
 
 ## Goals
 
 - 📤 Send broadcasts to a list and know what happened (opens, clicks, bounces, complaints)
-- 🔌 Serve existing apps as the transactional email path (e.g. Big Admin order + download mail)
+- 🔌 Serve existing apps as the transactional email path (e.g. a storefront's order and download mail)
 - 🔁 Run drip / welcome sequences — an ESP replacement is not credible without them
 - 🗃 Own the subscriber data, the send history, and the engagement data
-- 💸 Cost meaningfully less than the current ESP at Rob's volume
+- 💸 Cost meaningfully less than the current ESP at the operator's volume
 
 ## Success
 
@@ -44,7 +44,7 @@ Supporting signals:
 
 - Subscriber list: import, tags/segments, signup + unsubscribe handling
 - Broadcast composition and sending
-- Transactional send API for Rob's other apps
+- Transactional send API for the operator's other apps
 - Engagement tracking: opens, clicks, bounces, complaints
 - Drip / welcome sequences
 - Relaying through an existing sending provider
@@ -59,7 +59,7 @@ Supporting signals:
 
 - ⏱ No hard deadline — personal-project pace
 - 💰 Must run cheap: hosting + sending well under current ESP spend
-- 🔗 Must integrate with existing apps (Big Admin order/download email flows are a real consumer)
+- 🔗 Must integrate with existing apps (a storefront's order and download mail is a real consumer)
 - 🧱 Stack is already decided — parked for `/design`
 
 ## Riskiest unknowns
@@ -76,7 +76,7 @@ Supporting signals:
    unsubscribe is what drove the scoped-consent model.
 - ❓ **List size and monthly send volume?** Drives cost model and scale requirements — TODO
 - ✅ ~~Which sending provider relays the mail?~~ → Resend first, behind a swappable port (`/design`)
-- ✅ ~~What does "transactional API" mean for Big Admin?~~ → `POST /api/send` with a bearer
+- ✅ ~~What does "transactional API" mean for a consuming app?~~ → `POST /api/send` with a bearer
    key; Kōlea owns templates, suppression, and logging (`/design`)
 - ❓ Does engagement tracking need per-subscriber history, or aggregate per-campaign only? — TODO
 - ❓ Is there a compliance floor to hit (CAN-SPAM / GDPR: consent records, unsubscribe SLA)? — TODO

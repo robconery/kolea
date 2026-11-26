@@ -6,13 +6,13 @@ brand
 
 ## Users
 
-Working developers reading Big Machine deliberately: they clicked through from the
+People reading the operator's site deliberately: they clicked through from the
 newsletter or a share, sat down with coffee, and intend to read 1,500 words properly,
 usually on a laptop in daylight. They are not skimming a feed.
 
 ## Product Purpose
 
-The public reading site for Rob Conery's essays, served by Kōlea. Every post is also a
+The public reading site for the operator's essays, served by Kōlea. Every post is also a
 newsletter issue; the site is where the archive lives and where a reader decides to
 subscribe. Success: people finish the piece, read another, and sign up.
 

@@ -702,19 +702,6 @@ cursor. There is no bulk publish — not in `core/`, not in the admin, not in MC
 because an archive imported from a previous ESP is hundreds of `sent` rows and "publish
 everything" is a keystroke you can't take back.
 
-For that one case there's an offline script, deliberately kept where nothing reachable
-from the running app can call it:
-
-```bash
-bun scripts/publish-archive.ts --remote --dry-run   # print the plan and stop
-bun scripts/publish-archive.ts --remote             # publish the archive
-bun scripts/publish-archive.ts --remote --unpublish # take it all back down
-```
-
-It sends nothing. It writes `published_at`, `slug`, `excerpt`, `search_text` and
-`feature_image`, and touches nothing else. It's idempotent — anything already published
-is skipped — and `--unpublish` keeps every slug, so the same URLs come back.
-
 **The mail carries "read this online" and a share link**, both built outside the body —
 the only thing click tracking rewrites — so the chrome stays untracked exactly like the
 preference-center and download links. Both are omitted entirely when there is no
@@ -942,6 +929,7 @@ Cloudflare with `bunx wrangler secret put NAME --env production`, and locally in
 | `SITE_URL` | var | The public site's host | No public site |
 | `SITE_TITLE` / `SITE_TAGLINE` / `SITE_AUTHOR` | var | Site masthead, until the Profile screen says otherwise | Blank / `FROM_NAME` |
 | `SITE_FORM_SLUG` | var | The form the site's subscribe box posts to | No subscribe box |
+| `ACCOUNT_URL` | var | Where a buyer manages what they own. Fills `{{account_url}}` in purchase mail | `{{account_url}}` is empty and purchase mail has no dashboard link |
 | `RESEND_API_KEY` | secret | Sending | `resend` can't send |
 | `RESEND_WEBHOOK_SECRET` | secret | Verifies bounce and complaint webhooks | ⚠️ Bounces never suppress |
 | `MCP_PATH_SECRET` | secret | The unguessable part of the MCP URL | MCP is off (404) |

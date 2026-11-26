@@ -46,7 +46,7 @@ Thanks for picking up the course. Over the next few days I'll send you three sho
 
 First: [start here](https://example.com/start). It's about ten minutes.
 
-Rob`,
+Ada`,
     0,
   ],
   [
@@ -55,7 +55,7 @@ Rob`,
 
 [Read it now](https://example.com/setup). It's short, I promise.
 
-Rob`,
+Ada`,
     2,
   ],
   [
@@ -64,7 +64,7 @@ Rob`,
 
 If you want more like this, the newsletter goes out most weeks. You're already on it.
 
-Rob`,
+Ada`,
     3,
   ],
 ]
@@ -76,14 +76,14 @@ const LAUNCH_STEPS: [string, string, number][] = [
 
 Nothing to do yet. Just a heads-up.
 
-Rob`,
+Ada`,
     0,
   ],
   [
     "It's open",
     `{{first_name}}, the workshop is live: [take a look](https://example.com/workshop).
 
-Rob`,
+Ada`,
     2,
   ],
 ]
@@ -253,7 +253,7 @@ If you leave a series here, you stay on the list. That's the whole idea.
 
 [The long version is on the blog](https://example.com/post).
 
-Rob`,
+Ada`,
       segment: {},
       status: 'draft',
       createdAt: new Date(),

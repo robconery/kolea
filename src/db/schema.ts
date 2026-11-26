@@ -121,7 +121,7 @@ export interface SegmentRule {
 
   // ── purchase predicates, resolved against the commerce mirror below.
   // Offer slugs rather than ids: a slug survives a re-sync and reads in a diff,
-  // and it is what Rob actually sells — people buy offers, not products.
+  // and it is what the operator actually sells — people buy offers, not products.
   /**
    * `true` = has ever bought anything; `false` = has never bought anything.
    *
@@ -805,9 +805,9 @@ export const sales = sqliteTable(
 
 /**
  * A read-only projection of the storefront in Neon. **Nothing here is a source
- * of truth** — every row is rebuilt from `orders` / `offers` in Postgres by
- * `scripts/import-neon-purchases.ts`, and a wrong value is fixed there and
- * re-synced, never edited here.
+ * of truth** — every row is rebuilt from `orders` / `offers` in Postgres by an
+ * offline sync script (the operator's, not in this repo), and a wrong value is
+ * fixed there and re-synced, never edited here.
  *
  * Why mirror at all: segment evaluation runs inside the Worker on every
  * broadcast materialization tick, under D1's 1,000-query-per-invocation cap.
@@ -838,10 +838,10 @@ export const offers = sqliteTable(
 )
 
 /**
- * Which products an offer bundles. Two integer columns and ~70 rows, carried
+ * Which products an offer bundles. Two integer columns and a few rows, carried
  * purely so the day "don't pitch the video to someone who already owns it
- * inside a bundle" comes up, it's a query and not a migration — `imposter-video`
- * ships inside 11 different offers. Nothing reads this yet by design: offers are
+ * inside a bundle" comes up, it's a query and not a migration: one video can
+ * ship inside many different offers. Nothing reads this yet by design: offers are
  * the grain people actually buy, products are the lookup sitting next to them.
  */
 export const offerProducts = sqliteTable(
@@ -908,7 +908,7 @@ export const purchases = sqliteTable(
 /**
  * Per-buyer rollup, recomputed at the end of every sync.
  *
- * Denormalized on purpose: without it, "spent over $100" aggregates 31k rows on
+ * Denormalized on purpose: without it, "spent over $100" aggregates every order row on
  * every segment count and every page of a broadcast send. With it, it's one
  * indexed lookup. Rebuilt wholesale, never incremented — an incremental counter
  * that drifts is worse than no counter.
@@ -940,7 +940,7 @@ export const purchaseStats = sqliteTable(
  * Keyed by `offer_slug`, which is the **sku on the Stripe product**
  * (`stripe_products.metadata.sku`), not `offers.id`. That is the only key the
  * two catalogs already agree on: a sale arrives as line items carrying a Stripe
- * product, and the sku is what maps it to the thing Rob sells. Keying on
+ * product, and the sku is what maps it to the thing the operator sells. Keying on
  * `offers.id` would mean a join through a mirror that is allowed to disagree
  * (see the `offers` vs `stripe_products` note above).
  *
@@ -1173,7 +1173,7 @@ export const activities = sqliteTable(
     sequenceId: integer('sequence_id').references(() => sequences.id, { onDelete: 'set null' }),
     /**
      * HOW the write happened, not what it did. This is the column that keeps a
-     * 13.7k-row backfill from reading as the best signup day in the list's
+     * ten-thousand-row backfill from reading as the best signup day in the list's
      * history: everything historical lands as `import`, and every growth chart
      * excludes it. Without this the log is actively misleading on day one.
      */
@@ -1438,7 +1438,7 @@ export const stripeEvents = sqliteTable(
  * disagree — reconciling them is a question for a human, not a UNIQUE index.
  *
  * `metadata` is stored whole rather than picked apart into columns: it is where
- * the download file locations live, the keys are Rob's to change in the Stripe
+ * the download file locations live, the keys are the operator's to change in the Stripe
  * dashboard, and a schema migration is a bad reason not to rename a metadata key.
  */
 export const stripeProducts = sqliteTable(
@@ -1548,7 +1548,7 @@ export type SaleItem = typeof saleItems.$inferSelect
 /**
  * ⭐ What counts as a conversion — as data, not an enum.
  *
- * Rob's funnel has more than two ends: bought something, signed up yearly,
+ * A funnel has more than two ends: bought something, signed up yearly,
  * joined a cohort, and whatever comes next. An enum would make each of those a
  * schema migration, so the *names* live here and only the *detection* stays in
  * code (`classifyKind` in core/conversions.ts).
@@ -1556,10 +1556,10 @@ export type SaleItem = typeof saleItems.$inferSelect
  * `ruleType` is the small closed set of ways a sale can be recognised:
  *
  *   `price_interval` — `ruleValue` is a Stripe interval ('year'). The only
- *      durable way to spot a subscription: of ~359 live yearly subs, 6 sit on
- *      the product tagged `sku: yearly`, so product and offer both lie here.
+ *      durable way to spot a subscription: a yearly sub often sits on a product
+ *      that is not tagged `sku: yearly`, so product and offer both lie here.
  *   `offer_in` — `ruleValue` is a comma-separated list of offer slugs. Cohorts
- *      are just specific offers; The Pivot is one already.
+ *      are just specific offers.
  *   `any_sale` — the catch-all. Whatever fell through is a purchase.
  *   `manual` — never matched automatically. For goals fed by hand or by
  *      something that isn't a Stripe sale at all.
@@ -1605,7 +1605,7 @@ export const conversionKinds = sqliteTable(
  *
  * ## ⚠️ No refund status, on purpose
  *
- * A sale is a sale (Rob's call, and he refunds for all sorts of reasons that say
+ * A sale is a sale (an operator refunds for all sorts of reasons that say
  * nothing about whether the mail worked). The refund itself is not lost — it
  * lives on `sales.status`, where accounting can find it. A conversion is a
  * marketing fact and simply does not track it.

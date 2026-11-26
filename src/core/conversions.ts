@@ -29,9 +29,10 @@ import {
  *     priority order, so `subscription_yearly` claims a sale before the
  *     `any_sale` catch-all can. Two rows would double every revenue sum.
  *  2. **Yearly is detected from the price interval**, never from product or
- *     offer. 6 of ~359 live yearly subs sit on the product tagged `sku: yearly`.
- *  3. **Refunds are ignored.** A sale is a sale — Rob refunds for reasons that
- *     say nothing about whether the mail worked. The refund still lives on
+ *     offer. A yearly sub often sits on a product that is not tagged
+ *     `sku: yearly`.
+ *  3. **Refunds are ignored.** A sale is a sale. An operator refunds for reasons
+ *     that say nothing about whether the mail worked. The refund still lives on
  *     `sales.status`, where accounting can find it.
  */
 
@@ -245,7 +246,7 @@ export async function classifyKind(
  * Which offer this sale was for.
  *
  * Walks `sale_items → stripe_products.metadata.sku → offers.slug`. That sku is
- * the one spine that survives Rob running three separate Stripe accounts — a sku
+ * the one spine that survives an operator running several Stripe accounts — a sku
  * does not care which account issued it, and a price id very much does.
  *
  * Returns null for a membership, which genuinely is not an offer. An honest

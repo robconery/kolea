@@ -322,7 +322,7 @@ goalsAdmin.get('/goals', async (c) => {
             </select>
 
             <label style="margin-top:16px">Rule value</label>
-            <input type="text" name="ruleValue" placeholder="ai-pivot, accelerator" />
+            <input type="text" name="ruleValue" placeholder="spring-workshop, accelerator" />
             <p class="faint" style="margin:6px 0 16px">
               {RULE_HELP.offer_in} For an interval rule the value is <span class="mono">year</span>{' '}
               or <span class="mono">month</span>; the catch-all and manual rules ignore it.

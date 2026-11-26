@@ -5,7 +5,7 @@ import { campaigns, conversionKinds, conversions, goals } from '../db/schema.ts'
 /**
  * ⭐ Goals — a target, over a named period.
  *
- * A conversion is an *event* ("Rob Smith bought The Pivot on Tuesday"). A goal is
+ * A conversion is an *event* ("Sam Reyes bought the Field Guide on Tuesday"). A goal is
  * a *target* ("30 cohort signups in Q2"). Keeping them apart is the whole point:
  * the event log is the truth, and a goal is one lens onto it.
  *
@@ -26,13 +26,13 @@ import { campaigns, conversionKinds, conversions, goals } from '../db/schema.ts'
  *
  * ## Refunds are not subtracted
  *
- * A sale is a sale (Rob's call). `conversions` carries no refund status at all;
+ * A sale is a sale. `conversions` carries no refund status at all;
  * the refund lives on `sales.status` for accounting. Progress here counts every
  * conversion in the window, full stop.
  */
 
 /**
- * The month the fiscal year opens on, 1-indexed. January — Rob's "2026" means the
+ * The month the fiscal year opens on, 1-indexed. January: "2026" means the
  * calendar year. Change this one number and every year-typed goal shifts with it;
  * nothing else in the file hardcodes a month.
  */

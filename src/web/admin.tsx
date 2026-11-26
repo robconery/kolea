@@ -186,9 +186,8 @@ admin.get('/', async (c) => {
         </>
       ) : (
         <div class="note">
-          <strong>No storefront data yet.</strong> Run{' '}
-          <span class="mono">bun scripts/import-neon-purchases.ts</span> to mirror the store, and
-          this dashboard fills in.
+          <strong>No storefront data yet.</strong> Once the store is mirrored into the
+          commerce tables, this dashboard fills in.
         </div>
       )}
 

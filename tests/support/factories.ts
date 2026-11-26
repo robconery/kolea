@@ -149,7 +149,7 @@ let broadcastCounter = 0
 export async function aBroadcast(w: World, input: BroadcastInput = {}): Promise<number> {
   return await createBroadcast(w.db, {
     subject: input.subject ?? `Broadcast ${++broadcastCounter}`,
-    bodyMd: input.body ?? 'Hello {{first_name}}, here is the news.\n\nRob',
+    bodyMd: input.body ?? 'Hello {{first_name}}, here is the news.\n\nMara',
     segment: input.segment ?? {},
   })
 }

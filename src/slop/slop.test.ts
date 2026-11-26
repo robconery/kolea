@@ -80,7 +80,7 @@ describe('the tells', () => {
 
   test('punchline and question paragraphs, but not the sign-off', () => {
     const p = (text: string): Block => ({ text })
-    const doc = [p('I rewrote the whole thing over a weekend.'), p('Exactly.'), p('The catch is cost?'), p('More next week, I promise you that.'), p('Thanks!'), p('Rob')]
+    const doc = [p('I rewrote the whole thing over a weekend.'), p('Exactly.'), p('The catch is cost?'), p('More next week, I promise you that.'), p('Thanks!'), p('Ada')]
     const found = rules(doc)
     expect(found).toContain('one-liner')
     expect(findSlop(doc).hits.some((h) => h.text === 'Thanks!')).toBe(false)

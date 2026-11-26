@@ -65,7 +65,7 @@ Almost nothing is faked, which is the point.
 > ⚠️ **Nothing in this suite can reach the wire.** `createWorld()` hard-codes
 > the console provider. Two specs set `RESEND_API_KEY` because the *webhook*
 > route refuses to parse without one — they never set `EMAIL_PROVIDER=resend`,
-> and no test should. There are ~13.7k real addresses in the production
+> and no test should. There are thousands of real addresses in a production
 > database and exactly one thing between a test run and all of them.
 
 ## 🧱 The harness
@@ -125,6 +125,6 @@ of forgotten:
 - **`sending-a-broadcast.spec.ts`** — someone who joins *while a send is still
   in flight* is picked up by a later page of that same send, because recipients
   are materialized behind a cursor over `subscribers.id`. SPEC 3.5 says
-  recipients are resolved once, at dispatch. At 13.7k subscribers the window is
+  recipients are resolved once, at dispatch. On a list of thousands the window is
   minutes wide, so this is real. It may well be the *nicer* behaviour — but
   SPEC and the code should agree either way.

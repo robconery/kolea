@@ -1,8 +1,8 @@
 import type { FC } from 'hono/jsx'
 import { Hono } from 'hono'
 import {
-  ACCOUNT_URL,
   FALLBACK_SLUG,
+  accountUrl,
   createTemplate,
   deleteTemplate,
   getTemplate,
@@ -60,12 +60,13 @@ const Subject: FC<{ value?: string }> = ({ value }) => (
 )
 
 /** The right-hand rail. Identical on new and edit, so the screen doesn't move under you. */
-const Side: FC<{ offerSlug?: string; name?: string; discord?: string | null; active?: boolean }> = ({
-  offerSlug,
-  name,
-  discord,
-  active = true,
-}) => (
+const Side: FC<{
+  offerSlug?: string
+  name?: string
+  discord?: string | null
+  active?: boolean
+  account: string | null
+}> = ({ offerSlug, name, discord, active = true, account }) => (
   <>
     <div class="side-sec">
       <h3>Offer</h3>
@@ -106,7 +107,8 @@ const Side: FC<{ offerSlug?: string; name?: string; discord?: string | null; act
         <br />
         <span class="mono">{'{{offer_name}}'}</span> — what they bought
         <br />
-        <span class="mono">{'{{account_url}}'}</span> — {ACCOUNT_URL}
+        <span class="mono">{'{{account_url}}'}</span> —{' '}
+        {account ?? <>empty until <span class="mono">ACCOUNT_URL</span> is set</>}
         <br />
         <span class="mono">{'{{downloads}}'}</span> — their files, empty when none
         <br />
@@ -250,7 +252,7 @@ purchaseMailAdmin.get('/purchase-mail/new', (c) =>
       heading="New purchase mail"
       sub={<>nothing is sent until you press the button on a sale</>}
       actions={<button class="btn primary">Save</button>}
-      side={<Side />}
+      side={<Side account={accountUrl(c.env)} />}
       foot={
         <>
           <FootNote msg={c.req.query('flash')} kind={c.req.query('kind')} />
@@ -325,6 +327,7 @@ purchaseMailAdmin.get('/purchase-mail/:id', async (c) => {
           name={t.name}
           discord={t.discordInviteUrl}
           active={t.isActive}
+          account={accountUrl(c.env)}
         />
       }
       foot={
@@ -383,7 +386,7 @@ purchaseMailAdmin.post('/purchase-mail/:id/delete', async (c) => {
 purchaseMailAdmin.get('/sales/:id/thanks', async (c) => {
   const db = getDb(c.env)
   const saleId = Number(c.req.param('id'))
-  const planned = await planPurchaseMail(db, saleId)
+  const planned = await planPurchaseMail(c.env, db, saleId)
   const items = await purchasedItems(db, saleId)
 
   return c.html(

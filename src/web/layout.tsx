@@ -3,7 +3,7 @@ import { mdToDoc } from '../core/md-to-doc.ts'
 import type { Campaign, DocNode } from '../db/schema.ts'
 
 /**
- * The look: the Kōlea admin, ported from the hosted app.
+ * The look: the Kōlea admin.
  *
  * Warm, light, dependable. It should feel like a notebook on a desk, not a
  * control room. A cream canvas; a narrow plumage rail of section icons with
@@ -24,7 +24,7 @@ export const CSS = `
 :root{
   /* The palette is the bird: the kolea's breeding plumage (near-black olive),
      its gold speckle, its cream eye-stripe, and the lagoon it winters on.
-     Same tokens as the hosted Kōlea, so the two read as one family. */
+     One set of tokens for every screen. */
   --canvas:#F9F7EF;          /* page background: sky */
   --surface:#FFFDF8;         /* panels */
   --sunken:#F3EEE2;          /* wells, the docked column, table hover */

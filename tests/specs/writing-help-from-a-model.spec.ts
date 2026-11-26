@@ -244,7 +244,7 @@ describe('Feature: writing help from a model', () => {
         trigger: 'manual',
         triggerTagId: '',
         brief:
-          'I sell a $49 course on SQL for developers who learned an ORM first and never touched the database. My name is Rob. I used to hate SQL and now I love it.',
+          'I sell a $49 course on SQL for developers who learned an ORM first and never touched the database. My name is Mara. I used to hate SQL and now I love it.',
         draft: '1',
       })
       const seq = await world.db.select().from(sequences).where(eq(sequences.name, 'SQL story')).get()

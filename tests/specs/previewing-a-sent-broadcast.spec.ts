@@ -13,7 +13,7 @@ import { broadcasts, messages } from '../../src/db/schema.ts'
 import { aBroadcast, aPerson } from '../support/factories.ts'
 import { createWorld, type World } from '../support/world.ts'
 
-const OPERATOR = 'rob@example.test'
+const OPERATOR = 'mara@example.test'
 
 /** Mailed to one reader and closed by the tick. The operator joins afterwards, so they weren't a recipient. */
 async function aSentBroadcast(world: World): Promise<number> {

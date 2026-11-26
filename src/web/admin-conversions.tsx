@@ -21,7 +21,7 @@ export const conversionsAdmin = new Hono<{ Bindings: Env }>()
  *
  * Everything here is written automatically by the Stripe webhook. This exists
  * because last-touch attribution is a guess: it credits the most recent click
- * inside a window, and sometimes Rob knows better — that sale came from the
+ * inside a window, and sometimes the operator knows better — that sale came from the
  * sequence, not the newsletter that happened to go out on Tuesday.
  *
  * Any edit stamps `attributed_by: 'explicit'`, which every automatic pass treats
@@ -113,9 +113,8 @@ conversionsAdmin.get('/conversions', async (c) => {
         <div class="card" style="margin-top:18px">
           <div class="card-b">
             <p style="margin:0">
-              Some paid sales have no conversion row yet. Run{' '}
-              <span class="mono">bun scripts/backfill-conversions.ts --remote --dry-run</span> to
-              see what would be created.
+              Some paid sales have no conversion row yet. They were most likely recorded
+              before a conversion kind matched them.
             </p>
           </div>
         </div>

@@ -27,7 +27,7 @@ import { escapeHtml, mergeFields } from './text.ts'
  *
  *  1. **The sku is the key.** A sale arrives as line items carrying a Stripe
  *     product, and `stripe_products.metadata.sku` is the only identifier the
- *     Stripe catalog and Rob's offers already agree on. Nothing here joins
+ *     Stripe catalog and the offers already agree on. Nothing here joins
  *     through the `offers` mirror, which is allowed to disagree.
  *  2. **The body is snapshotted onto the message**, never read back from the
  *     template at send time. Editing a template must not rewrite what already
@@ -38,8 +38,19 @@ import { escapeHtml, mergeFields } from './text.ts'
  *     just bought.
  */
 
-/** Where a buyer manages what they own. Not the marketing site, not the app subdomain. */
-export const ACCOUNT_URL = 'https://bigmachine.io/dashboard'
+/**
+ * Where a buyer manages what they own, from the `ACCOUNT_URL` var. Not the
+ * public site and not the admin host: it is wherever the operator's storefront
+ * keeps a buyer's dashboard.
+ *
+ * Null when unset. Then `{{account_url}}` resolves to nothing and the downloads
+ * list carries no dashboard line, because a link that goes nowhere is worse than
+ * no link.
+ */
+export function accountUrl(env: Pick<Env, 'ACCOUNT_URL'>): string | null {
+  const url = env.ACCOUNT_URL?.trim()
+  return url ? url : null
+}
 
 /** The template that catches any offer without one of its own. */
 export const FALLBACK_SLUG = '*'
@@ -140,7 +151,7 @@ export interface PurchasedItem {
   sku: string | null
   /** The product name as Stripe knows it, which is what a buyer recognises. */
   title: string
-  /** Firebase object name from `stripe_products.metadata.file`, when there is one. */
+  /** The storage object name from `stripe_products.metadata.file`, when there is one. */
   file: string | null
 }
 
@@ -152,7 +163,7 @@ interface ProductMeta {
 /**
  * What this sale bought, resolved through the Stripe catalog mirror.
  *
- * Line items are the truth about a basket. A sale with none — a ThriveCart
+ * Line items are the truth about a basket. A sale with none — a charge from another checkout
  * charge, or a `charge.succeeded` that arrived before its checkout session —
  * falls back to the free-text `sales.product`, which at least names something
  * the buyer will recognise even though no sku can be derived from it.
@@ -211,10 +222,11 @@ export async function purchasedItems(db: Db, saleId: number): Promise<PurchasedI
  *
  * `url` is null while fulfillment lives outside this system: Kōlea knows the
  * *names* of the files a purchase grants (they are on the Stripe product) but
- * cannot sign a Firebase URL, and should not learn how to — fulfillment is a
- * separate concern that will be folded in later. Until then `{{downloads}}`
- * names what they own and points at the dashboard, and the day a signing source
- * exists this fills in with no template change.
+ * cannot sign a URL from the operator's file storage, and should not learn how
+ * to — fulfillment is a separate concern that will be folded in later. Until
+ * then `{{downloads}}` names what they own and points at the dashboard (when
+ * `ACCOUNT_URL` is set), and the day a signing source exists this fills in with
+ * no template change.
  */
 export interface DownloadLink {
   title: string
@@ -231,6 +243,7 @@ export async function purchaseExtras(
   db: Db,
   saleId: number,
   template: TemplateRow | undefined,
+  account: string | null,
 ): Promise<MergeExtras> {
   const items = await purchasedItems(db, saleId)
 
@@ -241,8 +254,8 @@ export async function purchaseExtras(
 
   return {
     offer_name: offerName,
-    account_url: ACCOUNT_URL,
-    downloads: renderDownloads(downloads),
+    account_url: account ?? '',
+    downloads: renderDownloads(downloads, account),
     discord_url: template?.discordInviteUrl ?? '',
   }
 }
@@ -255,7 +268,10 @@ export async function purchaseExtras(
  * the placeholder in a shared template and it simply disappears for offers that
  * have nothing to hand over.
  */
-export function renderDownloads(downloads: DownloadLink[]): { html: string; text: string } {
+export function renderDownloads(
+  downloads: DownloadLink[],
+  account: string | null = null,
+): { html: string; text: string } {
   if (downloads.length === 0) return { html: '', text: '' }
 
   const rows = downloads
@@ -271,11 +287,14 @@ export function renderDownloads(downloads: DownloadLink[]): { html: string; text
     d.url ? `${i + 1}. ${d.title}\n   ${d.url}` : `${i + 1}. ${d.title}`,
   )
 
-  const needsDashboard = downloads.some((d) => !d.url)
+  // Only when there is somewhere to send them. With no dashboard configured the
+  // files are still named, so the buyer knows what they own.
+  const needsDashboard = account !== null && downloads.some((d) => !d.url)
+  const href = account ? escapeHtml(account) : ''
   const note = needsDashboard
-    ? `<p>Grab them from your dashboard: <a href="${ACCOUNT_URL}">${ACCOUNT_URL}</a></p>`
+    ? `<p>Grab them from your dashboard: <a href="${href}">${href}</a></p>`
     : ''
-  const noteText = needsDashboard ? `\nGrab them from your dashboard: ${ACCOUNT_URL}` : ''
+  const noteText = needsDashboard ? `\nGrab them from your dashboard: ${account}` : ''
 
   return {
     html: `<ul>${rows}</ul>${note}`,
@@ -381,7 +400,11 @@ export type PlanResult = { ok: true; plan: PurchaseMailPlan } | { ok: false; rea
  * Every refusal the send can produce is produced here too, so the admin screen
  * and the MCP tool can show the operator the real answer before anything moves.
  */
-export async function planPurchaseMail(db: Db, saleId: number): Promise<PlanResult> {
+export async function planPurchaseMail(
+  env: Pick<Env, 'ACCOUNT_URL'>,
+  db: Db,
+  saleId: number,
+): Promise<PlanResult> {
   const sale = await db.select().from(sales).where(eq(sales.id, saleId)).get()
   if (!sale) return { ok: false, reason: `There is no sale #${saleId}.` }
 
@@ -401,7 +424,7 @@ export async function planPurchaseMail(db: Db, saleId: number): Promise<PlanResu
     }
   }
 
-  const extras = await purchaseExtras(db, saleId, template)
+  const extras = await purchaseExtras(db, saleId, template, accountUrl(env))
 
   const previous = await db
     .select({ id: messages.id })
@@ -448,7 +471,7 @@ export async function sendPurchaseMail(
   saleId: number,
   opts: { resend?: boolean } = {},
 ): Promise<SendResult> {
-  const planned = await planPurchaseMail(db, saleId)
+  const planned = await planPurchaseMail(env, db, saleId)
   if (!planned.ok) return planned
   const { plan } = planned
 
