@@ -10,7 +10,8 @@
 .bm-ai-veil,
 .bm-ai-clean,
 .bm-ai-subj,
-.bm-ai-pop {
+.bm-ai-pop,
+.bm-modal {
   --e-ink: #22262b;
   --e-muted: #6b7280;
   --e-faint: #9aa0a8;
