@@ -93,9 +93,9 @@ Then run `status`. Then the first question.
    already), then applies migrations to the local D1.
 3. Start `bun run dev` in the background. Tell them to open
    <http://localhost:8787>, click **Seed demo data**, then read the
-   **Outbox**. Point them at README § "A tour of the console" for what each
-   screen is for, and § "Try the thing it's for" for the five-click demo of
-   scoped consent.
+   **Outbox**. Point them at `docs/TOUR.md` for what each screen is for, and
+   its "Try the thing it's for" section for the five-click demo of scoped
+   consent.
 4. Ask whether they want to go live now or later. Later is a fine answer.
    Tell them `/onboard` picks up where they left off.
 
@@ -299,8 +299,8 @@ Finish with:
   (<https://dash.cloudflare.com/profile/api-tokens>), and to delete
   `.onboard/secrets.env`. Keep `.onboard/state.json`; it's harmless and makes
   the next `/onboard` a resume.
-- 📖 README § "A tour of the console" explains every screen. `docs/INSTALL.md`
-  § Troubleshooting covers what goes wrong.
+- 📖 `docs/TOUR.md` explains every screen. `docs/INSTALL.md` § Troubleshooting
+  covers what goes wrong.
 
 ## 🩺 When something fails
 

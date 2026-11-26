@@ -25,9 +25,9 @@
 
 | For local | For production |
 |---|---|
-| [Bun](https://bun.sh) 1.1+ | Everything on the left, plus… |
-| Node 18+ (only for `bun run smoke`) | A **Cloudflare account** |
-| — | The **Workers Paid plan** — $5/mo. Queues are not on the free tier, and Kōlea cannot send without them. |
+| [Bun](https://bun.sh) 1.2+ | Everything on the left, plus… |
+| [Node](https://nodejs.org) 22+ (wrangler, the local server and deploy tool, runs on it) | A **Cloudflare account** |
+| — | The **Workers Paid plan**, $5/mo. The free plan's query and CPU limits stop Kōlea from sending. See [`COST.md`](COST.md). |
 | — | A **domain on Cloudflare** (nameservers pointed at Cloudflare). Access can only protect a hostname on a zone you control. |
 | — | A **[Resend](https://resend.com) account** with a verified sending domain, or another provider you write an adapter for. |
 | — | Optional: a **Stripe** account, for revenue attribution. |
@@ -47,15 +47,25 @@ bun run setup          # local wrangler.jsonc + .dev.vars + local migrations
 bun run dev            # → http://localhost:8787
 ```
 
-`bun run setup` is `bun scripts/onboard.ts local`. It writes a local-only
-`wrangler.jsonc` from the template (only if you have none), a minimal
-`.dev.vars` (only if you have none), and applies the migrations to the local D1
-database. The local config cannot deploy: its production values are still
-`{{PLACEHOLDERS}}`.
+`bun run setup` is `bun scripts/onboard.ts local`. It checks your Bun and Node
+versions, then writes a local-only `wrangler.jsonc` from the template (only if
+you have none), a minimal `.dev.vars` (only if you have none), and applies the
+migrations to the local D1 database. The local config cannot deploy: its
+production values are still `{{PLACEHOLDERS}}`. If you run `bun run dev` first,
+it stops and tells you to run setup.
 
-Open <http://localhost:8787> and click **Seed demo data**: twelve people, two
-live series, a sent broadcast, and a draft that shows off every editor block.
+Open <http://localhost:8787> and click **Seed demo data**: twelve people and
+you, two live series, a sent broadcast, and a draft that shows off every editor
+block.
 Then open the **Outbox** to read the mail that "went out".
+
+| | |
+|---|---|
+| **Who you are** | The local config makes you a made-up operator, Mara Quinn at `mara@example.com`, with a site called "Field Notes". Change `FROM_NAME`, `FROM_EMAIL` and `SITE_TITLE` in your `wrangler.jsonc` if you like. |
+| **Signing in** | There is no login locally. The local config sets `DEV_AUTH_BYPASS=true`, which skips the Cloudflare Access check. Production turns it off. |
+| **Ports** | The admin is on `:8787` and the public site on `site.localhost:8787`. The browser tests use `:8788` and the screenshot script `:8790`, each with its own database. |
+| **Sending a test** | Open a draft and click **Send a preview**. It goes to your own address (`PREVIEW_EMAIL`, or `FROM_EMAIL`) and lands in the **Outbox**. That address has to be a subscriber; the demo seed adds it. |
+| **Starting over** | **Reset data** on the Dashboard empties the local database. To rebuild it from nothing, stop the server, delete `.wrangler/state`, and run `bun run setup` again. |
 
 > ### 🔒 Nothing leaves your machine
 >
@@ -75,7 +85,9 @@ are never shown again — only their SHA-256 hashes are stored.
 |---|---|
 | `bun run dev` | Build the client bundle, then serve on :8787 |
 | `bun run watch:client` | Rebuild the editor bundle on change (run alongside `dev`) |
-| `bun run typecheck` | Three passes: Worker, browser bundle, scripts. Must be clean. |
+| `bun run typecheck` | Four passes: Worker, browser bundle, scripts, tests. Must be clean. |
+| `bun run test` | The server-side suite. No server needed. |
+| `bun run test:ui` | Browser tests on :8788 with their own database. Run `bunx playwright install chromium` once first. |
 | `bun run smoke` | 33 real-Chromium checks against the editor. Needs `dev` running. |
 | `bun run db:generate` | Generate a migration after editing `src/db/schema.ts` |
 | `bun run db:migrate` | Apply migrations to the local D1 database |
@@ -88,16 +100,16 @@ and you'll watch step 2 skip the people who left that one series.
 
 ### 🔑 Local secrets
 
-Copy the example file and fill in only what you need:
+You don't need any to look around. `bun run setup` wrote a `.dev.vars` holding
+one generated value, `MCP_PATH_SECRET`, which switches the local MCP endpoint on.
 
-```bash
-cp .dev.vars.example .dev.vars
-```
+To try an integration locally (real sending through Resend, Stripe, Unsplash,
+the AI helpers), copy the lines you need from
+[`.dev.vars.example`](../.dev.vars.example) into `.dev.vars` and restart
+`bun run dev`. Wrangler reads the file only at startup.
 
-`.dev.vars` is gitignored. `.dev.vars.example` is not — **never paste a real
-value into the example file.** Everything in `.dev.vars` is optional locally;
-leave the file absent entirely and Kōlea runs in console mode with MCP and
-Stripe switched off.
+`.dev.vars` is gitignored. `.dev.vars.example` is not: **never paste a real
+value into the example file.**
 
 ---
 
@@ -247,7 +259,7 @@ bulk mail law in most places asks for one. Set it as a secret, so it stays out
 of the repo, with a newline between lines:
 
 ```bash
-printf '1 Example Road\nSpringfield' | npx wrangler secret put POSTAL_ADDRESS --env production
+printf '1 Example Road\nSpringfield' | bunx wrangler secret put POSTAL_ADDRESS --env production
 ```
 
 Unset, the line is left out.
@@ -296,7 +308,7 @@ in spam is worthless no matter how well it's built.
 implementing the `EmailProvider` port — `name`, `send`, `sendBatch` and
 `parseWebhook` — add a branch to `providerFor()` in `src/core/sending.ts`, and
 point `EMAIL_PROVIDER` at it. Nothing in `core/` names a vendor; that's the whole
-reason the port exists. See **Make it yours** in the README for the walkthrough.
+reason the port exists. See [Make it yours](CONFIG.md#-make-it-yours) for the walkthrough.
 
 ### Step 7 — Push the secrets
 
@@ -548,11 +560,15 @@ later.
 | MCP returns 401 | The key is missing, revoked, or `send`-scoped. MCP needs `admin`. |
 | An MCP send tool refuses | Expected. Either `MCP_ALLOW_SEND` is `"false"`, or you need a fresh preflight token — any edit to content or audience invalidates the old one. |
 | Broadcast stuck in `sending` | Normal for a large list. It materializes across cron ticks under D1's 1,000-query cap, resuming from `cursor_subscriber_id`. Check `messages` count is rising. |
-| Nothing sends at all | Queues not created, or you're on the free plan. Queues require Workers Paid. |
+| `bun run dev` stops with "isn't there yet" | A fresh clone has no `wrangler.jsonc` and no local database. Run `bun run setup` once. |
+| `bun run setup` complains about Node or Bun | Wrangler needs Node 22 or newer, and Kōlea's scripts need Bun 1.2 or newer. Update, then run it again. |
+| Local pages answer 500 after a `git pull` | New migrations. Run `bun run db:migrate`. |
+| `bun run test:ui` says the browser executable doesn't exist | Run `bunx playwright install chromium` once. |
+| Nothing sends at all | Queues not created, or you're on the free plan, whose limits stop the send. See [`COST.md`](COST.md). |
 | Mail dead-lettering en masse | Read `messages.error` on the failed rows: after "gave up after exhausting queue retries" it keeps what the last attempt said, the provider's refusal or the database's error. Retries back off for at least twenty minutes (`max_retries: 12`), so a give-up means the fault outlasted that. A provider 429 points at the rate limit: `max_concurrency` is pinned to 6 because one batch is one provider request, so batch concurrency *is* the request rate. |
 | Bounces never suppress anyone | The provider webhook isn't pointed at `/webhooks/:provider`, or `RESEND_WEBHOOK_SECRET` is wrong. |
 | Tracking pixels redirect to a login page | Missing Access **Bypass** app for `/t/*`. See [Step 8](#step-8--lock-the-console-behind-cloudflare-access). |
-| Download links land on a Cloudflare login | Missing Access **Bypass** app for `/d/*` — the exact same mistake, one path over. Happened in production on 2026-09-12. Existing links start working the moment the Bypass app exists; grants point at the form, not at a session, so nothing needs re-sending. |
+| Download links land on a Cloudflare login | Missing Access **Bypass** app for `/d/*` — the exact same mistake, one path over. Existing links start working the moment the Bypass app exists; grants point at the form, not at a session, so nothing needs re-sending. |
 | Images in email are broken | `PUBLIC_URL` didn't match the real host at send time. Mail already delivered cannot be fixed. |
 | Deploy fails with `Hostname … already has externally managed DNS records [code: 100117]` | The public site's hostname still has A/CNAME records from whatever served it before. Export them, delete them, redeploy. |
 | The public site shows a Cloudflare login | Its hostname is inside the Access application. Access apps match by hostname; scope the Allow app to the admin host exactly. |

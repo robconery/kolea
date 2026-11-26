@@ -1,4 +1,7 @@
-# Product
+# Product brief: the public site
+
+The design brief for the reader-facing site and its built-in themes. The admin console
+has its own look, described at the top of `src/web/layout.tsx`.
 
 ## Register
 
@@ -25,7 +28,7 @@ room to breathe. The typography does the talking.
 
 - Ghost / Casper: blue hero, card-grid blog template.
 - Medium / Substack: generic centered platform column with a follow button.
-- The Kōlea admin's dark "Abyssal" ocean: that is the operator's tool, not the reader's page.
+- The Kōlea admin console: that is the operator's tool, not the reader's page.
 
 ## Design Principles
 

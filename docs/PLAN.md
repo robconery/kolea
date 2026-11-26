@@ -69,13 +69,9 @@
 ## Not done
 
 - [ ] Media library UI (the `/api/media` list endpoint exists; nothing consumes it)
-- [ ] Sequence step reordering (positions are append-only; editing and deleting work)
 - [ ] Image alt-text / link editing from the bubble menu
 - [ ] Orphan-media sweep (uploads removed from a draft stay in R2)
 - [ ] API key management UI (keys exist in the DB; only the seed mints one)
-- [ ] Scheduled-broadcast UI (the model and cron path support it; there's no date picker)
+- [ ] Scheduled-broadcast UI (the model, the cron path and MCP support it; the admin has no date picker)
 - [ ] Double opt-in — still an open question in SPEC §1
-- [ ] Per-subscriber engagement history UI — SPEC §5 TODO
-- [ ] Segment builder beyond a single include-tag
-- [ ] Real D1 database + `--env production` deploy
 - [ ] ESP migration path — depends on which ESP, still open in PROJECT.md

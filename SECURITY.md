@@ -36,7 +36,7 @@ running deployment.
 **In scope:** authentication and authorization bypass, injection, consent bypass
 (anything that sends mail to an address that opted out, or that escalates a narrow
 opt-out into a global one), API-key handling, template injection into rendered email,
-SSRF, secrets exposure, and any default in `wrangler.jsonc` that is unsafe in
+SSRF, secrets exposure, and any default in `wrangler.template.jsonc` that is unsafe in
 production.
 
 **Out of scope:** findings that require `DEV_AUTH_BYPASS=true` (that is the documented
@@ -84,4 +84,4 @@ Two steps are load-bearing, and both are easy to get wrong:
    MCP endpoint returns `404`, which is the safe default — turn it on deliberately.
 
 Secrets belong in `wrangler secret put` or `.dev.vars` (gitignored). Never in
-`wrangler.jsonc`, and never in `.dev.vars.example`.
+`wrangler.jsonc` or the template, and never in `.dev.vars.example`.

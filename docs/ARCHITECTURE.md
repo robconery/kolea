@@ -99,7 +99,7 @@ One Cloudflare Worker. Three entry points, one D1 database, one outbound port.
    Cron  */1 * * * * ────┤  scheduled()  sequence tick + broadcasts │
    Cron  17 9 * * * ─────┤               Stripe reconcile + catalog │
                          │                                          │
-   Queue big-mailer-send ┤  queue()      render → consent → send    │
+   Queue kolea-send ─────┤  queue()      render → consent → send    │
    Queue …-dlq ──────────┤               mark failed (never sends)  │
                          └───────────┬──────────────────────────────┘
                                      │
@@ -169,9 +169,9 @@ across the network at send time.
 
 | Dir | Responsibility | Boundary |
 |---|---|---|
-| `web/` | Admin console **and** the public site. Hono + JSX, server-rendered, ~zero client JS. `layout.tsx` holds the whole "Abyssal" design system; `prefs.tsx` is ⭐ the public preference center; ⭐ `site.tsx` is the public blog (its own Hono app + its own stylesheet, dispatched by hostname); `auth.ts` verifies the Access JWT properly. | Calls `core/`. **Never** a provider or raw D1 query. |
+| `web/` | Admin console **and** the public site. Hono + JSX, server-rendered, ~zero client JS. `layout.tsx` holds the whole design system; `prefs.tsx` is ⭐ the public preference center; ⭐ `site.tsx` is the public blog (its own Hono app + its own stylesheet, dispatched by hostname); `auth.ts` verifies the Access JWT properly. | Calls `core/`. **Never** a provider or raw D1 query. |
 | `api/` | `/api/send`, `/api/sales`, `/f/:slug`, `/webhooks/:provider`, `/t/*`, media. | HTTP shape only. Delegates to `core/`. |
-| `mcp/` | The whole mailer as **103 agent-callable tools**, 4 resources, 4 prompts. | Same boundary as `web/`: thin wrappers, no domain logic. |
+| `mcp/` | The whole mailer as **109 agent-callable tools**, 4 resources, 4 prompts. | Same boundary as `web/`: thin wrappers, no domain logic. |
 | `providers/` | `EmailProvider` port + `console` and `resend` adapters. | Adapter. Only `core/` calls it. |
 | `db/` | Drizzle schema + D1 client. | Only `core/` imports it. |
 | `client/` | The only browser JS: the TipTap editor bundle and the chart runtime. Separate tsconfig — **workerd's `Response`/`Headers` shadow the DOM ones**, so the two must never share one. | Built by `bun run build:client` into `public/`. |
@@ -195,7 +195,7 @@ query tool for analytics questions no fixed tool anticipates.
 
 ## 🗃 Data model
 
-**37 tables, all `STRICT`.** Conventions: snake_case columns under camelCase TS
+**48 tables, all `STRICT`.** Conventions: snake_case columns under camelCase TS
 keys, plural tables, `id` surrogate key, NOT NULL FKs with explicit `onDelete`,
 `text` + CHECK for enums, `integer` epoch-ms timestamps set by the app. This is
 the `sqlite-dev` convention set, so the schema stays Postgres-portable — D1 *is*
@@ -318,7 +318,7 @@ deliberate choice.
 5. Open pixel and click redirect write `events` and 302 onward. `recordEvent`
    also runs tag rules, which can start a `tag_added` sequence. That chain is
    intentional.
-6. Exhausted retries land in `big-mailer-dlq`, whose handler **has no send path** —
+6. Exhausted retries land in `kolea-dlq`, whose handler **has no send path** —
    it marks the message `failed` so a give-up is a row, not a vanished message.
    The row keeps the last attempt's error after the give-up, so it says why.
 
@@ -381,7 +381,7 @@ failure.
 
 ## 🤖 The MCP surface
 
-`ALL /mcp/<MCP_PATH_SECRET>` — **103 tools**, 4 resources, 4 prompts. Mounted
+`ALL /mcp/<MCP_PATH_SECRET>` — **109 tools**, 4 resources, 4 prompts. Mounted
 *ahead of* the Cloudflare Access gate in `worker.tsx`, because an agent has no
 browser to complete an Access login in. It authenticates itself instead.
 

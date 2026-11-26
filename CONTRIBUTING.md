@@ -23,13 +23,16 @@ If you are unsure whether a change fits, open an issue before writing the code.
 
 ## Getting set up
 
+You need [Bun](https://bun.sh) 1.2 or newer and Node 22 or newer.
+
 ```bash
 bun install
-bun run db:migrate     # applies migrations to the local D1 database
+bun run setup          # a local-only wrangler.jsonc, .dev.vars, and the local database
 bun run dev            # http://localhost:8787
 ```
 
-Then click **Seed demo data** on the dashboard. `EMAIL_PROVIDER=console` is the local
+The repo ships `wrangler.template.jsonc` and no `wrangler.jsonc`: yours is gitignored,
+and `bun run setup` writes a local-only one. Then click **Seed demo data** on the dashboard. `EMAIL_PROVIDER=console` is the local
 default, so nothing is capable of leaving your machine — rendered mail lands in the
 in-app Outbox instead.
 
@@ -45,6 +48,7 @@ or, one at a time:
 bun run typecheck      # Worker, browser bundle, scripts, tests — must be clean
 bun test               # the server-side suite; no server needed
 bun run test:ui        # Playwright; starts its own wrangler dev on :8788
+                       # (once, first: bunx playwright install chromium)
 bun run smoke          # deeper editor smoke test; needs `bun run dev` running
 ```
 
@@ -55,6 +59,10 @@ bun run smoke          # deeper editor smoke test; needs `bun run dev` running
 [`tests/README.md`](tests/README.md) explains the shape a spec has to take — one
 Feature per story, one assertion per `it`, and at least one Scenario driving a
 deployed entry point.
+
+**Add a line to [`CHANGELOG.md`](CHANGELOG.md)** under "Unreleased" when a change is
+something a person running Kōlea would notice: a new setting, a changed default, a
+step they must take before pulling. Write it for them, not for someone reading commits.
 
 ## Conventions
 

@@ -25,10 +25,17 @@ Domain: email marketing / transactional email.
 | `docs/ARCHITECTURE.md` | ⭐ **The agent's reference.** Invariants, system shape, code map, data model, lifecycles, MCP surface, platform limits, recipes, traps. | **Before changing any code.** Start here. | `/design` |
 | `docs/SPEC.md` | Numbered, testable behavioral requirements. The reference for *intended* behavior. | Before changing behavior. Code disagreeing with SPEC is a bug report, not a licence to edit SPEC. | `/design` |
 | `docs/INSTALL.md` | Local setup, full production deploy, integrations, troubleshooting. | Setup, deploy, or config questions. | `/document` |
+| `docs/TOUR.md` | Every screen, the vocabulary, how measurement works, the editor. | Explaining what something in the app is for. | `/document` |
+| `docs/CONFIG.md` | Every setting and command, the code layout, swapping the provider, tests. | Looking up a var, a secret or a script. | `/document` |
+| `docs/COST.md` · `docs/SITE.md` · `docs/AI.md` · `docs/MCP.md` | What it costs to run, the public site, the writing help, driving it from an agent. | The matching question comes up. | `/document` |
+| `docs/HOW-IT-WORKS.md` | The short version of the architecture: consent, how a send goes out, the design decisions. | A human wants the why without the full reference. | `/document` |
+| `docs/templates.md` | How to write a theme for the public site. | Changing or adding a theme. | `/document` |
+| `docs/PRODUCT.md` | The design brief for the reader-facing site. | Designing anything a reader sees. | `/design` |
 | `docs/PROJECT.md` | The problem, who it's for, what's explicitly out of scope. | Before proposing a feature. | `/explore` |
 | `docs/PLAN.md` | What's built, what's verified, what isn't. | Picking up work. | `/plan` |
 | `docs/STORIES.md` | Backlog. Currently thin — the build went SPEC → code. | `/plan` runs. | `/plan` |
-| `README.md` | The public front door. | Changing the pitch or the install steps. | `/document` |
+| `README.md` | The public front door: what it is, the quick start, links into `docs/`. Keep it short. | Changing the pitch or the install steps. | `/document` |
+| `docs/img/` | Screenshots. Never edited by hand: `bun run screenshots` re-shoots them from demo data. | The look of a screen changed. | `/document` |
 | `CLAUDE.md` | This file. | `/init` runs. | `/init` |
 
 **`src/db/schema.ts` is the truth about the data.** It carries dense comments explaining
@@ -48,7 +55,7 @@ shapes in there look wrong and are load-bearing.
 - Async: Cloudflare Queues (send fan-out) + Cron Triggers (scheduling, sequence ticks)
 - Mail: pluggable `EmailProvider` port; Resend is the first adapter
 - Editor: TipTap v3, vanilla — the only browser JS in the project
-- Agents: MCP server in the same Worker — 103 tools, 4 resources, 4 prompts
+- Agents: MCP server in the same Worker — 109 tools, 4 resources, 4 prompts
 - Auth: Cloudflare Access (no app-level login)
 - Package manager: Bun
 
