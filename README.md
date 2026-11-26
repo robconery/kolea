@@ -480,9 +480,16 @@ between. Checking at enqueue would mail them anyway.
 
 **Queue concurrency is pinned to 6.** One batch is one provider request, so batch
 concurrency *is* the request rate. Left unset, Cloudflare Queues autoscales to 250
-concurrent consumers, buries Resend's 10 req/s limit under 429s, burns all three
-retries, and dead-letters perfectly good mail. Six batches of 100 leaves ~600
-emails/sec of headroom while staying under the limit.
+concurrent consumers and buries Resend's 10 req/s limit under 429s. Six batches of
+100 leaves ~600 emails/sec of headroom while staying under the limit.
+
+**A retry waits, and a send is recorded in one write.** A queue retries at once unless
+told otherwise, which meets the same failure again and spends the whole retry budget in
+a second. Every retry here backs off (15s doubling to five minutes, never sooner than
+the provider's `retry-after`), and twelve retries make that at least twenty minutes.
+What the provider said about a batch is written to D1 in a single round trip; if that
+write fails, the acceptance is kept on the queue and written later rather than the mail
+being sent again.
 
 **Suppression is keyed by email address, not by subscriber.** Transactional recipients
 and bounced addresses often have no subscriber row at all, so a `subscribers.status`

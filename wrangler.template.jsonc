@@ -61,23 +61,41 @@
 				"queue": "kolea-send",
 				"max_batch_size": 100,
 				"max_batch_timeout": 5,
-				"max_retries": 3,
+				// The consumer sets its own wait before every retry (`core/backoff.ts`):
+				// 15s doubling to five minutes, never sooner than the provider asks.
+				// Twelve retries are at least twenty minutes, so a rate limit or a
+				// database blip of a few seconds cannot dead-letter good mail.
+				"max_retries": 12,
+				// For the retry the handler never got to schedule (the invocation died).
+				// Unset, that retry is immediate and the budget is gone in a second.
+				"retry_delay": 30,
 				"dead_letter_queue": "kolea-dlq",
 				// One batch = one provider request, so this IS the request rate. Unset,
-				// Queues scales to 250 consumers and buries Resend's rate limit in 429s.
+				// Queues scales to 250 consumers and buries Resend's rate limit (10
+				// requests a second, shared by the whole team) in 429s. A batch takes
+				// about a second end to end, so six consumers stay under it.
 				"max_concurrency": 6
 			},
 			{
 				// Nothing sends from here: it marks the message failed, as a row in D1.
+				// Same patience as above: past this queue a message is simply gone.
 				"queue": "kolea-dlq",
 				"max_batch_size": 100,
 				"max_batch_timeout": 30,
-				"max_retries": 1
+				"max_retries": 12,
+				"retry_delay": 30
 			}
 		]
 	},
 	// Minutely: sequence ticks and scheduled broadcasts. Daily 09:17 UTC: the Stripe
 	// reconciliation. `worker.tsx` matches the second string as DAILY_CRON.
+	// Workers Logs. Kept for a week at most, so this is for reading what happened
+	// today; anything that has to outlive the week is still a row in D1. Like a
+	// binding, it is not inherited: it is repeated under `env.production`.
+	"observability": {
+		"enabled": true,
+		"head_sampling_rate": 1
+	},
 	"triggers": {
 		"crons": [
 			"*/1 * * * *",
@@ -153,7 +171,8 @@
 						"queue": "kolea-send",
 						"max_batch_size": 100,
 						"max_batch_timeout": 5,
-						"max_retries": 3,
+						"max_retries": 12,
+						"retry_delay": 30,
 						"dead_letter_queue": "kolea-dlq",
 						"max_concurrency": 6
 					},
@@ -161,9 +180,14 @@
 						"queue": "kolea-dlq",
 						"max_batch_size": 100,
 						"max_batch_timeout": 30,
-						"max_retries": 1
+						"max_retries": 12,
+						"retry_delay": 30
 					}
 				]
+			},
+			"observability": {
+				"enabled": true,
+				"head_sampling_rate": 1
 			},
 			"triggers": {
 				"crons": [

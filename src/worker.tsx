@@ -1,4 +1,4 @@
-import { and, asc, eq, lte, or } from 'drizzle-orm'
+import { and, asc, eq, inArray, lte, or, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { downloadRoutes } from './api/downloads.ts'
 import { formsApi } from './api/forms.tsx'
@@ -6,8 +6,14 @@ import { mediaRoutes } from './api/media.ts'
 import { api } from './api/routes.ts'
 import { salesApi } from './api/sales.ts'
 import { withActivitySource } from './core/activity.ts'
+import { retryDelaySeconds } from './core/backoff.ts'
 import { sendBroadcastNow } from './core/broadcasts.ts'
-import { giveUp, noteRetry, retryDelaySeconds, sendMessages } from './core/sending.ts'
+import {
+  type AcceptedWrite,
+  recordAccepted,
+  sendMessages,
+  UnrecordedSendError,
+} from './core/sending.ts'
 import { tickSequences } from './core/sequences.ts'
 import { syncStripeCatalog } from './core/stripe-catalog.ts'
 import { syncStripe } from './core/stripe.ts'
@@ -230,51 +236,152 @@ export default {
   },
 }
 
+/** What a dead-lettered row says. Whatever the last attempt recorded follows it. */
+const GAVE_UP = 'gave up after exhausting queue retries'
+
 async function consumeBatch(batch: MessageBatch<SendJob>, env: Env) {
   const db = getDb(env)
+
+  // One roll for the whole batch, so messages that failed together wait the
+  // same time and come back as one batch rather than a hundred stragglers.
+  const jitter = Math.random()
+
+  const wait = (msg: Message<SendJob>, retryAfterSeconds?: number) =>
+    msg.retry({ delaySeconds: retryDelaySeconds(msg.attempts, { retryAfterSeconds, jitter }) })
+
+  // ⭐ Mail the provider already took, whose row is all that is missing. These
+  // jobs never send, on either queue: the row is written `sent`, and if it
+  // cannot be written yet the job waits and tries again. Even dead-lettered it
+  // is still a send that happened, so it is never marked failed.
+  const recordJobs = batch.messages.filter((m) => m.body.accepted)
+  if (recordJobs.length > 0) {
+    try {
+      await recordAccepted(
+        db,
+        recordJobs.flatMap((m) =>
+          m.body.accepted ? [{ messageId: m.body.messageId, accepted: m.body.accepted }] : [],
+        ),
+      )
+      for (const msg of recordJobs) msg.ack()
+    } catch {
+      for (const msg of recordJobs) wait(msg)
+    }
+  }
+
+  const jobs = batch.messages.filter((m) => !m.body.accepted)
+  const [firstJob, ...otherJobs] = jobs
+  if (!firstJob) return
 
   // The dead-letter queue has no send path. Its job is to make a give-up
   // visible as a row — Workers logs are gone in a week, and a message that
   // quietly stopped existing is the worst possible failure for a mailer.
   if (batch.queue.endsWith('-dlq')) {
-    for (const msg of batch.messages) {
-      await giveUp(db, msg.body.messageId)
-      msg.ack()
+    const giveUp = (msg: Message<SendJob>) =>
+      db
+        .update(messages)
+        .set({
+          status: 'failed',
+          // Keep what the last attempt wrote. "Gave up" alone says that it
+          // failed; only the provider's or the database's own words say why.
+          error: sql`${GAVE_UP} || coalesce(': ' || ${messages.error}, '')`,
+        })
+        .where(and(eq(messages.id, msg.body.messageId), eq(messages.status, 'queued')))
+    try {
+      // One round trip for the batch, all of it or none.
+      await db.batch([giveUp(firstJob), ...otherJobs.map(giveUp)])
+      for (const msg of jobs) msg.ack()
+    } catch {
+      // Nothing lies beyond this queue, so a give-up that cannot be written
+      // right now waits and is tried again. Dropped, the rows would sit
+      // `queued` forever and their broadcast would never finish.
+      for (const msg of jobs) wait(msg)
     }
-    console.error(JSON.stringify({ at: 'queue', event: 'gave_up', messages: batch.messages.length }))
     return
   }
 
-  const ids = batch.messages.map((m) => m.body.messageId)
-
+  const ids = jobs.map((m) => m.body.messageId)
   try {
     const outcomes = await sendMessages(env, db, ids)
-
-    // One log line per distinct error, not per message: a rate-limited batch is
-    // a hundred copies of the same sentence.
-    const retried = new Map<string, number>()
-    for (const msg of batch.messages) {
+    for (const msg of jobs) {
       const outcome = outcomes.get(msg.body.messageId)
-      if (outcome?.status === 'failed' && outcome.retryable) {
-        msg.retry({ delaySeconds: retryDelaySeconds(msg.attempts) })
-        retried.set(outcome.error, (retried.get(outcome.error) ?? 0) + 1)
-      } else msg.ack()
-    }
-    for (const [error, n] of retried) {
-      console.warn(JSON.stringify({ at: 'queue', event: 'retry', messages: n, error }))
+      if (outcome?.status === 'failed' && outcome.retryable) wait(msg, outcome.retryAfterSeconds)
+      else msg.ack()
     }
   } catch (err) {
-    // The consumer itself failed — the database, the provider's network, a bug —
-    // before any message had a result of its own. Say why on the rows, because
-    // the log line is gone in a week, then send the whole batch round again.
-    const error = `consumer threw: ${err instanceof Error ? err.message : String(err)}`
-    console.error(JSON.stringify({ at: 'queue', event: 'threw', messages: ids.length, error }))
-    try {
-      await noteRetry(db, ids, error)
-    } catch {
-      /* the database may be what failed; the retry still has to happen */
+    // If the provider took mail and only the write failed, sending again is the
+    // one wrong move. The acceptance goes onto the queue to be written later,
+    // and those messages are done; only what was not accepted is retried.
+    const handedOver =
+      err instanceof UnrecordedSendError
+        ? await handOverAccepted(env, err.accepted, retryDelaySeconds(1, { jitter }))
+        : new Set<number>()
+    await recordAttemptError(
+      db,
+      ids.filter((id) => !handedOver.has(id)),
+      err,
+    )
+    for (const msg of jobs) {
+      if (handedOver.has(msg.body.messageId)) msg.ack()
+      else wait(msg)
     }
-    const attempts = Math.max(1, ...batch.messages.map((m) => m.attempts))
-    batch.retryAll({ delaySeconds: retryDelaySeconds(attempts) })
+  }
+}
+
+/**
+ * Keep "the provider took these" on the queue, because the database would not
+ * take it. Each becomes a job that only writes its row (`SendJob.accepted`).
+ *
+ * Returns the ids that made it. Anything that did not is retried as an
+ * ordinary send, where the provider's own idempotency key is the last guard
+ * against a second copy.
+ */
+async function handOverAccepted(
+  env: Env,
+  accepted: AcceptedWrite[],
+  delaySeconds: number,
+): Promise<Set<number>> {
+  const done = new Set<number>()
+  if (!env.SEND_QUEUE) return done
+  try {
+    // Queues takes at most 100 messages per call.
+    for (let i = 0; i < accepted.length; i += 100) {
+      const chunk = accepted.slice(i, i + 100)
+      await env.SEND_QUEUE.sendBatch(
+        chunk.map((a) => ({ body: { messageId: a.messageId, accepted: a.accepted } })),
+        { delaySeconds },
+      )
+      for (const a of chunk) done.add(a.messageId)
+    }
+  } catch {
+    /* the queue refused too; whatever is not in `done` goes round again */
+  }
+  return done
+}
+
+/**
+ * Write down why a whole batch could not be worked, on the rows still waiting.
+ *
+ * A provider failure records itself in `sendMessages`. A thrown one (the
+ * database refusing a query, a request that never got an answer) used to leave
+ * no trace at all, and the dead-letter row that followed could not say what
+ * went wrong. Best effort on purpose: the database may be the thing that
+ * failed, and the retry matters more than the note.
+ */
+async function recordAttemptError(db: ReturnType<typeof getDb>, ids: number[], err: unknown) {
+  // The database's own words are at the bottom: Drizzle wraps a failed query,
+  // and a failed result write is wrapped once more.
+  let root = err
+  while (root instanceof Error && root.cause instanceof Error) root = root.cause
+  const error = `send attempt threw: ${root instanceof Error ? root.message : String(root)}`.slice(0, 500)
+  try {
+    // D1 caps bound parameters at 100 per query.
+    for (let i = 0; i < ids.length; i += 90) {
+      await db
+        .update(messages)
+        .set({ error })
+        .where(and(inArray(messages.id, ids.slice(i, i + 90)), eq(messages.status, 'queued')))
+    }
+  } catch {
+    /* still down; the next attempt will say so again */
   }
 }

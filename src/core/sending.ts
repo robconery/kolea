@@ -1,10 +1,10 @@
-import { and, eq, inArray, sql } from 'drizzle-orm'
+import { and, eq, inArray, ne } from 'drizzle-orm'
 import type { Db } from '../db/index.ts'
 import { broadcasts, messages, sequenceSteps, sequences, subscribers } from '../db/schema.ts'
 import { ConsoleProvider } from '../providers/console.ts'
 import { ResendProvider } from '../providers/resend.ts'
 import type { EmailProvider, OutgoingEmail } from '../providers/types.ts'
-import type { Env, SendJob } from '../types.ts'
+import type { AcceptedSend, Env, SendJob } from '../types.ts'
 import {
   type ConsentSnapshot,
   type Scope,
@@ -165,63 +165,10 @@ export async function drainQueued(env: Env, db: Db, limit = 500): Promise<number
   return pending.length
 }
 
-/**
- * How long a message waits before its next attempt, given how many it has had.
- *
- * 15s, 30s, 1m, 2m, 4m, then 5m. A retry with no wait is spent before whatever
- * caused the failure has passed — a rate limit's window, a provider's bad
- * minute — so every attempt meets the same wall and good mail is given up on.
- * Capped, because a queue delay is a promise to keep the message that long.
- */
-export function retryDelaySeconds(attempts: number): number {
-  const attempt = Math.max(1, Math.floor(attempts))
-  return Math.min(RETRY_BASE_SECONDS * 2 ** (attempt - 1), RETRY_MAX_SECONDS)
-}
-
-const RETRY_BASE_SECONDS = 15
-const RETRY_MAX_SECONDS = 300
-
-/** What a message's `error` opens with once the queue has stopped trying. */
-export const GAVE_UP = 'gave up after exhausting queue retries'
-
-/**
- * Write down why a batch is going round again, on every message still waiting.
- *
- * The provider path records its own error per message; this is for the failure
- * that never got that far, where the consumer itself threw. Without it the
- * only trace is a log line, and a message later given up on says nothing about
- * what stopped it.
- */
-export async function noteRetry(db: Db, messageIds: number[], error: string): Promise<void> {
-  const ids = [...new Set(messageIds)]
-  for (let i = 0; i < ids.length; i += 90) {
-    await db
-      .update(messages)
-      .set({ error: error.slice(0, 500) })
-      .where(and(inArray(messages.id, ids.slice(i, i + 90)), eq(messages.status, 'queued')))
-  }
-}
-
-/**
- * The end of the line for one message: `failed`, keeping the last error it met.
- *
- * Only a message still `queued` is touched, so one that went out on its final
- * attempt is never marked failed after the fact.
- */
-export async function giveUp(db: Db, messageId: number): Promise<void> {
-  await db
-    .update(messages)
-    .set({
-      status: 'failed',
-      error: sql`${GAVE_UP} || coalesce(': ' || ${messages.error}, '')`,
-    })
-    .where(and(eq(messages.id, messageId), eq(messages.status, 'queued')))
-}
-
 export type SendOutcome =
   | { status: 'sent' }
   | { status: 'suppressed'; reason: string }
-  | { status: 'failed'; error: string; retryable: boolean }
+  | { status: 'failed'; error: string; retryable: boolean; retryAfterSeconds?: number }
   | { status: 'skipped' }
 
 /**
@@ -257,11 +204,14 @@ async function loadByIds<T>(
  * Identical rules to sending them one at a time — including the deliberate
  * last-moment consent check — but every lookup is hoisted out of the per-message
  * loop and the provider receives the whole set in one request. A queue batch of
- * 100 costs roughly 100 D1 queries and a single provider call, where the
- * one-at-a-time path cost 500 queries and 100 calls.
+ * 100 costs about a dozen D1 round trips and a single provider call: the
+ * lookups, and one write for every result.
  *
  * Idempotent: anything not `queued` is skipped, so queue redelivery after a
  * crash can never double-send (SPEC 3.8).
+ *
+ * Throws `UnrecordedSendError` if the provider accepted mail and that one write
+ * failed. The caller must not simply send again.
  */
 export async function sendMessages(
   env: Env,
@@ -276,7 +226,10 @@ export async function sendMessages(
   const msgs = await loadByIds(ids, (chunk) =>
     db.select().from(messages).where(inArray(messages.id, chunk)).all(),
   )
-  const queued = msgs.filter((m) => m.status === 'queued')
+  // In id order whatever order the queue delivered them in, so the same set of
+  // messages always makes the same provider request, byte for byte. A provider
+  // that dedupes repeated requests can only do it if a repeat looks the same.
+  const queued = msgs.filter((m) => m.status === 'queued').sort((a, b) => a.id - b.id)
   if (queued.length === 0) return outcomes
 
   // ── everything this batch touches, fetched once
@@ -427,6 +380,16 @@ export async function sendMessages(
   const provider = providerFor(env, db)
   const results = await provider.sendBatch(pending.map((p) => p.email))
 
+  // ── and one write for everything it said
+  //
+  // From here until that write lands, the provider has mail the rows still call
+  // `queued`. Row by row that was a hundred round trips and a window seconds
+  // wide, and a database error halfway left the rest to be sent a second time.
+  // One round trip is as narrow as it gets, and all of it lands or none does.
+
+  const acceptedAt = Date.now()
+  const writes: ResultWrite[] = []
+
   for (const [i, { message }] of pending.entries()) {
     const result = results[i]
     if (!result) {
@@ -437,32 +400,100 @@ export async function sendMessages(
     }
 
     if (result.ok) {
-      await db
-        .update(messages)
-        .set({
-          status: 'sent',
+      writes.push({
+        messageId: message.id,
+        accepted: {
           provider: provider.name,
           providerMessageId: result.providerMessageId,
-          sentAt: new Date(),
-          error: null,
-        })
-        .where(eq(messages.id, message.id))
+          sentAt: acceptedAt,
+        },
+      })
       outcomes.set(message.id, { status: 'sent' })
       continue
     }
 
-    await db
-      .update(messages)
-      .set({ status: result.retryable ? 'queued' : 'failed', error: result.error })
-      .where(eq(messages.id, message.id))
+    writes.push({ messageId: message.id, failed: { error: result.error, retryable: result.retryable } })
     outcomes.set(message.id, {
       status: 'failed',
       error: result.error,
       retryable: result.retryable,
+      retryAfterSeconds: result.retryAfterSeconds,
     })
   }
 
+  try {
+    await recordResults(db, writes)
+  } catch (err) {
+    const accepted = writes.filter((w): w is AcceptedWrite => 'accepted' in w)
+    if (accepted.length === 0) throw err
+    throw new UnrecordedSendError(accepted, err)
+  }
+
   return outcomes
+}
+
+/** A message the provider took, and what the row needs to say so. */
+export interface AcceptedWrite {
+  messageId: number
+  accepted: AcceptedSend
+}
+
+type ResultWrite = AcceptedWrite | { messageId: number; failed: { error: string; retryable: boolean } }
+
+/**
+ * ⭐ The provider took these and the database would not hear it.
+ *
+ * Whoever catches this holds the only record that the mail went. Retrying the
+ * messages would send them again; the thing to retry is the write, with
+ * `recordAccepted`, and the queue consumer does exactly that (`worker.tsx`).
+ */
+export class UnrecordedSendError extends Error {
+  constructor(
+    readonly accepted: AcceptedWrite[],
+    cause: unknown,
+  ) {
+    super(`the provider accepted ${accepted.length} message(s) but the result could not be recorded`, {
+      cause,
+    })
+    this.name = 'UnrecordedSendError'
+  }
+}
+
+/**
+ * Write a batch's results in a single round trip.
+ *
+ * `db.batch` is one request to D1 and one transaction. Nothing here touches a
+ * row that is already `sent`, so writing the same result twice is harmless and
+ * a late write can never take a send back.
+ */
+async function recordResults(db: Db, writes: ResultWrite[]): Promise<void> {
+  const statements = writes.map((w) =>
+    db
+      .update(messages)
+      .set(
+        'accepted' in w
+          ? {
+              status: 'sent' as const,
+              provider: w.accepted.provider,
+              providerMessageId: w.accepted.providerMessageId,
+              sentAt: new Date(w.accepted.sentAt),
+              error: null,
+            }
+          : { status: w.failed.retryable ? ('queued' as const) : ('failed' as const), error: w.failed.error },
+      )
+      .where(and(eq(messages.id, w.messageId), ne(messages.status, 'sent'))),
+  )
+  const [first, ...rest] = statements
+  if (first) await db.batch([first, ...rest])
+}
+
+/**
+ * Mark messages the provider already took as `sent`, in one round trip.
+ *
+ * The second half of a send whose first write failed. It sends nothing.
+ */
+export async function recordAccepted(db: Db, accepted: AcceptedWrite[]): Promise<void> {
+  await recordResults(db, accepted)
 }
 
 /**

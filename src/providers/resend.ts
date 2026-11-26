@@ -50,6 +50,25 @@ export class ResendProvider implements EmailProvider {
     return status === 429 || status >= 500
   }
 
+  /**
+   * What a refused request said about when to come back.
+   *
+   * `retry-after` is the direct answer: whole seconds, or (HTTP allows it) a
+   * date. `ratelimit-reset` is the same fact from the other side, seconds until
+   * the window reopens, and stands in when `retry-after` is missing. Absent or
+   * unreadable, this adds nothing and the caller backs off on its own.
+   */
+  private static retryAfter(res: Response): { retryAfterSeconds?: number } {
+    if (!ResendProvider.retryable(res.status)) return {}
+    for (const name of ['retry-after', 'ratelimit-reset']) {
+      const raw = res.headers.get(name)?.trim()
+      if (!raw) continue
+      const seconds = /^\d+(\.\d+)?$/.test(raw) ? Number(raw) : (Date.parse(raw) - Date.now()) / 1000
+      if (Number.isFinite(seconds) && seconds > 0) return { retryAfterSeconds: Math.ceil(seconds) }
+    }
+    return {}
+  }
+
   async send(email: OutgoingEmail): Promise<SendResult> {
     const res = await fetch(ENDPOINT, {
       method: 'POST',
@@ -67,6 +86,7 @@ export class ResendProvider implements EmailProvider {
       ok: false,
       error: `resend ${res.status}: ${text.slice(0, 500)}`,
       retryable: ResendProvider.retryable(res.status),
+      ...ResendProvider.retryAfter(res),
     }
   }
 
@@ -81,25 +101,30 @@ export class ResendProvider implements EmailProvider {
   private async sendOneBatch(emails: OutgoingEmail[]): Promise<SendResult[]> {
     if (emails.length === 0) return []
 
+    const body = JSON.stringify(emails.map((email) => this.payload(email)))
     const res = await fetch(BATCH_ENDPOINT, {
       method: 'POST',
-      headers: this.headers(),
-      body: JSON.stringify(emails.map((email) => this.payload(email))),
+      headers: { ...this.headers(), 'Idempotency-Key': await idempotencyKey(emails, body) },
+      body,
     })
 
     if (!res.ok) {
       const text = await res.text().catch(() => res.statusText)
+      // The same request is still in flight under the same key (the queue
+      // delivered a batch twice). Not a refusal: the answer exists shortly.
+      const inFlight = res.status === 409 && text.includes('concurrent_idempotent_requests')
       // The whole call failed, so every email in it failed the same way.
       const failure: SendResult = {
         ok: false,
         error: `resend batch ${res.status}: ${text.slice(0, 500)}`,
-        retryable: ResendProvider.retryable(res.status),
+        retryable: inFlight || ResendProvider.retryable(res.status),
+        ...ResendProvider.retryAfter(res),
       }
       return emails.map(() => failure)
     }
 
-    const body = (await res.json()) as { data?: ({ id?: string; error?: string } | null)[] }
-    const data = body.data ?? []
+    const answer = (await res.json()) as { data?: ({ id?: string; error?: string } | null)[] }
+    const data = answer.data ?? []
 
     // Entries come back positionally. A short or gappy array means Resend didn't
     // accept that email — retryable, because we can't tell a dropped one from a
@@ -144,6 +169,31 @@ export class ResendProvider implements EmailProvider {
       },
     ]
   }
+}
+
+/**
+ * The key that lets Resend recognise a batch it has already taken.
+ *
+ * Resend keeps a key for 24 hours and answers a repeat of the same request with
+ * the first answer, sending nothing. So the key is a digest of exactly what is
+ * being asked: which messages (`ref`) and the request body, byte for byte.
+ *
+ * - The same messages rendered the same way make the same key, so a retry
+ *   after a send we failed to record is not a second copy.
+ * - `ref` is in it because two different messages can have identical bodies
+ *   (a receipt sent again on purpose). Those are two sends and get two keys.
+ * - The body is in it because Resend refuses a known key with a different
+ *   payload (409). A changed body is a different request and gets its own key.
+ *
+ * What it cannot cover: the same messages arriving in a differently composed
+ * batch are a different request, and Resend will send them again. One key per
+ * request is all the batch endpoint offers.
+ */
+async function idempotencyKey(emails: OutgoingEmail[], body: string): Promise<string> {
+  const subject = `${emails.map((email) => email.ref).join(',')}\n${body}`
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(subject))
+  const hex = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
+  return `batch/${hex}`
 }
 
 /** Resend signs webhooks with Svix: HMAC-SHA256 over `id.timestamp.body`. */

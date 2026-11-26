@@ -303,6 +303,16 @@ deliberate choice.
 3. Queue consumer takes a batch (≤100). Per message: **re-check suppression**,
    render, call the provider, record `provider_message_id`, set `status='sent'`.
    Per-message `ack()`/`retry()` — one bad address never re-sends the other 99.
+   Every retry waits (`core/backoff.ts`): 15s doubling to five minutes with
+   jitter, never sooner than the provider's `retry-after`. A batch that throws
+   is retried the same way, with the error written on its rows.
+   The provider's results are written in **one** `db.batch` round trip. If that
+   write fails after the provider accepted, `sendMessages` throws
+   `UnrecordedSendError` and the consumer puts the acceptance back on the queue
+   as record-only jobs (`SendJob.accepted`) instead of retrying the send. The
+   Resend adapter also sends an `Idempotency-Key` (a digest of the message ids
+   and the request body), which covers a redelivery of the same batch but not
+   the same messages regrouped.
 4. Provider webhooks POST delivery/bounce/complaint → `events` rows; hard bounces
    and complaints write `suppressions`.
 5. Open pixel and click redirect write `events` and 302 onward. `recordEvent`
@@ -310,6 +320,7 @@ deliberate choice.
    intentional.
 6. Exhausted retries land in `big-mailer-dlq`, whose handler **has no send path** —
    it marks the message `failed` so a give-up is a row, not a vanished message.
+   The row keeps the last attempt's error after the give-up, so it says why.
 
 > **Why materialize up front?** Writing all 25k `messages` rows before sending
 > makes a broadcast resumable after a crash, idempotent across queue retries, and
@@ -413,7 +424,8 @@ catching it in every tool description.
 | **D1: 1,000 queries per Worker invocation** | Everything that loops over people is paged. Broadcasts materialize across ticks with a cursor. Segment predicates hit pre-aggregated `purchase_stats` rather than summing 31k `purchases` rows. |
 | **D1: single-threaded writes** | Tracking events are written per-event and kept narrow, not aggregated on write. |
 | **Queues: batches of 100** | `sendBatch()` chunk size, and the queue consumer's page size. |
-| **Queues autoscale to 250 consumers** | Pinned to `max_concurrency: 6`. One batch = one provider request, so batch concurrency **is** the request rate. Unpinned, it buries Resend's 10 req/s limit under 429s, burns all three retries, and dead-letters perfectly good mail. Six batches of 100 ≈ 600 emails/sec of headroom. |
+| **Queues autoscale to 250 consumers** | Pinned to `max_concurrency: 6`. One batch = one provider request, so batch concurrency **is** the request rate. Unpinned, it buries Resend's 10 req/s limit (per team, not per key) under 429s. Six batches of 100 ≈ 600 emails/sec of headroom. |
+| **Queues retry immediately unless told to wait** | A retry with no delay meets the same failure, so a blip of a few seconds spends the whole budget and dead-letters good mail. The consumer sets `delaySeconds` on every retry (`core/backoff.ts`), `retry_delay: 30` covers an invocation that died before it could, and `max_retries: 12` makes the budget at least twenty minutes. |
 | **Workers logs retain 3–7 days** | Invariant 7. Anything observable is a row. |
 | **No DOM in workerd** | `render-doc.ts` is hand-written; TipTap's `generateHTML` needs happy-dom. This turned out better anyway — it emits *email* HTML (inlined styles, nested-table buttons), not web HTML. |
 | **workerd globals shadow DOM globals** | `src/client/` has its own tsconfig. `bun run typecheck` runs three passes. Sharing one tsconfig silently resolves the wrong `Response`/`Headers` overloads. |

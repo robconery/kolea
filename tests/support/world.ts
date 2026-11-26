@@ -175,31 +175,46 @@ export function createWorld(overrides: Partial<Env> = {}): World {
 /**
  * Convenience for the queue-consumer specs: one batch of message ids.
  *
- * `attempts` is how many times the queue has already delivered the batch, and
- * `delays` collects the wait each retry asked for, in seconds.
+ * `attempts` is the queue's own count for this delivery, 1 for the first.
+ * `delays` holds the wait asked for with each retry, in the order of `retried`;
+ * a retry that asked for none records 0, which is what the queue would do.
  */
 export function sendBatchOf(messageIds: number[], queue = 'big-mailer-send', attempts = 1) {
+  return queueBatchOf(
+    messageIds.map((messageId) => ({ messageId })),
+    queue,
+    attempts,
+  )
+}
+
+/** The same, for jobs that carry more than an id. */
+export function queueBatchOf(jobs: SendJob[], queue = 'big-mailer-send', attempts = 1) {
   const acked: number[] = []
   const retried: number[] = []
-  const delays: (number | undefined)[] = []
+  const delays: number[] = []
+  const retry = (messageId: number, options?: QueueRetryOptions) => {
+    retried.push(messageId)
+    delays.push(options?.delaySeconds ?? 0)
+  }
   const batch = {
     queue,
-    messages: messageIds.map((messageId) => ({
-      id: `msg-${messageId}`,
+    messages: jobs.map((body) => ({
+      id: `msg-${body.messageId}`,
       timestamp: new Date(),
-      body: { messageId } as SendJob,
+      body,
       attempts,
-      ack: () => acked.push(messageId),
-      retry: (options?: QueueRetryOptions) => {
-        retried.push(messageId)
-        delays.push(options?.delaySeconds)
-      },
+      ack: () => acked.push(body.messageId),
+      retry: (options?: QueueRetryOptions) => retry(body.messageId, options),
     })),
     retryAll: (options?: QueueRetryOptions) => {
-      retried.push(...messageIds)
-      delays.push(options?.delaySeconds)
+      for (const body of jobs) retry(body.messageId, options)
     },
-    ackAll: () => acked.push(...messageIds),
+    ackAll: () => acked.push(...jobs.map((body) => body.messageId)),
   }
   return { batch: batch as unknown as MessageBatch<SendJob>, acked, retried, delays }
+}
+
+/** The traffic counters of the test database behind an `Env`. */
+export function trafficOf(env: Env): { roundTrips: number; batches: number } {
+  return env.DB as unknown as { roundTrips: number; batches: number }
 }

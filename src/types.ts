@@ -1,5 +1,20 @@
 export interface SendJob {
   messageId: number
+  /**
+   * Present when the provider has already taken this message and only its row
+   * is behind. A job carrying it never sends: the consumer writes the row and
+   * nothing else. It exists because the queue is the one durable place to keep
+   * "this went" while the database is refusing writes.
+   */
+  accepted?: AcceptedSend
+}
+
+/** What a `sent` row records about the provider's acceptance. */
+export interface AcceptedSend {
+  provider: string
+  providerMessageId: string
+  /** Epoch milliseconds. */
+  sentAt: number
 }
 
 export interface Env {

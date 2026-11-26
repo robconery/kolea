@@ -17,7 +17,16 @@ export interface OutgoingEmail {
 
 export type SendResult =
   | { ok: true; providerMessageId: string }
-  | { ok: false; error: string; retryable: boolean }
+  | {
+      ok: false
+      error: string
+      retryable: boolean
+      /**
+       * How long the provider asked us to stay away, when it said. Only
+       * meaningful on a retryable failure; the caller waits at least this long.
+       */
+      retryAfterSeconds?: number
+    }
 
 export interface ProviderEvent {
   providerMessageId: string

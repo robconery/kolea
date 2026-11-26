@@ -26,6 +26,10 @@
  *   `boolean` → 1/0, `undefined` → NULL. A Worker would otherwise throw on values
  *   SQLite happily takes here, which would make a test more permissive than
  *   production.
+ * - **A batch is one round trip and one transaction.** `batch()` commits every
+ *   statement or none, as D1 documents, and counts as a single trip in
+ *   `roundTrips`. Recording a whole send in one write is only worth asserting
+ *   against a fake that can tell one trip from a hundred.
  *
  * ## What is not modelled
  *
@@ -82,19 +86,29 @@ function meta(overrides: Partial<Meta> = {}): Meta {
   }
 }
 
+/** What a spec may ask about the traffic to the database. */
+interface Traffic {
+  /** Trips to the database: one per statement run on its own, one per batch. */
+  roundTrips: number
+  /** How many of those trips were batches. */
+  batches: number
+}
+
 /** One prepared statement, with its bound parameters. Immutable, like D1's. */
 class FakeD1PreparedStatement {
   constructor(
     private readonly db: Database,
+    private readonly traffic: Traffic,
     private readonly sql: string,
     private readonly params: Bindable[] = [],
   ) {}
 
   bind(...values: unknown[]): FakeD1PreparedStatement {
-    return new FakeD1PreparedStatement(this.db, this.sql, values.map(coerce))
+    return new FakeD1PreparedStatement(this.db, this.traffic, this.sql, values.map(coerce))
   }
 
   async first<T = unknown>(column?: string): Promise<T | null> {
+    this.traffic.roundTrips++
     const row = this.db.query(this.sql).get(...this.params) as Record<string, unknown> | null
     if (row === null) return null
     return (column === undefined ? row : (row[column] ?? null)) as T
@@ -105,6 +119,12 @@ class FakeD1PreparedStatement {
    * which is how Drizzle's `.returning()` gets its rows back.
    */
   async all<T = unknown>(): Promise<{ success: true; results: T[]; meta: Meta }> {
+    this.traffic.roundTrips++
+    return this.allInBatch<T>()
+  }
+
+  /** `all()` without the trip: a batch is charged once, by the batch. */
+  allInBatch<T = unknown>(): { success: true; results: T[]; meta: Meta } {
     const results = this.db.query(this.sql).all(...this.params) as T[]
     return {
       success: true,
@@ -118,6 +138,7 @@ class FakeD1PreparedStatement {
 
   /** Positional rows, used by Drizzle when it maps columns itself. */
   async raw<T = unknown[]>(options?: { columnNames?: boolean }): Promise<T[]> {
+    this.traffic.roundTrips++
     const stmt = this.db.query(this.sql)
     const rows = stmt.values(...this.params) as T[]
     if (!options?.columnNames) return rows
@@ -128,6 +149,7 @@ class FakeD1PreparedStatement {
     // `run` has to cope with RETURNING too: SQLite reports zero changes for a
     // statement whose rows were never stepped through, so read it as a query and
     // fall back to the write path only when there was nothing to read.
+    this.traffic.roundTrips++
     const stmt = this.db.query(this.sql)
     const results = stmt.all(...this.params) as T[]
     const changes = this.db.query('select changes() as n').get() as { n: number }
@@ -146,20 +168,32 @@ class FakeD1PreparedStatement {
 }
 
 /**
- * The binding itself. `batch` is sequential rather than transactional, which
- * matches D1's *observable* behaviour closely enough for these specs: nothing in
- * `core/` relies on a batch rolling back.
+ * The binding itself. `batch` runs its statements in order inside one
+ * transaction and rolls all of them back if any fails, which is what D1
+ * documents for it.
  */
-export class FakeD1Database {
+export class FakeD1Database implements Traffic {
+  roundTrips = 0
+  batches = 0
+
   constructor(readonly sqlite: Database) {}
 
   prepare(sql: string): FakeD1PreparedStatement {
-    return new FakeD1PreparedStatement(this.sqlite, sql)
+    return new FakeD1PreparedStatement(this.sqlite, this, sql)
   }
 
   async batch<T = unknown>(statements: FakeD1PreparedStatement[]) {
+    this.roundTrips++
+    this.batches++
     const out: { success: true; results: T[]; meta: Meta }[] = []
-    for (const statement of statements) out.push(await statement.all<T>())
+    this.sqlite.run('BEGIN')
+    try {
+      for (const statement of statements) out.push(statement.allInBatch<T>())
+      this.sqlite.run('COMMIT')
+    } catch (err) {
+      this.sqlite.run('ROLLBACK')
+      throw err
+    }
     return out
   }
 
