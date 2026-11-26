@@ -208,6 +208,9 @@ code,kbd,pre,samp{font-family:var(--mono)}
 .head{display:flex;align-items:flex-end;gap:24px;flex-wrap:wrap;margin:0 0 32px}
 .head .sub{color:var(--muted);font-size:16px;line-height:1.5;margin-top:8px;max-width:70ch}
 .head .actions{margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+/* A button that posts sits in a form; the form must not be a box of its own,
+   or its margin lifts the button out of line with the links beside it. */
+.head .actions form,.card-h .actions form{display:contents}
 .eyebrow{display:inline-flex;align-items:center;gap:8px;margin-bottom:10px;
   font:600 13px/1 var(--display);color:var(--muted)}
 .eyebrow::before{content:'';width:8px;height:8px;border-radius:50%;background:var(--spark)}
