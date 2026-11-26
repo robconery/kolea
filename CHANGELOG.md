@@ -1,11 +1,16 @@
 # Changelog
 
 What changed for someone who runs Kōlea. The format follows
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/). There are no tagged
-releases yet: `main` is the version, and "Unreleased" is what has landed on it since
-the last entry.
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Releases are
+tagged on GitHub, and "Unreleased" is what has landed on `main` since the last one.
 
 ## [Unreleased]
+
+Nothing yet.
+
+## [0.1.0] - 2026-11-26
+
+The first tagged release.
 
 ### ⚠️ Before you pull
 

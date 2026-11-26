@@ -1,5 +1,6 @@
 {
   "name": "kolea",
+  "version": "0.1.0",
   "description": "Self-hosted email on one Cloudflare Worker: broadcasts, drip sequences, transactional mail and a blog, with consent scoped per series.",
   "license": "MIT",
   "repository": {
