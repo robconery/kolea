@@ -223,12 +223,22 @@ so it needs a second route and its own vars:
 "vars": {
   // …the block above, plus:
   "SITE_URL": "https://www.example.com",   // ⚠️ must match the second route exactly
-  "SITE_TITLE": "Your Publication",
+  "SITE_TITLE": "Your Publication",        // also the name in the mail footer
   "SITE_TAGLINE": "One line, shown under the masthead and in the feed.",
   "SITE_AUTHOR": "Your Name",
   "SITE_FORM_SLUG": "newsletter"           // a `forms.slug`; omit to hide the signup box
 }
 ```
+
+Your postal address belongs at the foot of every broadcast and sequence mail;
+bulk mail law in most places asks for one. Set it as a secret, so it stays out
+of the repo, with a newline between lines:
+
+```bash
+printf '1 Example Road\nSpringfield' | npx wrangler secret put POSTAL_ADDRESS --env production
+```
+
+Unset, the line is left out.
 
 **`SITE_URL` unset is the kill switch.** With no value, the public site does not
 exist and every request goes to the admin app. That is the default.

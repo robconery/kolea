@@ -46,8 +46,13 @@ export interface Env {
    * the site on `site.localhost:8787` with no second process.
    */
   SITE_URL?: string
-  /** Masthead and <title> suffix for the public site. */
+  /** Masthead and <title> suffix for the public site. Also the name in the mail footer: "you subscribed to <title>". */
   SITE_TITLE?: string
+  /**
+   * The sender's postal address, printed at the foot of every broadcast and
+   * sequence mail. Lines separated by newlines. Unset leaves the line out.
+   */
+  POSTAL_ADDRESS?: string
   /** One line under the masthead, and the feed + meta description. */
   SITE_TAGLINE?: string
   /** Byline and copyright name. Falls back to `FROM_NAME`. */

@@ -4,6 +4,7 @@ import { type Scope, formatScope } from './consent.ts'
 import { shareOnFacebookUrl, shareOnLinkedInUrl, shareOnXUrl } from './posts.ts'
 import { escapeHtml, mergeFields } from './text.ts'
 import { docIsEmpty, renderDocToEmailHtml, renderDocToText } from './render-doc.ts'
+import { MAIL_COLOUR as C, MAIL_COLUMN, mailType } from './mail-style.ts'
 
 marked.setOptions({ gfm: true, breaks: false })
 
@@ -19,6 +20,17 @@ export interface RenderContext {
   scope: Scope
   /** Shown in the footer so the reader knows which sequence they'd be leaving. */
   scopeLabel: string
+  /**
+   * Who the mail is from, as the reader knows them: the publication's name.
+   * The footer says "you subscribed to <name>". Without it a broadcast falls
+   * back to the scope label.
+   */
+  accountName?: string | null
+  /**
+   * The sender's postal address, printed last in the footer. Bulk mail law in
+   * most places asks for one. Lines are separated by newlines. Left out when unset.
+   */
+  postalAddress?: string | null
   subscriber: { email: string; name: string | null }
   trackOpens: boolean
   trackClicks: boolean
@@ -151,7 +163,7 @@ export function renderEmail(body: EmailBody, ctx: RenderContext): RenderedEmail 
   }
 
   const pixel = ctx.trackOpens
-    ? `<img src="${ctx.publicUrl}/t/open/${ctx.messageId}.gif" width="1" height="1" alt="" style="display:block;border:0" />`
+    ? `<img src="${ctx.publicUrl}/t/open/${ctx.messageId}.gif" width="1" height="1" alt="" style="display:block;border:0;width:1px;height:1px">`
     : ''
 
   // A second pass over the finished strings, because `{{link}}` is most useful
@@ -188,6 +200,7 @@ export function renderEmail(body: EmailBody, ctx: RenderContext): RenderedEmail 
     ctx.showFooter ? footerHtml(ctx, preferenceUrl) : '',
     pixel,
     ctx.title ? (ctx.lead ?? null) : null,
+    ctx.subject ?? ctx.title ?? '',
   )
 
   const text = [
@@ -256,17 +269,21 @@ export function mergeFieldValue(
  * click deeper, on the preference center, never here.
  */
 function footerHtml(ctx: RenderContext, preferenceUrl: string): string {
-  const line =
+  const account = (ctx.accountName ?? '').trim()
+  const reason =
     ctx.scope.kind === 'sequence'
-      ? `You're receiving this because you joined <strong>${escapeHtml(ctx.scopeLabel)}</strong>.`
-      : `You're receiving this because you subscribed to <strong>${escapeHtml(ctx.scopeLabel)}</strong>.`
+      ? `You&#39;re receiving this because you joined <strong>${escapeHtml(ctx.scopeLabel)}</strong>${account ? ` from ${escapeHtml(account)}` : ''}.`
+      : `You&#39;re receiving this because you subscribed to <strong>${escapeHtml(account || ctx.scopeLabel)}</strong>.`
 
-  const action =
-    ctx.scope.kind === 'sequence'
-      ? `<a href="${preferenceUrl}" style="color:#5b6470">Stop just this series</a>`
-      : `<a href="${preferenceUrl}" style="color:#5b6470">Unsubscribe from the newsletter</a>`
+  const url = escapeHtml(preferenceUrl)
+  const link = (words: string): string =>
+    `<a href="${url}" style="color:${C.muted};text-decoration:underline">${words}</a>`
+  const action = ctx.scope.kind === 'sequence' ? 'Stop just this series' : 'Unsubscribe from the newsletter'
 
-  return `${line}<br />${action} &nbsp;·&nbsp; <a href="${preferenceUrl}" style="color:#5b6470">Manage all your preferences</a>`
+  const address = (ctx.postalAddress ?? '').trim()
+  const postal = address ? `<p style="margin:0">${escapeHtml(address).replace(/\r?\n/g, '<br>')}</p>` : ''
+
+  return `<p style="margin:0 0 8px">${reason}</p><p style="margin:0${postal ? ' 0 8px' : ''}">${link(action)} &nbsp;&middot;&nbsp; ${link('Manage all your preferences')}</p>${postal}`
 }
 
 /**
@@ -281,16 +298,17 @@ function footerHtml(ctx: RenderContext, preferenceUrl: string): string {
  */
 function mastheadHtml(title: string, lead: string | null, postUrl: string | null, subject: string): string {
   const forwarded = postUrl
-    ? `<p style="margin:0 0 28px;font:13px/1.5 ${FOOT_FONT};color:#8b8b8b;text-align:right">Forwarded this email? <a href="${escapeHtml(`${siteOrigin(postUrl)}/subscribe`)}" style="color:#8b8b8b;text-decoration:underline">Subscribe here</a> for more</p>`
+    ? `<p style="margin:0 0 28px;${mailType(13, 1.5, { colour: 'subtle' })};text-align:right">Forwarded this email? <a href="${escapeHtml(`${siteOrigin(postUrl)}/subscribe`)}" style="color:${C.subtle};text-decoration:underline">Subscribe here</a> for more</p>`
     : ''
-  const h1 = `<h1 style="margin:0 0 14px;font:700 34px/1.2 ${FOOT_FONT};color:#1a1a1a;letter-spacing:-0.02em">${escapeHtml(title)}</h1>`
+  const h1 = `<h1 style="margin:0 0 14px;${mailType(32, 1.2, { weight: 700 })};letter-spacing:-0.02em">${escapeHtml(title)}</h1>`
   const sub = lead
-    ? `<p style="margin:0 0 26px;font:19px/1.5 ${FOOT_FONT};color:#6b6b6b">${escapeHtml(lead)}</p>`
-    : ''
-  const rule = `<div style="height:1px;line-height:1px;font-size:1px;background:#e6e6e6">&nbsp;</div>`
-  const row = postUrl ? shareRowHtml(postUrl, subject) : ''
-  return `${forwarded}${h1}${sub}${lead ? '' : '<div style="height:12px;line-height:12px;font-size:1px">&nbsp;</div>'}${rule}${row ? `${row}${rule}` : ''}<div style="height:30px;line-height:30px;font-size:1px">&nbsp;</div>`
+    ? `<p style="margin:0 0 26px;${mailType(19, 1.5, { colour: 'muted' })}">${escapeHtml(lead)}</p>`
+    : '<div style="height:12px;line-height:12px;font-size:1px">&nbsp;</div>'
+  const row = postUrl ? `${shareRowHtml(postUrl, subject)}${HAIRLINE}` : ''
+  return `${forwarded}${h1}${sub}${HAIRLINE}${row}<div style="height:32px;line-height:32px;font-size:1px">&nbsp;</div>\n`
 }
+
+const HAIRLINE = `<div style="height:1px;line-height:1px;font-size:1px;background-color:${C.hairline}">&nbsp;</div>`
 
 /**
  * The round buttons. Each is one PNG with the white disc and grey ring baked in
@@ -302,23 +320,21 @@ function mastheadHtml(title: string, lead: string | null, postUrl: string | null
 function shareRowHtml(url: string, subject: string): string {
   const base = `${siteOrigin(url)}/img/email`
   const button = (href: string, icon: string, label: string): string =>
-    `<td style="padding:0 10px 0 0"><a href="${escapeHtml(href)}" title="${label}" style="text-decoration:none"><img src="${base}/share-${icon}.png" width="40" height="40" alt="${label}" style="display:block;border:0;width:40px;height:40px" /></a></td>`
+    `<td style="padding:0 10px 0 0"><a href="${escapeHtml(href)}" title="${label}" style="text-decoration:none"><img src="${base}/share-${icon}.png" width="40" height="40" alt="${label}" style="display:block;border:0;width:40px;height:40px"></a></td>`
   const buttons = [
     button(shareOnXUrl(url, subject), 'x', 'Share on X'),
     button(shareOnLinkedInUrl(url), 'linkedin', 'Share on LinkedIn'),
     button(shareOnFacebookUrl(url), 'facebook', 'Share on Facebook'),
   ].join('')
-  const readOnline = `<a href="${escapeHtml(url)}" style="display:inline-block;padding:10px 20px;border:1.5px solid #d9d9d9;border-radius:999px;font:600 13px/18px ${FOOT_FONT};letter-spacing:0.04em;color:#3a3a3a;text-decoration:none;white-space:nowrap">READ ONLINE &#8599;</a>`
-  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td style="padding:14px 0">
-<table role="presentation" cellpadding="0" cellspacing="0" align="left"><tr>${buttons}</tr></table>
-</td><td align="right" style="padding:14px 0">${readOnline}</td></tr></table>`
+  const readOnline = `<a href="${escapeHtml(url)}" style="display:inline-block;padding:10px 18px;border:1px solid ${C.quoteRule};border-radius:999px;${mailType(13, '18px', { weight: 600, colour: 'ink' })};text-decoration:none;white-space:nowrap">Read online &#8599;</a>`
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="padding:14px 0"><table role="presentation" cellpadding="0" cellspacing="0" border="0" align="left"><tr>${buttons}</tr></table></td><td align="right" style="padding:14px 0">${readOnline}</td></tr></table>`
 }
 
 /** Share row, under the body and above the consent footer. */
 function shareHtml(url: string, subject: string): string {
-  const x = escapeHtml(shareOnXUrl(url, subject))
-  const li = escapeHtml(shareOnLinkedInUrl(url))
-  return `<p style="margin:36px 0 0;padding-top:20px;border-top:1px solid #e6e6e6;font:14px/1.6 ${FOOT_FONT};color:#6b6b6b">Worth passing on? <a href="${x}" style="color:#1a1a1a;font-weight:600">Post it on X</a> &nbsp;·&nbsp; <a href="${li}" style="color:#1a1a1a;font-weight:600">share it on LinkedIn</a> &nbsp;·&nbsp; <a href="${escapeHtml(url)}" style="color:#1a1a1a;font-weight:600">copy the link</a></p>`
+  const link = (href: string, words: string): string =>
+    `<a href="${escapeHtml(href)}" style="color:${C.ink};font-weight:600">${words}</a>`
+  return `<p style="margin:36px 0 0;padding-top:20px;border-top:1px solid ${C.hairline};${mailType(14, 1.6, { colour: 'muted' })}">Worth passing on? ${link(shareOnXUrl(url, subject), 'Post it on X')} &nbsp;&middot;&nbsp; ${link(shareOnLinkedInUrl(url), 'share it on LinkedIn')} &nbsp;&middot;&nbsp; ${link(url, 'copy the link')}</p>`
 }
 
 /** Scheme and host of the public site, taken from a post URL on it. */
@@ -326,12 +342,18 @@ function siteOrigin(postUrl: string): string {
   return new URL(postUrl).origin
 }
 
-const FOOT_FONT = `-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif`
-
 function footerText(ctx: RenderContext): string {
-  return ctx.scope.kind === 'sequence'
-    ? `You're receiving this because you joined "${ctx.scopeLabel}". You can stop just this series without leaving anything else:`
-    : `You're receiving this because you subscribed to "${ctx.scopeLabel}". Manage your preferences:`
+  const account = (ctx.accountName ?? '').trim()
+  const address = (ctx.postalAddress ?? '').trim()
+  const reason =
+    ctx.scope.kind === 'sequence'
+      ? `You're receiving this because you joined "${ctx.scopeLabel}"${account ? ` from ${account}` : ''}.`
+      : `You're receiving this because you subscribed to ${account || `"${ctx.scopeLabel}"`}.`
+  const action =
+    ctx.scope.kind === 'sequence'
+      ? 'Stop just this series, without leaving anything else, or manage all your preferences:'
+      : 'Unsubscribe from the newsletter, or manage all your preferences:'
+  return [reason, address, action].filter(Boolean).join('\n')
 }
 
 function rewriteLinks(html: string, ctx: RenderContext): string {
@@ -349,36 +371,29 @@ function rewriteLinks(html: string, ctx: RenderContext): string {
  * `preheader` is the inbox preview line: hidden in the body, read by the client.
  * Padded out with zero-width joiners so the client doesn't fill the rest of the
  * preview with the first words of the body, which it would otherwise do.
- *
- * The column is `table-layout:fixed`, so its width comes from the table and
- * never from what is inside it. Without that, anything unbreakable in the body
- * (a long line of code, a bare URL) sets the width of the whole mail.
  */
-function shell(inner: string, footer: string, pixel: string, preheader: string | null): string {
+function shell(inner: string, footer: string, pixel: string, preheader: string | null, title: string): string {
   const hidden = preheader
-    ? `<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:#ffffff;opacity:0">${escapeHtml(preheader)}${'&#847;&zwnj;&nbsp;'.repeat(60)}</div>\n`
+    ? `<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:${C.paper};opacity:0">${escapeHtml(preheader)}${'&#847;&zwnj;&nbsp;'.repeat(60)}</div>\n`
     : ''
-  return `<!doctype html>
-<html><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width,initial-scale=1" /></head>
-<body style="margin:0;padding:0;background:#ffffff">
-${hidden}<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff">
-<tr><td align="center" style="padding:28px 20px">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:620px;table-layout:fixed">
-<tr><td style="padding:0;font:17px/1.7 -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#1f1f1f;word-wrap:break-word;overflow-wrap:break-word">
+  const foot = footer
+    ? `<tr><td style="height:40px;line-height:40px;font-size:1px">&nbsp;</td></tr><tr><td style="padding:24px 0 32px;border-top:1px solid ${C.hairline};${mailType(13, 1.6, { colour: 'subtle' })}">${footer}</td></tr>`
+    : ''
+  // Outlook on Windows ignores max-width; a fixed-width table only it reads
+  // holds the column to its width there.
+  //
+  // The column is `table-layout:fixed`, so its width comes from the table and
+  // never from what is inside it. Without that, anything unbreakable in the body
+  // (a long line of code, a bare URL) sets the width of the whole mail.
+  return `<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><meta name="supported-color-schemes" content="light"><title>${escapeHtml(title)}</title></head>
+<body style="margin:0;padding:0;background-color:${C.paper}">
+${hidden}<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:${C.paper}"><tr><td align="center" style="padding:32px 20px"><!--[if mso]><table role="presentation" width="${MAIL_COLUMN}" align="center" cellpadding="0" cellspacing="0" border="0"><tr><td><![endif]--><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:${MAIL_COLUMN}px;table-layout:fixed"><tr><td style="padding:0;${mailType(17, 1.65)};word-wrap:break-word;overflow-wrap:break-word">
 ${inner}
-</td></tr>
-${
-  footer
-    ? `<tr><td style="height:36px;line-height:36px;font-size:1px">&nbsp;</td></tr>
-<tr><td style="padding:24px 0 32px;border-top:1px solid #e6e6e6;font:13px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#8b8b8b">
-${footer}
-</td></tr>`
-    : ''
-}
-</table>
-</td></tr></table>
+</td></tr>${foot}</table><!--[if mso]></td></tr></table><![endif]--></td></tr></table>
 ${pixel}
-</body></html>`
+</body></html>
+`
 }
 
 function stripMd(md: string): string {

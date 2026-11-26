@@ -341,6 +341,8 @@ export function registerBroadcasts(server: McpServer, ctx: Ctx): void {
           unsubToken: 'sample-token',
           scope: { kind: 'broadcast' },
           scopeLabel: ctx.env.FROM_NAME,
+          accountName: ctx.env.SITE_TITLE ?? null,
+          postalAddress: ctx.env.POSTAL_ADDRESS ?? null,
           subscriber: first
             ? { email: first.email, name: sampleName }
             : { email: 'ada@example.com', name: 'Ada Lovelace' },

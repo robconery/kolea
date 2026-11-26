@@ -345,6 +345,8 @@ export async function sendMessages(
       unsubToken: sub.unsubToken,
       scope: resolved.scope,
       scopeLabel: resolved.scopeLabel,
+      accountName: env.SITE_TITLE ?? null,
+      postalAddress: env.POSTAL_ADDRESS ?? null,
       subject: msg.subject,
       postUrl: resolved.postUrl,
       title: resolved.title,

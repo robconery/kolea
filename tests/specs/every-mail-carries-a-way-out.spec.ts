@@ -58,7 +58,8 @@ describe('Feature: the unsubscribe a mail offers matches the mail', () => {
     })
 
     it('carries the message id, so an unsubscribe can be charged to this mail', () => {
-      expect(mail.html).toContain('&m=')
+      // The link sits in an attribute, so its ampersand is escaped there.
+      expect(mail.html).toContain('&amp;m=')
     })
 
     it('puts the same escape hatch in the plaintext part', () => {
@@ -111,7 +112,7 @@ describe('Feature: the unsubscribe a mail offers matches the mail', () => {
     })
 
     it('spells the same thing out in plaintext', () => {
-      expect(mail.text).toContain('stop just this series without leaving anything else')
+      expect(mail.text).toContain('Stop just this series, without leaving anything else')
     })
   })
 
