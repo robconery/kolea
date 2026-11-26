@@ -1,0 +1,23 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "overused-font",
+        "value": "geist",
+        "createdAt": "2026-11-26T23:10:50.501Z",
+        "reason": "Project brand: Geist is the Kōlea sans face (--sans in src/web/layout.tsx)."
+      },
+      {
+        "rule": "cream-palette",
+        "value": "*",
+        "files": [
+          "scripts/social-preview.html"
+        ],
+        "createdAt": "2026-11-26T23:10:50.520Z",
+        "reason": "Project brand: #F9F7EF is the Kōlea canvas colour (--canvas in src/web/layout.tsx)."
+      }
+    ]
+  }
+}

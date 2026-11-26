@@ -1,5 +1,13 @@
 {
-  "name": "big-mailer",
+  "name": "kolea",
+  "description": "Self-hosted email on one Cloudflare Worker: broadcasts, drip sequences, transactional mail and a blog, with consent scoped per series.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/robconery/kolea.git"
+  },
+  "homepage": "https://github.com/robconery/kolea#readme",
+  "bugs": "https://github.com/robconery/kolea/issues",
   "type": "module",
   "private": true,
   "engines": {

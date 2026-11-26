@@ -24,6 +24,7 @@
 ## Verification
 
 - [ ] `bun run typecheck` is clean
+- [ ] `bun run test` passes
 - [ ] `bun run smoke` passes (if the editor or client bundle changed)
 - [ ] Exercised locally against seeded data with `EMAIL_PROVIDER=console`
 - [ ] `docs/SPEC.md` updated if observable behavior changed

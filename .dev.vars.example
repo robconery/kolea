@@ -1,7 +1,11 @@
 # Kōlea — local secrets.
 #
-# Copy to `.dev.vars`. Everything here is a secret — `.dev.vars` is gitignored,
-# this example file is not, so never paste a real value below.
+# `bun run setup` writes a `.dev.vars` for you, holding only MCP_PATH_SECRET.
+# Copy any other line you need from here into it, then restart `bun run dev`
+# (wrangler reads the file once, at startup).
+#
+# Everything here is a secret. `.dev.vars` is gitignored, this example file is
+# not, so never paste a real value below.
 #
 # All of it is optional. With no `.dev.vars` at all, Kōlea runs in console mode
 # with MCP and Stripe switched off, and mails nobody.
@@ -21,6 +25,10 @@ RESEND_WEBHOOK_SECRET=whsec_xxxxxxxxxxxx
 # The one address a "send preview" may ever reach. Defaults to FROM_EMAIL,
 # which is your own mailbox by definition.
 PREVIEW_EMAIL=you@example.com
+
+# Your mailing address, printed in the footer of broadcasts and sequence mail.
+# Bulk mail law in most places asks for one. Unset, the line is left out.
+# POSTAL_ADDRESS="1 Example Road, Springfield"
 
 # ── MCP ─────────────────────────────────────────────────────────────────────
 # The unguessable path segment the MCP server answers on: POST /mcp/<secret>.

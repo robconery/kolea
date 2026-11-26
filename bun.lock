@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "big-mailer",
+      "name": "kolea",
       "dependencies": {
         "@modelcontextprotocol/server": "^2.0.0",
         "@tiptap/core": "^3",

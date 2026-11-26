@@ -47,12 +47,21 @@ public/editor.css
 public/charts.js
 public/*.js.map
 
-# personal agent config — kept local, not published
+# Screenshot scratch state lives under .wrangler/ (above). The pictures
+# themselves, docs/img/*.png, are tracked.
+
+# Design-lint cache and per-machine overrides. .impeccable/config.json is shared.
+.impeccable/hook.cache.json
+.impeccable/config.local.json
+
+# Personal agent config and notes: kept local, not published
 .claude/settings.json
-.claude/skills/rob/
 .cursor/
 to-do.md
 .cf-token
+
+# Scratch folders written by an operator's own import and backfill scripts.
+# They can hold real subscriber data.
 .import-kit/
 .import-kit-content/
 .publish-archive/
