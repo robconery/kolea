@@ -15,12 +15,18 @@
  *
  *   bun scripts/seed-conversion-kinds.ts --local
  *   bun scripts/seed-conversion-kinds.ts --remote
+ *
+ * With `--local`, add `--persist-to <dir>` to write to a wrangler state
+ * directory other than the default one.
  */
 
 export {}
 
-const argv = new Set(process.argv.slice(2))
+const cli = process.argv.slice(2)
+const argv = new Set(cli)
 const remote = argv.has('--remote')
+const persistAt = cli.indexOf('--persist-to')
+const persist = persistAt === -1 || remote ? [] : ['--persist-to', cli[persistAt + 1] ?? '']
 if (!remote && !argv.has('--local')) {
   console.error('Pass --local or --remote.')
   process.exit(1)
@@ -64,7 +70,7 @@ const KINDS: Kind[] = [
 
 async function d1(command: string): Promise<unknown[]> {
   const args = ['d1', 'execute', 'DB', '--json', '--command', command]
-  args.push(remote ? '--remote' : '--local')
+  args.push(remote ? '--remote' : '--local', ...persist)
   if (remote) args.push('--env', 'production')
 
   // `bunx wrangler`, not bare `wrangler` — a stale global install fails against

@@ -62,6 +62,7 @@
     "test:all": "bun run typecheck && bun run test && bun run test:ui",
     "deploy": "bun run build:theme && bun run build:client && wrangler deploy --env production",
     "smoke": "node scripts/smoke-editor.mjs",
+    "screenshots": "bun scripts/screenshots.ts",
     "build:theme": "bun scripts/build-theme.ts"
   }
 }

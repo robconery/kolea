@@ -24,13 +24,19 @@
  *   bun scripts/seed-analytics-demo.ts          # write it
  *   bun scripts/seed-analytics-demo.ts --clean  # remove it again
  *   bun scripts/seed-analytics-demo.ts --print  # dump the SQL, write nothing
+ *
+ * Add `--persist-to <dir>` to write to a wrangler state directory other than
+ * the default one (the browser tests and `scripts/screenshots.ts` keep their own).
  */
 
 export {}
 
-const argv = new Set(process.argv.slice(2))
+const args = process.argv.slice(2)
+const argv = new Set(args)
 const clean = argv.has('--clean')
 const printOnly = argv.has('--print')
+const persistAt = args.indexOf('--persist-to')
+const persist = persistAt === -1 ? [] : ['--persist-to', args[persistAt + 1] ?? '']
 
 const DAY = 86_400_000
 const NOW = Date.now()
@@ -90,7 +96,7 @@ const LIVE: LiveSeq[] = [
     name: 'Kōlea Welcome',
     trigger: 'subscribe',
     steps: [
-      { subject: 'You made it — here is where to start', delay: 0, keep: 1 },
+      { subject: 'You made it. Here is where to start', delay: 0, keep: 1 },
       { subject: 'The one thing most people get wrong', delay: 2, keep: 0.97 },
       { subject: 'A short story about a 22-year-old codebase', delay: 3, keep: 0.93 },
       { subject: 'What I would do with your first week', delay: 4, keep: 0.9 },
@@ -105,12 +111,12 @@ const LIVE: LiveSeq[] = [
     name: 'Cohort Onboarding',
     trigger: 'manual',
     steps: [
-      { subject: 'Your seat is held — read this first', delay: 0, keep: 1 },
+      { subject: 'Your seat is held. Read this first', delay: 0, keep: 1 },
       { subject: 'The pre-work, and why it is short', delay: 2, keep: 0.95 },
       { subject: 'What week one actually looks like', delay: 3, keep: 0.79 },
       { subject: 'Two seats left at this price', delay: 4, keep: 0.62 },
       { subject: 'Last call before the doors close', delay: 3, keep: 0.58 },
-      { subject: 'Doors are closed — what happens now', delay: 2, keep: 0.55 },
+      { subject: 'Doors are closed. What happens now', delay: 2, keep: 0.55 },
     ],
     people: 180,
     openRate: 0.66,
@@ -429,7 +435,7 @@ await Bun.write(file, text)
 // `bunx wrangler`, never bare `wrangler`: a stale global install talks to a
 // different local D1 and the rows land where nothing is looking for them.
 const proc = Bun.spawn(
-  ['bunx', 'wrangler', 'd1', 'execute', 'DB', '--local', '--file', file],
+  ['bunx', 'wrangler', 'd1', 'execute', 'DB', '--local', ...persist, '--file', file],
   { stdout: 'inherit', stderr: 'inherit' },
 )
 const code = await proc.exited

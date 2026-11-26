@@ -1,0 +1,46 @@
+<!doctype html>
+<!--
+  The share cards, as a page. `bun run screenshots social-preview` shoots it twice:
+
+    docs/img/social-preview.png   1280x640   the GitHub social preview
+    public/img/social.jpeg        1200x630   the public site's default share card (?card=site)
+
+  Sizes are in vw, so one layout serves both.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Kōlea</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400..600&family=Righteous&display=swap" rel="stylesheet" />
+    <style>
+      html, body { height: 100%; margin: 0; }
+      body {
+        background: #F9F7EF;
+        color: #1A1A16;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 4.4vw;
+        font-family: 'Geist', system-ui, sans-serif;
+      }
+      img { width: 23vw; height: auto; }
+      h1 { margin: 0; font: 400 11.5vw/1 'Righteous', sans-serif; letter-spacing: -0.01em; }
+      p { margin: 1.6vw 0 0 0.5vw; font-size: 2.35vw; line-height: 1.35; color: #57533F; max-width: 40vw; }
+      .gold { display: block; width: 6vw; height: 0.55vw; margin: 2.2vw 0 0 0.5vw; border-radius: 1vw; background: #C9A659; }
+      body.site p, body.site .gold { display: none; }
+    </style>
+  </head>
+  <body>
+    <img src="../public/logo.png" alt="" />
+    <div>
+      <h1>Kōlea</h1>
+      <p>Self-hosted email on one Cloudflare Worker. The list stays yours.</p>
+      <span class="gold"></span>
+    </div>
+    <script>
+      if (new URLSearchParams(location.search).get('card') === 'site') document.body.classList.add('site')
+    </script>
+  </body>
+</html>
