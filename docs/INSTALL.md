@@ -376,7 +376,7 @@ machines, and five so an agent can be added by URL.
 | Forms | `list.example.com/f/*` | **Bypass** — everyone | Signup posts from your own site |
 | Preferences | `list.example.com/p/*` | **Bypass** — everyone | The reader's preference center |
 | Downloads | `list.example.com/d/*` | **Bypass** — everyone | Lead-magnet files; the grant token is the auth |
-| Media | `list.example.com/media/*` | **Bypass** — everyone | Images embedded in sent mail |
+| Media | `list.example.com/media/*` | **Bypass** — everyone | Images embedded in sent mail, and the icons on reader-facing pages |
 | API | `list.example.com/api/*` | **Bypass** — everyone | Bearer-key authenticated inside |
 | Webhooks | `list.example.com/webhooks/*` | **Bypass** — everyone | Signature-verified inside |
 | MCP | `list.example.com/mcp/*` | **Bypass** — everyone | Path secret + admin bearer key inside |
