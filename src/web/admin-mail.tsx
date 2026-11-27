@@ -7,7 +7,7 @@ import {
   reviseSentBroadcast,
   resumeBroadcast,
   resumeOutlook,
-  startBroadcast,
+  launchBroadcast,
 } from '../core/broadcasts.ts'
 import { fromAddressStanding } from '../core/domains.ts'
 import { listCampaigns } from '../core/campaigns.ts'
@@ -1511,8 +1511,24 @@ mail.post('/broadcasts/:id/send', async (c) => {
     )
   }
 
-  const n = await startBroadcast(c.env, db, id)
-  return c.redirect(`/broadcasts/${id}?flash=${encodeURIComponent(`Queued ${n} message(s).`)}`)
+  // Never a 500 for a send that is in fact under way: a page the database
+  // refused part-way is reported, and the minutely run carries the send on.
+  const r = await launchBroadcast(c.env, db, id)
+  if (!r.ok) {
+    return c.redirect(
+      `/broadcasts/${id}?flash=${encodeURIComponent(
+        `Could not confirm the send started (the database said: ${r.reason}). Nothing went out from this click. Reload in a minute: if it says Sending, it is under way; if it is still a draft, send it again.`,
+      )}&kind=warn`,
+    )
+  }
+  if (r.interrupted) {
+    return c.redirect(
+      `/broadcasts/${id}?flash=${encodeURIComponent(
+        `Sending. Queued ${r.materialized} message(s) before the database stopped answering (${r.interrupted}). Nothing is lost: the send carries on by itself within a minute, and nobody gets it twice. No need to press Send again.`,
+      )}&kind=warn`,
+    )
+  }
+  return c.redirect(`/broadcasts/${id}?flash=${encodeURIComponent(`Queued ${r.materialized} message(s).`)}`)
 })
 
 // ───────────────────────────────────────────────── sequences

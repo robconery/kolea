@@ -26,6 +26,7 @@ import { syncStripeCatalog } from './core/stripe-catalog.ts'
 import { syncStripe } from './core/stripe.ts'
 import { DELIVERY_PAGE, DELIVERY_PASS_OVERHEAD, QUERIES_PER_DELIVERY, deliverDueWebhooks } from './core/webhooks.ts'
 import { QueryBudget } from './core/query-budget.ts'
+import { OUTCOME_UNKNOWN } from './providers/types.ts'
 import { getDb } from './db/index.ts'
 import { broadcasts, messages } from './db/schema.ts'
 import { handleMcp, handleOAuthMcp } from './mcp/server.ts'
@@ -380,7 +381,17 @@ export default {
           }
         }
 
-        for (const b of due) await sendBroadcastNow(env, db, b.id, pages)
+        // Caught like the tick: a page the database refused must not take the
+        // domain check, the webhooks and the imports down with it. Nothing is
+        // lost by stopping, because a page moves the cursor only once its rows
+        // are on the queue, so next minute starts the same page again.
+        for (const b of due) {
+          try {
+            await sendBroadcastNow(env, db, b.id, pages)
+          } catch {
+            /* resumed from the cursor next minute */
+          }
+        }
 
         // One overdue sending-domain check, after the mail: it is a few DNS
         // lookups and never throws, so it can neither delay nor break a send.
@@ -484,7 +495,11 @@ async function consumeBatch(batch: MessageBatch<SendJob>, env: Env) {
           status: 'failed',
           // Keep what the last attempt wrote. "Gave up" alone says that it
           // failed; only the provider's or the database's own words say why.
-          error: sql`${GAVE_UP} || coalesce(': ' || ${messages.error}, '')`,
+          //
+          // ⭐ A row the provider was asked for, with no answer ever recorded,
+          // may have gone. It says so first (`outcome unknown`), so no bulk
+          // "send again" ever picks it up and the operator checks the provider.
+          error: sql`case when ${messages.providerCalledAt} is not null then ${`${OUTCOME_UNKNOWN}: the provider was asked and no answer was recorded; `} else '' end || ${GAVE_UP} || coalesce(': ' || ${messages.error}, '')`,
           claimedAt: null,
         })
         .where(and(eq(messages.id, msg.body.messageId), eq(messages.status, 'queued')))

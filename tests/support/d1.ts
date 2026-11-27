@@ -305,3 +305,24 @@ export function queryCount(d1: D1Database): number {
 export function resetQueryCount(d1: D1Database): void {
   ;(d1 as unknown as FakeD1Database).queries = 0
 }
+
+/**
+ * The same database, refusing its next `times` statements whose SQL matches
+ * `pattern` the way an overloaded D1 does. Everything else works. Wrap
+ * `env.DB` with it to make one query fail at a chosen moment.
+ */
+export function refusingQueries(db: D1Database, pattern: RegExp, times = 1): D1Database {
+  let left = times
+  return new Proxy(db, {
+    get(target, prop) {
+      if (prop === 'prepare') {
+        return (text: string) => {
+          if (pattern.test(text) && left-- > 0) throw new Error('D1 DB is overloaded. Requests queued for too long.')
+          return target.prepare(text)
+        }
+      }
+      const value = Reflect.get(target, prop, target) as unknown
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  })
+}

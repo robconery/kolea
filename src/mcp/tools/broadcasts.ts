@@ -298,7 +298,9 @@ export function registerBroadcasts(server: McpServer, ctx: Ctx): void {
         sending: true,
         expectedRecipients: r.expectedRecipients,
         materializedThisCall: r.materialized,
-        note: 'Large sends continue across cron ticks. Poll broadcast_stats.',
+        note: r.interrupted
+          ? `This call stopped part-way (the database said: ${r.interrupted}). The send is under way and continues on the next cron tick; nobody gets it twice. Do not send again. Poll broadcast_stats.`
+          : 'Large sends continue across cron ticks. Poll broadcast_stats.',
       })
     },
   )

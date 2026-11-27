@@ -1029,9 +1029,11 @@ export async function resendFailedReplies(env: Env, db: Db, formId: number): Pro
   const ids = rows.map((r) => r.messageId)
   const flipped: number[] = []
   for (let i = 0; i < ids.length; i += 90) {
+    // `failedReplies` already left out anything that may have gone, so the
+    // provider mark on these says only "asked, and refused": safe to clear.
     const done = await db
       .update(messages)
-      .set({ status: 'queued', error: null, claimedAt: null })
+      .set({ status: 'queued', error: null, claimedAt: null, providerCalledAt: null })
       .where(and(inArray(messages.id, ids.slice(i, i + 90)), eq(messages.status, 'failed')))
       .returning({ id: messages.id })
     flipped.push(...done.map((d) => d.id))

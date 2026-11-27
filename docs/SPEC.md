@@ -212,9 +212,22 @@ message remains. Otherwise a later pass closes it, once the queue has emptied.
 3.11 A `queued` message that nothing is coming for does not hold its broadcast open.
 Once every recipient has a message, one that no consumer has touched is handed to the
 queue again after ten minutes, and one a consumer did touch (it carries an error or a
-claim) after two hours. A message the provider accepted is never handed over again.
+claim) after two hours. A message the provider accepted is never handed over again, and
+neither is one the provider was asked for (4.5a): two hours after the provider was asked
+with no answer recorded, it becomes `failed` with an error starting `outcome unknown`, so
+the broadcast can close and the operator sees it (4.13).
 
 3.12 A cancelled broadcast can be resumed. Resuming mails nobody who already has it.
+
+3.13 A page of recipients that stopped after writing its messages but before handing them
+to the queue hands them over itself when it runs again. The walk moves past a page only
+once that page's messages are on the queue.
+
+3.14 Pressing Send never ends in an error page for a send that started. If the send stops
+part-way through the first pages, the operator is told it is under way and will carry on
+by itself, and the minutely cron continues it from where it stopped. If the send cannot
+be confirmed as started at all, the operator is told that, and that nothing went out from
+that press.
 
 ## 4. Sending & delivery
 
@@ -243,13 +256,28 @@ queue's retry can claim them.
 is recorded `sent`. The acceptance is carried on the queue as a job that only records and
 never sends, and a send job for the same message redelivered in between sends nothing.
 
-4.8 A claim older than ten minutes is free again.
+4.5a Immediately before the provider is called, every message in the batch is marked as
+asked (`provider_called_at`), in one conditional write that only the holder of the claim
+can match. Only marked messages are sent. The mark is cleared only when the provider's
+answer was "not taken" (a refusal worth retrying, or a batch that threw before any
+request could have left) or when the operator sends the message again (4.11, 4.13).
+
+4.8 A claim older than ten minutes is free again, unless the message is marked as asked
+(4.5a). A marked message is never claimed again by anything automatic, however old its
+claim: it is settled by its record, by a provider webhook that names it (5.14), or as
+`outcome unknown` when the queue gives up on it (4.2) or the broadcast sweep reaches it
+(3.11).
 
 ### 4b. Mail that did not go
 
 4.9 A failure where the provider may already have the mail (the connection dropped after
 the request left, or a success came back with no id) is recorded `failed` with an error
-starting `outcome unknown`. It is never retried automatically.
+starting `outcome unknown`. It is never retried automatically. A batch request that got no
+answer at all is asked again once, at once, as the identical request under the identical
+idempotency key; only if that gets no answer either is the outcome unknown. The provider
+saying the same request is still in flight, or a success that names no id for one of the
+mails, is `outcome unknown` too. A message the queue gives up on after the provider was
+asked for it records `outcome unknown` ahead of the give-up.
 
 4.10 When the provider reports that it accepted a mail and then gave up on it for good,
 other than for a dead mailbox, the message changes from `sent` to `failed` with the
@@ -300,6 +328,11 @@ message. Nothing observable exists only in logs.
 
 5.2 A provider webhook with an invalid or missing signature is rejected and recorded.
 
+5.2a A provider webhook that passed its signature check but could not be applied right now
+(the database refused) is answered 503, never 401 or 406, so the provider delivers it
+again. Applying the same webhook again later changes nothing that was already applied
+(5.3).
+
 5.3 Webhooks are idempotent: the same provider event delivered twice produces one event row.
 
 5.4 A click redirects to the original URL, recording the event. Tracking failure must
@@ -332,6 +365,17 @@ on it is not found, including the console, the API, MCP and the preference cente
 5.12 A provider webhook is verified with that provider's own signing secret. For Mailgun:
 a missing or invalid signature, or one more than 24 hours old, is rejected and nothing
 from it is applied, and with no signing key configured the webhook is refused.
+
+5.13 Finding the message a provider webhook is about never reads the whole `messages`
+table: both the provider's id and our own message id are looked up by index.
+
+5.14 Mail sent through a provider that echoes caller metadata in its webhooks (Resend's
+tags) carries its own message id. A webhook naming a message id uses that message only if
+its provider id equals the webhook's, or it has no provider id yet and the provider was
+asked for it (4.5a). Otherwise the message is found by the provider's id, as if no id had
+been named. In the second case the webhook stands in for the record that never landed:
+the message gets the provider's id, and one still `queued`, or `failed` as `outcome
+unknown`, becomes `sent`.
 
 > ⚠️ TODO: per-subscriber engagement history vs. per-campaign aggregate only. Schema
 > supports both; this decides UI scope.

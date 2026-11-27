@@ -1,5 +1,5 @@
 import { ResendDomains } from './resend-domains.ts'
-import type { EmailProvider, OutgoingEmail, ProviderEvent, SendResult } from './types.ts'
+import { type EmailProvider, OUTCOME_UNKNOWN, type OutgoingEmail, type ProviderEvent, type SendResult } from './types.ts'
 
 const ENDPOINT = 'https://api.resend.com/emails'
 const BATCH_ENDPOINT = 'https://api.resend.com/emails/batch'
@@ -16,12 +16,32 @@ const EVENT_MAP: Record<string, ProviderEvent['type']> = {
   'email.failed': 'failed',
 }
 
+/**
+ * The tag that carries our own `messages.id` on every mail. Resend echoes a
+ * mail's tags in each of its webhooks, so an event can name its row by primary
+ * key. Tag names and values may hold only ASCII letters, digits, `_` and `-`.
+ */
+export const MESSAGE_ID_TAG = 'kolea_message_id'
+
+export interface ResendOptions {
+  /**
+   * How long to wait before asking again, once, when a batch request got no
+   * answer at all. Tests pass 0.
+   */
+  retryDelayMs?: number
+}
+
 export class ResendProvider implements EmailProvider {
   readonly name = 'resend'
   readonly domains: ResendDomains
+  private readonly retryDelayMs: number
 
-  constructor(private readonly apiKey: string) {
+  constructor(
+    private readonly apiKey: string,
+    options: ResendOptions = {},
+  ) {
     this.domains = new ResendDomains(apiKey)
+    this.retryDelayMs = options.retryDelayMs ?? 1000
   }
 
   private headers(): Record<string, string> {
@@ -38,6 +58,7 @@ export class ResendProvider implements EmailProvider {
       subject: email.subject,
       html: email.html,
       text: email.text,
+      tags: [{ name: MESSAGE_ID_TAG, value: String(email.messageId) }],
       ...(email.listUnsubscribeUrl
         ? {
             headers: {
@@ -105,42 +126,82 @@ export class ResendProvider implements EmailProvider {
   private async sendOneBatch(emails: OutgoingEmail[]): Promise<SendResult[]> {
     if (emails.length === 0) return []
 
+    // Built once, outside any retry: the same bytes make the same key, and the
+    // key is what lets Resend recognise a request it has already taken.
     const body = JSON.stringify(emails.map((email) => this.payload(email)))
-    const res = await fetch(BATCH_ENDPOINT, {
+    const init: RequestInit = {
       method: 'POST',
       headers: { ...this.headers(), 'Idempotency-Key': await idempotencyKey(emails, body) },
       body,
-    })
+    }
+    const unknown = (why: string): SendResult[] =>
+      emails.map(() => ({
+        ok: false,
+        error: `${OUTCOME_UNKNOWN}: ${why}`.slice(0, 600),
+        retryable: false,
+        outcomeUnknown: true,
+      }))
+
+    // ⭐ No answer at all: the request may or may not have reached Resend. This
+    // is the one retry that is safe to make, because it is the identical request
+    // under the identical key, made now: a request Resend took gets its first
+    // answer back and nothing is sent twice. Any later retry would go through
+    // the queue, possibly in a differently composed batch, which no key covers.
+    // So if the second try gets no answer either, the outcome is unknown and
+    // the operator decides (SPEC 4.9). The adapter never throws past this point
+    // (`EmailProvider.sendBatch`).
+    let res: Response
+    try {
+      res = await fetch(BATCH_ENDPOINT, init)
+    } catch {
+      if (this.retryDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, this.retryDelayMs))
+      try {
+        res = await fetch(BATCH_ENDPOINT, init)
+      } catch (err) {
+        return unknown(`resend batch: no answer, twice (${String(err).slice(0, 200)})`)
+      }
+    }
 
     if (!res.ok) {
       const text = await res.text().catch(() => res.statusText)
-      // The same request is still in flight under the same key (the queue
-      // delivered a batch twice). Not a refusal: the answer exists shortly.
-      const inFlight = res.status === 409 && text.includes('concurrent_idempotent_requests')
+      // The same request is still being worked on under the same key. With
+      // the send claim, only our own retry above can be that request, and the
+      // first try may yet succeed: a later send of these could be a second copy.
+      if (res.status === 409 && text.includes('concurrent_idempotent_requests')) {
+        return unknown(`resend batch 409: the same request is still in flight (${text.slice(0, 200)})`)
+      }
       // The whole call failed, so every email in it failed the same way.
       const failure: SendResult = {
         ok: false,
         error: `resend batch ${res.status}: ${text.slice(0, 500)}`,
-        retryable: inFlight || ResendProvider.retryable(res.status),
+        retryable: ResendProvider.retryable(res.status),
         ...ResendProvider.retryAfter(res),
       }
       return emails.map(() => failure)
     }
 
-    const answer = (await res.json()) as { data?: ({ id?: string; error?: string } | null)[] }
-    const data = answer.data ?? []
+    let data: ({ id?: string; error?: string } | null)[]
+    try {
+      const answer = (await res.json()) as { data?: ({ id?: string; error?: string } | null)[] }
+      data = answer.data ?? []
+    } catch (err) {
+      // A success we cannot read. Resend took the batch; we do not know the ids.
+      return unknown(`resend batch ${res.status} accepted it with an unreadable answer (${String(err).slice(0, 200)})`)
+    }
 
-    // Entries come back positionally. A short or gappy array means Resend didn't
-    // accept that email — retryable, because we can't tell a dropped one from a
-    // rejected one and a broadcast would rather double-check than lose mail.
-    // `sendMessages` only re-queues, and the status guard stops a double send.
-    return emails.map((_, i) => {
+    // Entries come back positionally. An entry with an error is Resend refusing
+    // that one email, which a retry may fix. An entry with neither, in a success,
+    // is not a refusal: Resend may be sending it, so it is never sent again
+    // blind (SPEC 4.9).
+    return emails.map((_, i): SendResult => {
       const entry = data[i]
       if (entry?.id) return { ok: true, providerMessageId: entry.id }
+      if (entry?.error) return { ok: false, error: `resend batch: ${entry.error}`.slice(0, 500), retryable: true }
       return {
         ok: false,
-        error: entry?.error ?? 'resend batch: no id returned for this entry',
-        retryable: true,
+        error: `${OUTCOME_UNKNOWN}: resend batch ${res.status} returned no id for this entry`,
+        retryable: false,
+        outcomeUnknown: true,
       }
     })
   }
@@ -155,16 +216,18 @@ export class ResendProvider implements EmailProvider {
     const payload = JSON.parse(raw) as {
       type?: string
       created_at?: string
-      data?: { email_id?: string; bounce?: { type?: string }; click?: { link?: string } }
+      data?: { email_id?: string; bounce?: { type?: string }; click?: { link?: string }; tags?: unknown }
     }
 
     const type = payload.type ? EVENT_MAP[payload.type] : undefined
     const providerMessageId = payload.data?.email_id
     if (!type || !providerMessageId) return []
+    const messageId = taggedMessageId(payload.data?.tags)
 
     return [
       {
         providerMessageId,
+        ...(messageId ? { messageId } : {}),
         type,
         occurredAt: payload.created_at ? new Date(payload.created_at) : new Date(),
         hardBounce: payload.data?.bounce?.type?.toLowerCase() === 'hard',
@@ -173,6 +236,28 @@ export class ResendProvider implements EmailProvider {
       },
     ]
   }
+}
+
+/**
+ * Our message id from a webhook's `data.tags`, or undefined.
+ *
+ * Resend's webhook pages show tags as a map (`{ "kolea_message_id": "42" }`),
+ * the shape they are sent in is a list of `{ name, value }`, and older payloads
+ * have used the list. Both are read. Anything that is not a whole positive
+ * number is ignored: the tag is a lookup hint, and `core/events.ts` checks the
+ * row it names against the provider's own id before using it.
+ */
+function taggedMessageId(tags: unknown): number | undefined {
+  let raw: unknown
+  if (Array.isArray(tags)) {
+    raw = (tags as { name?: unknown; value?: unknown }[]).find((t) => t?.name === MESSAGE_ID_TAG)?.value
+  } else if (tags && typeof tags === 'object') {
+    raw = (tags as Record<string, unknown>)[MESSAGE_ID_TAG]
+  }
+  const text = typeof raw === 'number' ? String(raw) : raw
+  if (typeof text !== 'string' || !/^[1-9][0-9]{0,15}$/.test(text)) return undefined
+  const id = Number(text)
+  return Number.isSafeInteger(id) ? id : undefined
 }
 
 /**

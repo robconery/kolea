@@ -5,6 +5,14 @@ export interface OutgoingEmail {
    * was tracking without this file learning what that is.
    */
   ref: number
+  /**
+   * The `messages` row this mail is, for an adapter to put on the wire when its
+   * provider echoes caller metadata back in webhooks (Resend's tags). A webhook
+   * that names the row can then find it by primary key, and can still find a
+   * mail whose provider id was never written. An adapter that cannot carry it
+   * ignores it.
+   */
+  messageId: number
   to: string
   fromEmail: string
   fromName: string
@@ -45,6 +53,13 @@ export type SendResult =
 export interface ProviderEvent {
   providerMessageId: string
   /**
+   * Our own `messages.id`, when the provider echoed it back (see
+   * `OutgoingEmail.messageId`). A hint, never trusted alone: the row it names is
+   * only used if its provider id matches `providerMessageId` or was never
+   * recorded (`core/events.ts`).
+   */
+  messageId?: number
+  /**
    * `unsubscribe` is a provider telling us the reader asked it to stop
    * (Mailgun's own unsubscribe list). Applied as a newsletter unsubscribe only.
    */
@@ -79,6 +94,13 @@ export interface EmailProvider {
    * Providers rate-limit on API *requests*, so this is the difference between a
    * 15,000-email broadcast taking 25 minutes and taking seconds. Implementations
    * chunk internally to whatever their own per-call ceiling is.
+   *
+   * ⭐ Throwing means "nothing was handed over": the caller gives the messages
+   * back for a retry. Once a request may have reached the provider (a dropped
+   * connection, a success with an unreadable answer), an adapter must not throw.
+   * It returns `outcomeUnknown` for those messages instead, and they are never
+   * retried automatically, because a retry in a differently composed batch would
+   * be a second copy that no idempotency key can recognise.
    */
   sendBatch(emails: OutgoingEmail[]): Promise<SendResult[]>
   /** Verify + parse a provider webhook. Returns [] if it isn't ours to handle. */

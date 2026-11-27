@@ -2,7 +2,7 @@ import { asc, eq } from 'drizzle-orm'
 import type { Db } from '../db/index.ts'
 import { subscribers, tags } from '../db/schema.ts'
 import type { Env } from '../types.ts'
-import { getBroadcast, startBroadcast } from './broadcasts.ts'
+import { getBroadcast, launchBroadcast } from './broadcasts.ts'
 import { canReceiveBroadcastIn, loadConsentSnapshot } from './consent.ts'
 import { fieldKeys } from './fields.ts'
 import { authoredLead, postUrl } from './posts.ts'
@@ -240,7 +240,9 @@ export async function sendBroadcastWithToken(
   db: Db,
   id: number,
   token: string,
-): Promise<{ ok: true; expectedRecipients: number; materialized: number } | Refusal> {
+): Promise<
+  { ok: true; expectedRecipients: number; materialized: number; interrupted: string | null } | Refusal
+> {
   const b = await getBroadcast(db, id)
   if (!b) return { ok: false, reason: 'No such broadcast.', code: 'not_found' }
   if (b.status !== 'draft') {
@@ -250,8 +252,17 @@ export async function sendBroadcastWithToken(
   const check = await consumePreflight(db, 'broadcast_send', id, await broadcastDigest(b), token)
   if (!check.ok) return { ok: false, reason: `Refusing to send: ${check.reason}.`, code: 'preflight' }
 
-  const materialized = await startBroadcast(env, db, id)
-  return { ok: true, expectedRecipients: check.recipientCount, materialized }
+  // A page the database refused part-way is reported, not thrown: the send is
+  // under way and the cron finishes it, and the token is already spent, so an
+  // error here would only invite an agent to try a send that cannot be retried.
+  const launched = await launchBroadcast(env, db, id)
+  if (!launched.ok) throw new Error(`could not confirm the send started: ${launched.reason}`)
+  return {
+    ok: true,
+    expectedRecipients: check.recipientCount,
+    materialized: launched.materialized,
+    interrupted: launched.interrupted,
+  }
 }
 
 export interface SequencePreflight {

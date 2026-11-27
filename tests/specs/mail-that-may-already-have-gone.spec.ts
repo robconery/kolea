@@ -24,6 +24,7 @@ import { createWorld, type World } from '../support/world.ts'
 
 const anEmail: OutgoingEmail = {
   ref: 1,
+  messageId: 1,
   to: 'reader@example.test',
   fromEmail: 'news@mg.example.test',
   fromName: 'Writer',

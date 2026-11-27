@@ -52,7 +52,7 @@ async function aHalfSentBroadcast(w: World): Promise<number> {
   const stranded = await w.db.select().from(messages).where(eq(messages.toEmail, 'stranded@example.test')).get()
   await w.db
     .update(messages)
-    .set({ status: 'failed', error: 'broadcast cancelled', providerMessageId: null })
+    .set({ status: 'failed', error: 'broadcast cancelled', providerMessageId: null, providerCalledAt: null })
     .where(eq(messages.id, stranded!.id))
   await w.db.delete(devOutbox).where(eq(devOutbox.toEmail, 'stranded@example.test'))
   await w.db.update(broadcasts).set({ status: 'cancelled' }).where(eq(broadcasts.id, id))
