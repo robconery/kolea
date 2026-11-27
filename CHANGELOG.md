@@ -140,6 +140,13 @@ but there is a migration to apply and four things to do on your first visit.
   of blocking the ones behind it.
 - The composer's Web panel has a "Who can read it" choice.
 
+### Fixed
+
+- **Icons on reader-facing pages.** A form or the preference centre showed no icon
+  in the browser tab on a live install, because the icon files sat behind your
+  login. Those pages now take them from under `/media/`, which is already open.
+  Nothing to change in Cloudflare Access.
+
 ## [0.1.0] - 2026-11-26
 
 The first tagged release.

@@ -1315,14 +1315,23 @@ const Burger: FC = () => (
   </label>
 )
 
-/** The site icons: the kōlea on its cream tile, at the sizes browsers and phones ask for. */
-const Icons: FC = () => (
-  <>
-    <link rel="icon" href="/favicon.ico" sizes="any" />
-    <link rel="icon" type="image/png" sizes="96x96" href="/favicon.png" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  </>
-)
+/**
+ * The site icons: the kōlea on its cream tile, at the sizes browsers and phones ask for.
+ *
+ * `open` is for pages a reader sees without signing in. The plain paths sit
+ * behind the operator's login on a live install, so those pages take the same
+ * files from under `/media/`, which is open to everyone (`api/media.ts`).
+ */
+const Icons: FC<{ open?: boolean }> = ({ open }) => {
+  const at = open ? '/media/_icons' : ''
+  return (
+    <>
+      <link rel="icon" href={`${at}/favicon.ico`} sizes="any" />
+      <link rel="icon" type="image/png" sizes="96x96" href={`${at}/favicon.png`} />
+      <link rel="apple-touch-icon" href={`${at}/apple-touch-icon.png`} />
+    </>
+  )
+}
 
 /** The `<head>` every admin page shares. */
 const Head: FC<{ title: string }> = ({ title }) => (
@@ -1481,7 +1490,7 @@ export const PublicLayout: FC<PropsWithChildren<{ title: string }>> = ({ title, 
       <meta name="viewport" content="width=device-width,initial-scale=1" />
       <meta name="color-scheme" content="light" />
       <title>{title}</title>
-      <Icons />
+      <Icons open />
       <link rel="preconnect" href="https://fonts.googleapis.com" />
       <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="" />
       <link rel="stylesheet" href={FONTS} />

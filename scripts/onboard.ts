@@ -61,7 +61,7 @@ const BYPASS: [path: string, why: string][] = [
   ['f/*', 'Forms: signup posts and confirmation links'],
   ['p/*', 'Preferences: the reader’s preference center'],
   ['d/*', 'Downloads: the grant token is the auth'],
-  ['media/*', 'Media: images embedded in sent mail'],
+  ['media/*', 'Media: images embedded in sent mail, and the icons on reader pages'],
   ['api/*', 'API: bearer-key authenticated inside'],
   ['webhooks/*', 'Webhooks: signature-verified inside'],
   ['mcp/*', 'MCP: path secret + admin key inside'],
@@ -937,6 +937,13 @@ const commands: Record<string, (args: string[]) => Promise<void>> = {
         failed++
         bad('/t/ redirects to a login: the Tracking bypass is missing. Re-run access.')
       } else ok(`/t/ is public (${pixel.status})`)
+
+      // A form or the preference centre links its icons here, for readers with no session.
+      const icon = await get(`https://${host}/media/_icons/favicon.ico`)
+      if (toLogin(icon)) {
+        failed++
+        bad('/media/ redirects to a login: the Media bypass is missing. Re-run access.')
+      } else ok(`/media/ is public (${icon.status})`)
 
       // Only the discovery document: it is a GET that returns public metadata.
       const discovery = await get(`https://${host}/.well-known/oauth-authorization-server`)
