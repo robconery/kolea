@@ -1,23 +1,33 @@
-# Weekly dependency updates, one pull request per ecosystem.
+# Monthly dependency updates, one pull request per ecosystem.
+#
+# Minor and patch releases only. A major release changes behaviour, so it is
+# taken by hand, one package at a time, with the browser tests run against it.
 version: 2
 updates:
   # package.json and bun.lock
   - package-ecosystem: bun
     directory: /
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 3
+      interval: monthly
+    open-pull-requests-limit: 1
     groups:
       dependencies:
         patterns:
           - "*"
+        update-types:
+          - minor
+          - patch
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
 
   # the actions used in .github/workflows
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 3
+      interval: monthly
+    open-pull-requests-limit: 1
     groups:
       actions:
         patterns:
