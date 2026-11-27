@@ -27,7 +27,7 @@ own Cloudflare account, in a database you can query.
 
 It is for a **single operator**: a writer, a course author, a small software shop.
 It is not multi-tenant, it has no drag-and-drop builder, and it does not run its own
-mail server. It hands mail to a provider (Resend today) and keeps the rest.
+mail server. It hands mail to a provider (Resend or Mailgun) and keeps the rest.
 
 Two ideas make it different:
 
@@ -71,18 +71,22 @@ bun run dev
 3. **`bun run dev`** builds the editor and starts the server. You should see
    `Ready on http://localhost:8787`. Leave it running.
 4. Open **<http://localhost:8787>**. There is no login locally: the local config turns
-   the sign-in off. You should see an empty **Dashboard**.
+   the sign-in off. You should see an empty **Dashboard**, with a **Get set up**
+   checklist at the top. It ticks itself off as you go, and **Dismiss** puts it away.
 5. Click **Seed demo data**. You should see thirteen subscribers, two live series, a
    sent broadcast and a draft. Twelve are demo readers. The thirteenth is you: locally
    you are a made-up operator, Mara Quinn, at `mara@example.com`.
 6. Send yourself a test. In the left rail open **Mail** (the paper plane), then
    **Broadcasts**. Open **Draft: everything the editor can do** and click **Send a
    preview**. A dialog should say `Preview sent`, to `mara@example.com`. Then open
-   **Mail → Outbox**. Your mail is at the top, fully rendered. Locally all mail lands
-   in the Outbox instead of being sent.
+   **Mail → Outbox**. Your mail is at the top, fully rendered. It can take five
+   seconds to arrive: refresh if it is not there yet. Locally all mail lands in the
+   Outbox instead of being sent.
 7. See what a reader sees. Open **Audience** (the people icon), then **Subscribers**,
    pick anyone, and click **Open their preference center**. The public site, "Field
    Notes", is at <http://site.localhost:8787>.
+8. See how a list comes in. Open **Audience → Imports**. The demo has one finished
+   run to read, and the four tools you can connect are listed under it.
 
 To start over, click **Reset data** on the Dashboard. To stop, press `Ctrl+C`.
 
@@ -146,17 +150,25 @@ most of it waiting for DNS.
   form. A reader can leave one without leaving the others.
 - **Transactional mail.** `POST /api/send` with a bearer key, for receipts and
   downloads from your other apps.
+- **Import from Kit, Ghost, Mailchimp or Drip.** Paste an API key and your list
+  and past mail come over in the background. Nobody imported is mailed or enrolled,
+  and people who left stay left. See [the tour](docs/TOUR.md).
 - **Forms and lead magnets.** A form is a URL any site can post to. It can tag
-  people, start a series and hand over a file.
-- **Tags, rules and segments.** "Clicked this link, tag them", and a tag can start a
-  series. A segment's count is the count the send will produce.
+  people, start a series, hand over a file, and ask for confirmation first.
+- **Tags, rules, fields and segments.** "Clicked this link, tag them", and a tag
+  can start a series. Custom fields hold a plan or a renewal date. A segment's count
+  is the count the send will produce.
 - **A public site.** Optional. Sent broadcasts become posts, with search, RSS and
-  three built-in themes. See [`docs/SITE.md`](docs/SITE.md).
+  three built-in themes. Readers can sign in, and a post can be for members or for
+  paying members. See [`docs/SITE.md`](docs/SITE.md).
 - **Measurement.** Every send gets one score out of 100, compared with your own
   median. Sequences show where readers drop off.
 - **Revenue.** Connect Stripe and a sale is credited to the mail that earned the
-  click.
-- **Agents.** An MCP server in the same Worker, with guards on anything that sends.
+  click. Offer pages on your site can start the checkout.
+- **Agents and an API.** An MCP server in the same Worker, with guards on anything
+  that sends, a REST API at `/api/v1`, and signed webhooks out to your other apps.
+- **A team, and a record.** Owner, admin and writer roles, a log of what happened
+  in plain words, and an audit trail of every change.
 - **Writing help.** Optional, off until you add a key. See [`docs/AI.md`](docs/AI.md).
 
 ## 🖼 Screenshots
@@ -171,6 +183,8 @@ All on demo data, from `bun run screenshots`.
 | **Analytics.** Two scores, because a weak list and weak writing need opposite fixes. | **Sequence report.** How many got each mail, who opened, who clicked, and where people fell out. |
 | ![A subscriber who left one series and is still on the newsletter](docs/img/subscriber.png) | ![The reader's preference centre, one switch per series](docs/img/preferences.png) |
 | **Subscriber.** Consent by scope: this reader left one series and still gets the rest. | **Preference centre.** What a reader sees: one switch per series, then the newsletter. |
+| ![The Imports screen: two finished runs and the four tools you can connect](docs/img/imports.png) | ![Agents and keys: two switches for what an agent may do, and the API keys](docs/img/agents.png) |
+| **Imports.** A list and its past mail, brought over from Kit, Ghost, Mailchimp or Drip. Nothing imported can send. | **Agents & keys.** What an agent may do is two switches, both off until you turn them on. |
 
 ![The public site: a masthead, a signup box and the latest posts](docs/img/site.png)
 
@@ -221,10 +235,11 @@ claude mcp add --transport http --scope local \
 ```
 
 Locally, `MCP_PATH_SECRET` is in the `.dev.vars` file that `bun run setup` wrote, and
-**Seed demo data** prints an admin key once. An agent can read and draft freely.
-Sending needs a one-time preflight token that any edit cancels, and in production
-agents cannot send at all until you set `MCP_ALLOW_SEND` to `"true"`. Every call is
-recorded. See [`docs/MCP.md`](docs/MCP.md).
+**Seed demo data** prints an admin key once. You can also add it by URL and approve
+it in the browser, with no key to copy. An agent can read and draft freely. Sending
+needs a one-time preflight token that any edit cancels, and agents cannot send at
+all until you turn that on at **System → Agents & keys**. Every call is recorded.
+See [`docs/MCP.md`](docs/MCP.md).
 
 ## 📚 Docs
 

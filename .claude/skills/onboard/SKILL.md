@@ -202,10 +202,14 @@ the login protection; about a minute"), then run in order:
 1. `bun scripts/onboard.ts provision`: D1, R2 ×2, Queues ×2. Idempotent. It
    reuses anything that already exists by name.
 2. `bun scripts/onboard.ts access`: one **Allow** app on `ADMIN_HOST` for
-   `OPERATOR_EMAIL`, plus the eight **Bypass** apps (`/t/*`, `/f/*`, `/p/*`,
-   `/d/*`, `/media/*`, `/api/*`, `/webhooks/*`, `/mcp/*`). Explain in one
-   sentence why: *tracking pixels, unsubscribe pages and signup forms have to
-   open for everyone, and each of those paths does its own checking.*
+   `OPERATOR_EMAIL`, plus thirteen **Bypass** apps: eight for readers and
+   machines (`/t/*`, `/f/*`, `/p/*`, `/d/*`, `/media/*`, `/api/*`,
+   `/webhooks/*`, `/mcp/*`) and five so an agent can be added by URL (`/mcp`,
+   `/.well-known/*`, `/oauth/register`, `/oauth/token`, `/oauth/revoke`).
+   Explain in one sentence why: *tracking pixels, unsubscribe pages and signup
+   forms have to open for everyone, and each of those paths does its own
+   checking.* If one of the five agent ones fails, say so and carry on: nothing a
+   reader touches depends on it.
 3. `bun scripts/onboard.ts render`: writes `wrangler.jsonc` from
    `wrangler.template.jsonc`. Mention that the file is theirs: it is
    gitignored, so a `git pull` from upstream never touches it. When the template

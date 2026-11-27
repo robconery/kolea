@@ -34,11 +34,11 @@ and an unsubscribed customer still needs their download.
 | **D1** (SQLite) | `kolea` | Every subscriber, message, event, sale and audit row. Anything worth knowing later is a row here, because Worker logs vanish within a week. |
 | **R2** | `kolea-media` | Images you upload. Served at `/media/…` so they work inside mail. |
 | **R2** | `kolea-downloads` | Lead-magnet files. Nothing serves this bucket directly; files leave only through `/d/<token>`: a per-person link, or the form's direct link. |
-| **Queue** | `kolea-send` | Fan-out for sending. One batch of 100 is one request to Resend. |
+| **Queue** | `kolea-send` | Fan-out for sending. One batch of 100 is one request to the mail provider. |
 | **Queue** | `kolea-dlq` | Where a message goes when its retries run out. Nothing sends from here; it records the failure as a row. |
-| **Cron** | every minute | Sequence steps that are due, scheduled broadcasts, and big sends resuming where they left off. |
+| **Cron** | every minute | Sequence steps that are due, scheduled broadcasts, and big sends resuming where they left off. After the mail: sending-domain checks, webhook deliveries, one page of a running import, and Ghostwriter takes. |
 | **Cron** | 09:17 UTC daily | Stripe reconciliation: books any sale the webhook missed. |
-| **Access** | 1 Allow + 8 Bypass apps | The login. Only you get into the admin; readers get into the paths they need. |
+| **Access** | 1 Allow + 13 Bypass apps | The login. Only you get into the admin; readers get into the paths they need. |
 | **Secrets** | `RESEND_API_KEY` and friends | Keys the Worker reads. Never in `wrangler.jsonc`, never in git. |
 
 Those are the names `/onboard` and the template give a new install. They're internal:
@@ -58,19 +58,27 @@ anything.
  materialize                  one `messages` row per recipient, written before anything
      │                        is sent. Resumable across cron ticks for big lists
      ▼
- SEND_QUEUE                   batches of 100, at most 6 at once (Resend's rate limit)
+ SEND_QUEUE                   batches of 100, at most 6 at once (the provider's rate limit)
      │
+     ▼
+ claim                        each row is taken in one conditional write, so a job
+     │                        delivered twice cannot be sent twice
      ▼
  consent re-check             right before the provider call, not at enqueue. Someone
      │                        can opt out in the minutes between
      ▼
- Resend                       one request per batch
+ Resend or Mailgun            one request per batch, then one write for every result
      │
      ▼
- /webhooks/resend             delivered, bounced, complained → events, and a hard
+ /webhooks/<provider>         delivered, bounced, complained → events, and a hard
                               bounce or complaint writes a suppression
  /t/open, /t/click            opens and clicks → events → tag rules → maybe a sequence
 ```
+
+The audience is fixed when the send starts: someone who joins while a large send is
+still going out does not get it. A batch that fails gives its rows back and waits
+before it tries again. If the provider took the mail and the database would not record
+it, only the record is retried, and the rows stay claimed so nothing sends them twice.
 
 A sequence step takes the same road from the minutely cron instead of the Send button.
 Transactional mail from `/api/send` joins at the queue: one `messages` row, answered

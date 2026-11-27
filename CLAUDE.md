@@ -6,7 +6,7 @@ Worker, replacing a paid ESP so the list and engagement data stay owned.
 Named for the Pacific golden plover: three thousand miles of open ocean, nonstop, and it
 lands in the same yard every year. Delivery, and the same address, every time.
 
-Single operator. Not multi-tenant, no visual builder, no self-run SMTP. See `docs/PROJECT.md`.
+One install, one operator or one team. Not multi-tenant, no visual builder, no self-run SMTP. See `docs/PROJECT.md`.
 
 Domain: email marketing / transactional email.
 
@@ -53,10 +53,13 @@ shapes in there look wrong and are load-bearing.
 - Web: Hono + JSX, server-rendered. **Not Next.js.**
 - Data: Cloudflare D1 (SQLite) via Drizzle — follow the `sqlite-dev` skill's conventions
 - Async: Cloudflare Queues (send fan-out) + Cron Triggers (scheduling, sequence ticks)
-- Mail: pluggable `EmailProvider` port; Resend is the first adapter
+- Mail: pluggable `EmailProvider` port; Resend and Mailgun adapters
 - Editor: TipTap v3, vanilla — the only browser JS in the project
-- Agents: MCP server in the same Worker — 109 tools, 4 resources, 4 prompts
-- Auth: Cloudflare Access (no app-level login)
+- Agents: MCP server in the same Worker — 144 tools, 4 resources, 4 prompts, reached
+  with a path secret and admin key, or by URL with OAuth
+- Auth: Cloudflare Access for the console (no app-level login), with team roles
+  (`owner` / `admin` / `writer`) on the Access identity. Readers sign in on the
+  public site by emailed link
 - Package manager: Bun
 
 ## 🧭 Layering

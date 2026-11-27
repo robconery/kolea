@@ -2,6 +2,7 @@ import { count, eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { leaveSequence } from '../core/consent.ts'
 import { createApiKey } from '../core/api-keys.ts'
+import { createField, setFieldValues } from '../core/fields.ts'
 import { slugify } from '../core/ids.ts'
 import { enroll, tickSequences } from '../core/sequences.ts'
 import { sendBroadcastNow, startBroadcast } from '../core/broadcasts.ts'
@@ -12,6 +13,7 @@ import { getDb } from '../db/index.ts'
 import {
   broadcasts,
   type DocNode,
+  importRuns,
   sequenceEnrollments,
   sequenceSteps,
   sequences,
@@ -306,6 +308,45 @@ Ada`,
     createdAt: new Date(),
   })
 
+  // Two custom fields, with values on a few people, so the Fields screen, a
+  // subscriber's page and the segment builder all have something to show.
+  // `{{plan|free}}` in a mail now resolves per reader. Set with `setFieldValues`,
+  // which is not a signup and can never start a sequence.
+  await createField(db, { label: 'Plan', type: 'text' })
+  await createField(db, { label: 'Seats', type: 'number' })
+  const FIELD_VALUES: [plan: string, seats: number][] = [
+    ['team', 5],
+    ['solo', 1],
+    ['team', 12],
+    ['solo', 1],
+  ]
+  for (const [i, [plan, seats]] of FIELD_VALUES.entries()) {
+    if (ids[i]) await setFieldValues(db, ids[i], { plan, seats })
+  }
+
+  // What a finished import leaves behind, so the Imports screen has a run to
+  // read. A record only: it is `completed`, holds no key, and the minutely tick
+  // looks at nothing but queued and running runs. The numbers are the demo's own.
+  const imported = new Date(Date.now() - 3 * 86_400_000)
+  await db.insert(importRuns).values({
+    source: 'kit',
+    status: 'completed',
+    phasesDone: 5,
+    phasesTotal: 5,
+    pages: 6,
+    created: ids.length + 3,
+    skipped: 2,
+    detail: { tags: 2, subscribers: ids.length, taggings: 11, broadcasts: 1, sequences: 2, sequence_steps: 5 },
+    notes: [
+      { key: 'drafts_left_behind', count: 2, message: 'drafts or scheduled mails in Kit never went out and were left behind' },
+      { key: 'delays_rounded', count: 1, message: 'sequence delays were not whole days and were rounded up' },
+    ],
+    createdAt: imported,
+    startedAt: imported,
+    finishedAt: new Date(imported.getTime() + 6 * 60_000),
+    updatedAt: new Date(imported.getTime() + 6 * 60_000),
+  })
+
   // An API key for the transactional endpoint, and an admin key for MCP. The
   // two are separate on purpose: a key that posts password resets has no
   // business rewriting sequences.
@@ -385,7 +426,7 @@ seed.post('/dev/reset', async (c) => {
   if (c.env.DEV_AUTH_BYPASS !== 'true') return c.text('Reset is local-only.', 403)
   const db = getDb(c.env)
   // Order matters only where FKs are enforced; deleting parents last is safe either way.
-  for (const table of ['events', 'dev_outbox', 'messages', 'sequence_optouts', 'sequence_enrollments', 'sequence_steps', 'sequences', 'tag_rules', 'broadcasts', 'segments', 'subscriber_tags', 'subscribers', 'tags', 'suppressions', 'api_keys']) {
+  for (const table of ['events', 'dev_outbox', 'messages', 'sequence_optouts', 'sequence_enrollments', 'sequence_steps', 'sequences', 'tag_rules', 'broadcasts', 'segments', 'subscriber_tags', 'subscribers', 'tags', 'suppressions', 'api_keys', 'custom_fields', 'import_runs']) {
     await c.env.DB.prepare(`delete from ${table}`).run()
   }
   // Reset autoincrement so a reseed produces the same ids every time — otherwise

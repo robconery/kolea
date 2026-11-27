@@ -66,12 +66,90 @@
 - [ ] Commerce, Stripe and revenue attribution have no specs yet — their own epic
 - [ ] Non-functional targets (SPEC 9.1, 9.5) need a load harness, not a spec file
 
+## The November feature set (2026-11-21)
+
+Built and specced, **not yet run in production**. Everything below came in with
+migration `0030_amusing_quasar.sql`, which only creates tables and adds columns and
+indexes. Nothing here needs a new binding, queue or cron schedule. The behaviour is
+covered by spec files in `tests/specs/`: 36 new ones, 71 in all. The requirements are
+the ones appended to SPEC sections 1 to 9, and sections 10 to 16. The onboarding
+script's Access changes have no spec.
+
+### Mail and sending
+
+- [x] Double opt-in per form: a throttled confirmation mail, a link that changes nothing
+      until its button is pressed, tags and sequences only after the click
+- [x] Mailgun adapter beside Resend (`EMAIL_PROVIDER=mailgun`) and its signed webhook
+- [x] Sending domains screen: the DNS records, checks on the cron, one-click Cloudflare DNS
+- [x] Custom tracking host (`TRACKING_HOST`), append-only
+- [x] Machine opens flagged and kept out of reader counts and tag rules
+- [x] A send window per sequence, in the install's time zone
+- [x] Stored transactional templates: `POST /api/send` with `template` + `variables`
+- [x] Undelivered screen and "send again", with "check before sending" for mail that
+      may already have gone
+- [x] ⭐ The send claim (`messages.claimed_at`): two consumers holding one row send it once
+- [x] The stranded sweep: untouched queued rows after 10 minutes, touched ones after 2 hours
+- [x] A broadcast's audience fixed when the send starts (`broadcasts.audience_upper_id`)
+- [x] One D1 query budget shared by the minutely cron's jobs
+
+### Audience
+
+- [x] Importers for Kit, Ghost, Mailchimp and Drip: the list and past mail, one page per
+      minutely tick, resumable. Imported people are never enrolled or mailed, past mail
+      lands `sent` and unpublished, sequences land off
+- [x] Typed custom fields, segment conditions on them, `{{key|fallback}}` merge tags
+- [x] List clean-up: pick groups, download a backup, confirm, delete in pages
+
+### Site, members and money
+
+- [x] Reader sign-in on the site by emailed link, and `members` / `premium` posts
+- [x] Premium as a Stripe subscription, granted only by the signed webhook
+- [x] Offer pages that start a Stripe Checkout, with the converting post recorded
+- [x] Testimonials: `{{testimonial_link}}`, a public form, a wall
+- [x] Topics and the media library as screens of their own
+- [x] Past sales imported from a CSV
+
+### Writing help
+
+- [x] Ghostwriter with a tuned voice, and sequence takes reviewed mail by mail
+- [x] Reader council reviews of a draft
+- [x] Launch Studio: seven steps to a campaign and a paused sequence
+- [x] Settings → AI: which key pays (the install's, or your own OpenRouter, Anthropic or
+      OpenAI key) and which model each helper uses
+
+### API, agents and operating it
+
+- [x] REST API at `/api/v1` with an OpenAPI document and `read` / `send` / `admin` keys
+- [x] Signed outbound webhooks, retried on the cron, with a delivery log
+- [x] MCP by URL with OAuth 2.1 and PKCE at `/mcp`, read-only by default, and a
+      Connected apps screen
+- [x] API keys and the two agent switches on System → Agents & keys, both off by default.
+      `MCP_ALLOW_SEND` no longer turns sending on: `"false"` only forces it off
+- [x] MCP server at 144 tools, 4 resources, 4 prompts
+- [x] Logs page (and `log_search` / `log_types`), and an audit trail of console and key writes
+- [x] Team roles `owner` / `admin` / `writer` on the Cloudflare Access identity
+- [x] First-run checklist
+- [x] `scripts/onboard.ts access` creates 13 Access Bypass apps instead of 8, adding
+      `/mcp`, `/.well-known/*`, `/oauth/register`, `/oauth/token`, `/oauth/revoke`
+
+### Left out of this feature set, on purpose or for later
+
+- [ ] Importers do not bring drafts or scheduled mail, Ghost post tags as topics, or
+      Mailchimp and Drip automations. Kit sequences arrive without their triggers
+- [ ] No Stripe Billing Portal for Premium: a member cannot manage or cancel the
+      subscription from the site
+- [ ] No invitation email for team members. Inviting writes the role; the person still
+      has to be let through the Access policy and told to come
+- [ ] Mail rendered while `EMAIL_PROVIDER=console` cannot be released to the wire later
+- [ ] No `field_*` MCP tools: custom field definitions are managed in the console only
+- [ ] Launch Studio, importers and the team have no MCP tools. The two agent switches
+      have none on purpose
+- [ ] REST v1 leaves out CSV import, sequence step editing, campaigns, webhooks and
+      suppressions
+- [ ] None of it has been run against production traffic or a production-sized list
+
 ## Not done
 
-- [ ] Media library UI (the `/api/media` list endpoint exists; nothing consumes it)
 - [ ] Image alt-text / link editing from the bubble menu
 - [ ] Orphan-media sweep (uploads removed from a draft stay in R2)
-- [ ] API key management UI (keys exist in the DB; only the seed mints one)
 - [ ] Scheduled-broadcast UI (the model, the cron path and MCP support it; the admin has no date picker)
-- [ ] Double opt-in — still an open question in SPEC §1
-- [ ] ESP migration path — depends on which ESP, still open in PROJECT.md

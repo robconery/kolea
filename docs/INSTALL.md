@@ -101,7 +101,9 @@ and you'll watch step 2 skip the people who left that one series.
 ### 🔑 Local secrets
 
 You don't need any to look around. `bun run setup` wrote a `.dev.vars` holding
-one generated value, `MCP_PATH_SECRET`, which switches the local MCP endpoint on.
+three generated values: `MCP_PATH_SECRET`, which switches the local MCP endpoint
+on, `MEMBER_SESSION_SECRET`, which lets a reader sign in on the local site, and
+`AI_KEY_ENCRYPTION_SECRET`, which lets **System → AI** store a model key.
 
 To try an integration locally (real sending through Resend, Stripe, Unsplash,
 the AI helpers), copy the lines you need from
@@ -303,7 +305,19 @@ in spam is worthless no matter how well it's built.
 > reputation degrades silently — the slow way to lose deliverability for your
 > entire domain.
 
-**Using something other than Resend?** Write one file in `src/providers/`
+**Sending through Mailgun?** Set `EMAIL_PROVIDER` to `mailgun`, add
+`MAILGUN_DOMAIN` (and `MAILGUN_REGION` if the account is in the EU) to
+`env.production.vars`, push the `MAILGUN_API_KEY` and
+`MAILGUN_WEBHOOK_SIGNING_KEY` secrets, and point Mailgun's webhooks at
+`https://list.example.com/webhooks/mailgun`. The same warning applies: without
+the webhook, bounces never suppress.
+
+**Check the records from inside the app.** Once it is deployed, **System →
+Sending domains** lists the DNS records your sending domain needs and says which
+are in place. With the optional `CLOUDFLARE_DNS_API_TOKEN` secret (Zone:Read and
+DNS:Edit) it can add them to Cloudflare for you.
+
+**Using something else?** Write one file in `src/providers/`
 implementing the `EmailProvider` port — `name`, `send`, `sendBatch` and
 `parseWebhook` — add a branch to `providerFor()` in `src/core/sending.ts`, and
 point `EMAIL_PROVIDER` at it. Nothing in `core/` names a vendor; that's the whole
@@ -321,7 +335,16 @@ bunx wrangler secret put RESEND_WEBHOOK_SECRET --env production
 # MCP path secret — generate with: openssl rand -hex 24
 bunx wrangler secret put MCP_PATH_SECRET       --env production
 
-# Only if you're using Stripe attribution
+# Only if readers sign in on the public site (members-only and Premium posts).
+# Any long random string: openssl rand -hex 32. Changing it signs everyone out.
+bunx wrangler secret put MEMBER_SESSION_SECRET --env production
+
+# Only if you want to save your own model key on System → AI.
+# openssl rand -hex 32. Changing it makes saved keys unreadable until pasted again.
+bunx wrangler secret put AI_KEY_ENCRYPTION_SECRET --env production
+
+# Only if you're using Stripe attribution. Offer pages and Premium also need the
+# key to be allowed to create Checkout Sessions.
 bunx wrangler secret put STRIPE_SECRET_KEY     --env production
 bunx wrangler secret put STRIPE_WEBHOOK_SECRET --env production
 
@@ -343,7 +366,8 @@ against the team's live JWKS (cached per isolate, forced refetch on an unknown
 key id), `alg` pinned to `RS256`, plus audience, issuer, `exp` and `nbf`.
 Presence of the header proves nothing and is never treated as proof.
 
-**Create one Allow app**, then **eight Bypass apps**:
+**Create one Allow app**, then **thirteen Bypass apps**: eight for readers and
+machines, and five so an agent can be added by URL.
 
 | App | Path | Policy | Why |
 |---|---|---|---|
@@ -356,6 +380,16 @@ Presence of the header proves nothing and is never treated as proof.
 | API | `list.example.com/api/*` | **Bypass** — everyone | Bearer-key authenticated inside |
 | Webhooks | `list.example.com/webhooks/*` | **Bypass** — everyone | Signature-verified inside |
 | MCP | `list.example.com/mcp/*` | **Bypass** — everyone | Path secret + admin bearer key inside |
+| MCP by URL | `list.example.com/mcp` | **Bypass** — everyone | An access token inside. `/mcp/*` does not cover it |
+| Agent sign-in, discovery | `list.example.com/.well-known/*` | **Bypass** — everyone | Public metadata an agent reads first. No data |
+| Agent sign-in, registration | `list.example.com/oauth/register` | **Bypass** — everyone | An agent introduces itself. Grants nothing |
+| Agent sign-in, token | `list.example.com/oauth/token` | **Bypass** — everyone | A one-time code is the auth |
+| Agent sign-in, revocation | `list.example.com/oauth/revoke` | **Bypass** — everyone | The token is the auth |
+
+> **Never bypass `/oauth/authorize`,** and never use `/oauth/*`. That page is where
+> you approve an agent, and your Access login in front of it is the whole check.
+> A wildcard path does not cover the path above it, which is why `/mcp` is its own
+> row. Skip the last five rows if you will only ever connect agents with a key.
 
 > ### ⚠️ This is the step people get wrong
 >
@@ -454,14 +488,21 @@ JavaScript, no embed script, no hosted landing page:
 
 ### Driving Kōlea from Claude Code (MCP)
 
-The Worker serves an MCP server at `POST /mcp/<secret>` — **96 tools**, 4
-resources and 4 prompts covering the whole mailer.
+The Worker serves an MCP server covering the whole mailer. [`MCP.md`](MCP.md)
+lists what is in it. There are two ways to connect.
+
+**With a key.** Create an `admin` key on **System → Agents & keys**, then:
 
 ```bash
 claude mcp add --transport http --scope local \
   --header "Authorization: Bearer $KOLEA_ADMIN_KEY" \
   kolea "https://list.example.com/mcp/$MCP_PATH_SECRET"
 ```
+
+**By URL.** Add `https://list.example.com/mcp` to your agent and approve it in the
+browser, behind your own login. There is no key to copy. It needs the five agent
+sign-in Bypass apps from [Step 8](#step-8--lock-the-console-behind-cloudflare-access),
+and you can see and disconnect what you approved on **System → Connected apps**.
 
 Three gates, cheapest first: an unguessable path secret compared in constant
 time (a miss returns `404`, not `403` — a URL nobody guessed should look like
@@ -503,25 +544,15 @@ revenue to.
 
 ## 🔑 Minting an API key in production
 
-There is deliberately no "create key" button in the admin console — keys are
-minted by the seed route (local only) or by the `apikey_create` MCP tool. For
-the very first key, which is what you need to *reach* MCP, insert it directly:
-
-```bash
-TOKEN=$(openssl rand -hex 18)
-HASH=$(printf '%s' "$TOKEN" | shasum -a 256 | cut -d' ' -f1)
-
-bunx wrangler d1 execute DB --remote --env production --command \
-  "insert into api_keys (name, token_hash, scope, created_at)
-   values ('MCP admin', '$HASH', 'admin', $(date +%s)000)"
-
-echo "Your key: $TOKEN"     # stored nowhere — save it now
-```
+Open **System → Agents & keys**, name the key, pick its scope and create it. The
+token is shown once: save it then. `bun scripts/onboard.ts seed` also mints the
+first admin key during onboarding.
 
 Only the SHA-256 hash is stored, so a leaked database still cannot be used to
-post as you. Scope `send` reaches the transactional endpoint and nothing else;
-`admin` also reaches MCP, which can rewrite the whole mailer — so `send` is the
-default. After this, use `apikey_create` for everything else.
+post as you. There are three scopes. `send` reaches the transactional endpoint
+and nothing else. `read` reaches the REST API's GETs. `admin` reaches all of the
+REST API and MCP, which can rewrite the whole mailer, so pick the narrowest one
+that does the job.
 
 Revoke, don't delete: `mcp_calls.api_key_id` points at the row, and a revoked
 key you can still see in a list is how you answer "did I turn that off?" months
@@ -530,6 +561,14 @@ later.
 ---
 
 ## 📥 Migrating a list in
+
+**From Kit, Ghost, Mailchimp or Drip, use the importer.** Open **Audience →
+Imports**, paste the other tool's API key and start. It brings the list and the
+mail that was sent, a page a minute, and follows every rule below for you. See
+[the tour](TOUR.md) for what it brings and what it leaves behind. From anything
+else, **Audience → Subscribers** takes a CSV.
+
+The rest of this section is for an import you write yourself, as SQL or a script.
 
 > ### 🚨 Read this before importing anybody
 >
@@ -560,6 +599,10 @@ later.
 | Admin console loads with no login prompt | You deployed without `--env production`, so `DEV_AUTH_BYPASS` is still `true`. **Redeploy immediately.** |
 | MCP endpoint returns 404 | `MCP_PATH_SECRET` unset, or the path segment doesn't match. A 404 on a wrong secret is intentional. |
 | MCP returns 401 | The key is missing, revoked, or `send`-scoped. MCP needs `admin`. |
+| Adding the MCP server by URL lands on a Cloudflare login | The five agent sign-in Bypass apps are missing. See [Step 8](#step-8--lock-the-console-behind-cloudflare-access), or run `bun scripts/onboard.ts access` again. |
+| You are let through Access and then refused by the app | You are not on the team. The first person to sign in becomes the owner; everyone after that is added on **System → Team**. |
+| An import sits at "queued" or stops moving | It advances one page a minute on the cron, and waits while a broadcast is going out. Locally the cron does not fire on its own: open `http://localhost:8787/cdn-cgi/local/scheduled` to run one tick. |
+| Readers cannot sign in on the site | `MEMBER_SESSION_SECRET` is not set. |
 | An MCP send tool refuses | Expected. Either agent sending is off on Agents & keys (or forced off by `MCP_ALLOW_SEND="false"`), or you need a fresh preflight token — any edit to content or audience invalidates the old one. |
 | Broadcast stuck in `sending` | Normal for a large list. It materializes across cron ticks under D1's 1,000-query cap, resuming from `cursor_subscriber_id`. Check `messages` count is rising. |
 | `bun run dev` stops with "isn't there yet" | A fresh clone has no `wrangler.jsonc` and no local database. Run `bun run setup` once. |
@@ -591,6 +634,10 @@ bunx wrangler d1 migrations apply DB --remote --env production
 bun run typecheck
 bun run deploy
 ```
+
+Migrate first, then deploy: the running Worker is fine on a newer database, and
+the new code is not fine on an older one. Read [`CHANGELOG.md`](../CHANGELOG.md)
+before you pull, for anything a release asks you to do by hand.
 
 Migrations are additive and applied in order. Check `git log migrations/` before
 a large jump, and take a D1 export first:

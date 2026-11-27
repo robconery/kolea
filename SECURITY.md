@@ -58,16 +58,28 @@ Useful context for anyone reviewing:
   creation and never persisted, so a dumped database does not yield usable keys. Keys
   are revoked, never deleted, so the audit trail in `mcp_calls` keeps pointing at
   something real.
-- **Keys are scoped.** A `send` key reaches the transactional API and nothing else. The
-  MCP endpoint requires `admin`.
+- **Keys are scoped.** A `send` key reaches the transactional API and nothing else. A
+  `read` key reaches the REST API's GETs. The MCP endpoint requires `admin`.
+- **The console has roles.** Identity is still Cloudflare Access. On top of it each
+  person is an owner, an admin or a writer, and a writer cannot send, import, delete
+  people or change settings. Someone Access lets in who is not on the team is refused.
+- **An agent added by URL is approved by a person.** `/mcp` takes an OAuth access
+  token (authorization code with PKCE). The consent page sits behind the Access login,
+  a new connection is read-only unless the operator grants more, and it can be
+  disconnected on the Connected apps screen.
 - **The MCP endpoint has three gates**: an unguessable path secret compared in constant
   time (a miss returns `404`, not `403`), an `admin`-scoped bearer key, and per-tool
   guards. Every call — including every refusal — is recorded in `mcp_calls`.
 - **Irreversible sends require a preflight token.** `broadcast_send` and
   `sequence_activate` refuse without a single-use token from their preflight tool,
   which expires in 10 minutes and is invalidated by any edit to the content or the
-  audience. On top of that, `MCP_ALLOW_SEND` defaults to `"false"` in production: an
-  agent can read and draft everything and still cannot put mail on the wire.
+  audience. On top of that, agent sending is a switch in the console that starts off:
+  an agent can read and draft everything and still cannot put mail on the wire. A
+  second switch, also off, covers deleting people, lifting suppressions, importing a
+  list and creating keys. Neither switch has a tool, so no key can flip them. Setting
+  `MCP_ALLOW_SEND` to `"false"` forces sending off whatever the switch says.
+- **Outbound webhooks are signed**, and every write made in the console, by a key or by
+  an agent is recorded in `audit_entries`, refusals included.
 - **Uploads use a MIME allowlist, not a blocklist** — uploaded media is served from the
   same origin, and an SVG can carry script.
 - **Everything observable is a row in D1**, not a log line. Workers logs expire in 3–7

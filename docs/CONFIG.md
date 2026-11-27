@@ -10,13 +10,14 @@ Cloudflare with `bunx wrangler secret put NAME --env production`, and locally in
 
 | Name | Kind | What it does | If unset |
 |---|---|---|---|
-| `EMAIL_PROVIDER` | var | `resend` sends for real. `console` renders into the Outbox | Required |
+| `EMAIL_PROVIDER` | var | `resend` or `mailgun` sends for real. `console` renders into the Outbox | Required |
 | `FROM_EMAIL` / `FROM_NAME` | var | The From line on every mail | Required |
 | `PUBLIC_URL` | var | ⚠️ The admin host, baked into every link and image at send time | Required. Wrong = broken mail forever |
 | `PREVIEW_EMAIL` | var | The only address a test send may reach | Falls back to `FROM_EMAIL` |
 | `CF_ACCESS_TEAM_DOMAIN` / `CF_ACCESS_AUD` | var | Who the Access login is and which app it's for | The admin refuses everyone, you included |
 | `DEV_AUTH_BYPASS` | var | `true` skips the login. Local only | Login required (correct) |
-| `MCP_ALLOW_SEND` | var | `true` lets agents put mail on the wire | Agents can draft but not send |
+| `MCP_ALLOW_SEND` | var | `"false"` forces agent sending off, whatever the switch on **System → Agents & keys** says. It cannot turn sending on | The switch decides. It starts off |
+| `TRACKING_HOST` | var | Your own subdomain for the open pixel and tracked links, e.g. `links.example.com`. Needs a custom-domain route outside the Access app. ⚠️ Append-only: put a new host first in a comma-separated list and never remove a used one | Tracking uses `PUBLIC_URL` |
 | `SITE_URL` | var | The public site's host | No public site |
 | `SITE_TITLE` / `SITE_TAGLINE` / `SITE_AUTHOR` | var | Site masthead, until the Profile screen says otherwise | Blank / `FROM_NAME` |
 | `SITE_FORM_SLUG` | var | The form the site's subscribe box posts to | No subscribe box |
@@ -24,11 +25,22 @@ Cloudflare with `bunx wrangler secret put NAME --env production`, and locally in
 | `ACCOUNT_URL` | var | Where a buyer manages what they own. Fills `{{account_url}}` in purchase mail | `{{account_url}}` is empty and purchase mail has no dashboard link |
 | `RESEND_API_KEY` | secret | Sending | `resend` can't send |
 | `RESEND_WEBHOOK_SECRET` | secret | Verifies bounce and complaint webhooks | ⚠️ Bounces never suppress |
+| `MAILGUN_DOMAIN` / `MAILGUN_REGION` | var | The sending domain registered in Mailgun, and `us` or `eu` | `mailgun` can't send. Region defaults to `us` |
+| `MAILGUN_API_KEY` | secret | Sending through Mailgun | `mailgun` can't send |
+| `MAILGUN_WEBHOOK_SIGNING_KEY` | secret | Verifies Mailgun's webhooks at `/webhooks/mailgun`. The "HTTP webhook signing key", not the API key | ⚠️ The endpoint answers 503 and bounces wait |
+| `CLOUDFLARE_DNS_API_TOKEN` | secret | The "Add to Cloudflare" button on **Sending domains**. Zone:Read and DNS:Edit only | Button hidden. Copy the records by hand |
+| `MEMBER_SESSION_SECRET` | secret | Signs the cookie a reader gets when they sign in on the public site. Any long random string. Changing it signs everyone out | Readers cannot sign in. Members-only and Premium posts show their teaser to everyone |
 | `MCP_PATH_SECRET` | secret | The unguessable part of the MCP URL | MCP is off (404) |
-| `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` | secret | Revenue attribution | Money screens stay empty; `/webhooks/stripe` returns 503 |
+| `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` | secret | Revenue attribution. Offer pages and Premium also need the key to be allowed to create Checkout Sessions | Money screens stay empty; `/webhooks/stripe` returns 503 |
 | `UNSPLASH_ACCESS_KEY` | secret | Stock photos when publishing | Picker hidden; uploads still work |
-| `OPENROUTER_KEY` | secret | AI writing help | Every AI button hidden |
-| `AI_MONTHLY_BUDGET_USD` / `AI_MODEL_*` | var | AI spend cap and model choice | $10, default models |
+| `OPENROUTER_KEY` | secret | AI writing help | Every AI button hidden, unless a key is saved on **System → AI** |
+| `AI_KEY_ENCRYPTION_SECRET` | secret | Encrypts a model key you save on **System → AI** (OpenRouter, Anthropic or OpenAI). 32 or more random characters. Changing it makes saved keys unreadable until pasted again | No key can be saved there |
+| `AI_MONTHLY_BUDGET_USD` / `AI_MODEL_*` | var | AI spend cap and model choice. A choice on **System → AI** wins over `AI_MODEL_*` | $10, default models |
+
+Three more are for local development and tests only. Never set them in production:
+`AI_PROVIDER=fake` answers every writing helper from a canned reply with no key,
+and `DNS_RESOLVER=fake` with `CLOUDFLARE_DNS=fake` lets you try **Sending domains**
+with no network and no token.
 
 ---
 
@@ -67,9 +79,11 @@ src/
   web/            server-rendered admin console (Hono + JSX, no frontend framework),
                   the five read-only analytics screens, the reader's preference
                   center, and site.tsx (the public blog)
-  api/            transactional send API, signup forms, media upload, bearer-key auth
+  api/            transactional send API, the REST API (v1/), signup forms, media
+                  upload, the agent sign-in endpoints, bearer-key auth
   mcp/            MCP server: tools, resources and prompts for agents
-  providers/      EmailProvider port + console and Resend adapters
+  providers/      EmailProvider port + console, Resend and Mailgun adapters, the
+                  importers (Kit, Ghost, Mailchimp, Drip), model providers, DNS
   client/         the only browser JS in the project: the TipTap editor bundle
 migrations/       drizzle-kit generated, applied by wrangler
 scripts/          onboard.ts (what /onboard and `bun run setup` run), the demo
@@ -105,10 +119,11 @@ running.
 
 ## 🔧 Make it yours
 
-**Swapping the mail provider is one file.** Resend is the first adapter, not a
-dependency. Nothing in `core/` names a vendor, anywhere. That's deliberate:
+**Swapping the mail provider is one file.** Resend and Mailgun are adapters, not
+dependencies: set `EMAIL_PROVIDER` to either. Nothing in `core/` names a vendor,
+anywhere. That's deliberate:
 deliverability is the risk most likely to sink a self-hosted mailer, so the
-escape hatch had to be cheap. If Resend's reputation goes sideways, or you'd
+escape hatch had to be cheap. If your provider's reputation goes sideways, or you'd
 rather be on SES because you're already in AWS, the diff is one adapter.
 
 The whole port is four members:
@@ -125,8 +140,9 @@ export interface EmailProvider {
 }
 ```
 
-Three steps to add **Amazon SES**, **Mailgun**, **Postmark**, **Cloudflare Email
-Service**, or anything else with an HTTP API:
+Three steps to add **Amazon SES**, **Postmark**, **Cloudflare Email
+Service**, or anything else with an HTTP API (`src/providers/mailgun.ts` is a
+worked example):
 
 1. Write `src/providers/ses.ts` implementing the interface above. Copy
    `resend.ts`: it's the reference.

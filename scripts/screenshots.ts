@@ -200,6 +200,65 @@ function fictionSql(): string {
       `${q(JSON.stringify(DRAFT_DOC))}, '', '{}', 'draft', ${NOW});`,
   )
 
+  // Mara finished setting up long ago, so the first-run checklist is put away.
+  sql.push(`INSERT OR REPLACE INTO onboarding (id, dismissed_at, updated_at) VALUES (1, ${NOW}, ${NOW});`)
+
+  // How the list got here: two finished imports. Records only. Both are
+  // `completed` and hold no key, and the minutely tick reads nothing but
+  // queued and running runs.
+  const run = (
+    source: string,
+    daysAgo: number,
+    minutes: number,
+    phases: number,
+    pages: number,
+    counts: [created: number, updated: number, skipped: number, invalid: number],
+    settings: Record<string, string>,
+    detail: Record<string, number>,
+    notes: [key: string, count: number, message: string][],
+  ) => {
+    const at = NOW - daysAgo * DAY
+    return (
+      `INSERT INTO import_runs (source, status, settings, phases_done, phases_total, pages, created, updated, skipped, invalid, ` +
+      `detail, notes, failures, created_at, started_at, finished_at, updated_at) VALUES ` +
+      `(${q(source)}, 'completed', ${q(JSON.stringify(settings))}, ${phases}, ${phases}, ${pages}, ${counts.join(', ')}, ` +
+      `${q(JSON.stringify(detail))}, ${q(JSON.stringify(notes.map(([key, count, message]) => ({ key, count, message }))))}, 0, ` +
+      `${at}, ${at}, ${at + minutes * 60_000}, ${at + minutes * 60_000});`
+    )
+  }
+  sql.push(
+    `DELETE FROM import_runs;`,
+    `DELETE FROM sqlite_sequence WHERE name = 'import_runs';`,
+    run(
+      'kit', 212, 9, 5, 9, [311, 0, 17, 2], {},
+      { tags: 9, subscribers: 281, taggings: 734, suppressions: 12, broadcasts: 24, imported_totals: 24, sequences: 6, sequence_steps: 27 },
+      [
+        ['invalid_emails', 2, 'people had an address that cannot be stored and were not imported'],
+        ['unknown_status_cold', 15, 'people had the status "cold" in Kit, which is not a choice to receive mail; they were not imported'],
+        ['drafts_left_behind', 2, 'drafts or scheduled mails in Kit never went out and were left behind'],
+        ['sequences_off', 6, 'sequences arrived off, with a manual start; nothing sends until you turn one on'],
+        ['delays_rounded', 3, 'sequence delays were not whole days and were rounded up'],
+      ],
+    ),
+    run(
+      'ghost', 198, 4, 2, 4, [63, 74, 14, 0], { url: 'https://fieldnotes.example' },
+      { subscribers: 52, matched: 74, narrowed: 5, taggings: 96, suppressions: 5, broadcasts: 11 },
+      [
+        ['kept_status', 69, 'people already here kept their status; an import never moves anybody toward more mail'],
+        ['narrowed', 5, 'people already here had left in Ghost, and now have the same status here'],
+        ['already_suppressed', 2, 'people are suppressed here and were not added'],
+        ['drafts_left_behind', 3, 'drafts or scheduled mails in Ghost never went out and were left behind'],
+        ['broadcasts_already_here', 9, 'broadcasts were already here and were not copied twice'],
+      ],
+    ),
+  )
+
+  // The two keys the demo seed mints, named for what would hold them.
+  sql.push(
+    `UPDATE api_keys SET name = 'Storefront receipts' WHERE name = 'Transactional (seed)';`,
+    `UPDATE api_keys SET name = 'Claude Code' WHERE name = 'MCP (seed)';`,
+  )
+
   // Readers on the site: thirty days of page views, with a lift after each send.
   const referrers: (string | null)[] = [null, null, 'www.google.com', 'news.ycombinator.com', 'bsky.app', 'duckduckgo.com', 'lobste.rs', null]
   const rows: string[] = []
@@ -299,6 +358,8 @@ const SHOTS: Shot[] = [
     url: async () => `${BASE}/p/${await one(`SELECT unsub_token FROM subscribers WHERE email = 'katherine@example.com'`, 'unsub_token')}`,
   },
   { name: 'site', what: 'the public site', url: async () => `${SITE}/` },
+  { name: 'imports', what: 'imports: two finished runs and the four tools to connect', url: async () => `${BASE}/imports` },
+  { name: 'agents', what: 'API keys and the two switches for what an agent may do', url: async () => `${BASE}/settings/agents` },
 ]
 
 /** Hide what only exists in local development. */
