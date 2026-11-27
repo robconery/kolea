@@ -314,11 +314,22 @@ export const QUERIES_PER_PAGE = 230
  */
 export const CRON_PAGES = 3
 /**
- * How old a still-queued row must be before a later pass hands it over again.
- * Longer than the send claim, so a row a consumer holds right now is never
- * the one being re-sent; the claim makes a second hand-over harmless anyway.
+ * How old a still-queued row that nobody has touched must be before a later
+ * pass hands it over again. As long as the send claim, so a row a consumer
+ * took a moment ago is never the one being re-sent; the claim makes a second
+ * hand-over harmless anyway.
  */
 const STRANDED_AFTER_MS = CLAIM_LEASE_MS
+/**
+ * And how old a row that a consumer *did* touch must be. A touched row (it
+ * carries an error, or a claim) has a job somewhere on the queue: a retry
+ * waiting out its backoff, or the record of a send the provider already took.
+ * Handing it over again while that job lives would at best multiply it and at
+ * worst send a second copy. Two hours is longer than both queues' retry
+ * schedules run back to back at their longest (twelve retries of up to five
+ * minutes each, twice), so past it nothing is still coming for the row.
+ */
+const ABANDONED_AFTER_MS = 2 * 60 * 60 * 1000
 /** Stranded rows handed over per pass. */
 const STRANDED_PAGE = 500
 
@@ -451,10 +462,18 @@ export async function dispatchBroadcastPage(
  * Left alone they would hold this broadcast in `sending` forever, and every
  * later broadcast queues up behind it. So once the walk is over, queued rows
  * that were never attempted and are old enough that nobody can still be
- * working on them (no provider id, no error, no live claim) are handed over
- * again. Safe to repeat: `sendMessages` claims a
- * row atomically and skips anything no longer queued, so a row that did reach
- * the queue after all is still sent once.
+ * working on them (no provider id, no error, no claim) are handed over again.
+ *
+ * A row a consumer did reach can be stranded too. A batch that throws writes
+ * its error on the row and goes back on the queue, and that retry is what
+ * normally finishes it. But a retry can be lost: the dead-letter queue runs out
+ * of attempts while the database is down, or there is no queue at all. Such a
+ * row would sit `queued` with an error for good, so it is handed over again as
+ * well, once it is older than any job that could still be coming for it
+ * (`ABANDONED_AFTER_MS`).
+ *
+ * Safe to repeat: `sendMessages` claims a row atomically and skips anything no
+ * longer queued, so a row that did reach the queue after all is still sent once.
  */
 async function closeIfFinished(env: Env, db: Db, broadcastId: number): Promise<void> {
   const queuedLeft = async () =>
@@ -466,7 +485,9 @@ async function closeIfFinished(env: Env, db: Db, broadcastId: number): Promise<v
         .get()
     )?.n ?? 0
   if ((await queuedLeft()) > 0) {
-    const cutoff = new Date(Date.now() - STRANDED_AFTER_MS)
+    const now = Date.now()
+    const untouched = new Date(now - STRANDED_AFTER_MS)
+    const abandoned = new Date(now - ABANDONED_AFTER_MS)
     const stranded = await db
       .select({ id: messages.id })
       .from(messages)
@@ -475,12 +496,18 @@ async function closeIfFinished(env: Env, db: Db, broadcastId: number): Promise<v
           eq(messages.broadcastId, broadcastId),
           eq(messages.status, 'queued'),
           isNull(messages.providerMessageId),
-          // Never attempted. A row with an error has been to a consumer and is
-          // in the queue's own retry cycle, which ends in sent or a visible
-          // dead-letter failure; handing it over again would only multiply it.
-          isNull(messages.error),
-          lt(messages.createdAt, cutoff),
-          or(isNull(messages.claimedAt), lt(messages.claimedAt, cutoff)),
+          or(
+            // Never attempted: no consumer has claimed it or written to it.
+            and(isNull(messages.error), isNull(messages.claimedAt), lt(messages.createdAt, untouched)),
+            // Attempted, and nothing came of it. A row with an error or a
+            // claim is in the queue's own retry cycle, which ends in sent or
+            // a visible dead-letter failure, so it is left to that until the
+            // cycle cannot still be running.
+            and(
+              lt(messages.createdAt, abandoned),
+              or(isNull(messages.claimedAt), lt(messages.claimedAt, abandoned)),
+            ),
+          ),
         ),
       )
       .limit(STRANDED_PAGE)

@@ -271,6 +271,121 @@ describe('Feature: a big day stays inside D1’s limits', () => {
     })
   })
 
+  /**
+   * A broadcast whose walk is over, with three rows still `queued` in the state
+   * a consumer left them in. Returns what two ticks then did.
+   */
+  async function afterTwoTicksWith(row: { error?: string; claimedMinutesAgo?: number; createdMinutesAgo: number }) {
+    const world = createWorld()
+    const people = [
+      await aPerson(world, { email: 'one@example.test' }),
+      await aPerson(world, { email: 'two@example.test' }),
+      await aPerson(world, { email: 'three@example.test' }),
+    ]
+    const id = await aBroadcast(world, { subject: 'Left behind' })
+    const top = people[2]!.id
+    await world.db
+      .update(broadcasts)
+      .set({ status: 'sending', startedAt: new Date(), audienceUpperId: top, cursorSubscriberId: top })
+      .where(eq(broadcasts.id, id))
+    const minutesAgo = (n: number) => new Date(Date.now() - n * 60_000)
+    await world.db.insert(messages).values(
+      people.map((p) => ({
+        subscriberId: p.id,
+        kind: 'broadcast' as const,
+        broadcastId: id,
+        toEmail: p.email,
+        subject: 'Left behind',
+        status: 'queued' as const,
+        idempotencyKey: `broadcast:${id}:${p.id}`,
+        error: row.error ?? null,
+        claimedAt: row.claimedMinutesAgo === undefined ? null : minutesAgo(row.claimedMinutesAgo),
+        createdAt: minutesAgo(row.createdMinutesAgo),
+      })),
+    )
+    await world.tick()
+    await world.tick()
+    return {
+      mailed: (await world.outbox()).length,
+      status: (await world.db.select().from(broadcasts).where(eq(broadcasts.id, id)).get())?.status,
+    }
+  }
+
+  describe('Scenario: a batch threw, and the retry that should have finished it never came', () => {
+    // A thrown batch writes its error on the rows and goes back on the queue.
+    // If that retry is lost (the dead-letter queue ran out of attempts while
+    // the database was down), the rows sit `queued` with an error for good.
+    let after: Awaited<ReturnType<typeof afterTwoTicksWith>>
+
+    beforeAll(async () => {
+      after = await afterTwoTicksWith({
+        error: 'send attempt threw: database unavailable',
+        createdMinutesAgo: 3 * 60,
+      })
+    })
+
+    it('⭐ sends the mail, each once', () => {
+      expect(after.mailed).toBe(3)
+    })
+
+    it('finishes the broadcast, so the next one is not blocked behind it', () => {
+      expect(after.status).toBe('sent')
+    })
+  })
+
+  describe('Scenario: a batch threw a few minutes ago and its retry is still on the queue', () => {
+    let after: Awaited<ReturnType<typeof afterTwoTicksWith>>
+
+    beforeAll(async () => {
+      after = await afterTwoTicksWith({
+        error: 'send attempt threw: connection lost',
+        createdMinutesAgo: 20,
+      })
+    })
+
+    it('leaves the rows to that retry', () => {
+      expect(after.mailed).toBe(0)
+    })
+
+    it('keeps the broadcast open for it', () => {
+      expect(after.status).toBe('sending')
+    })
+  })
+
+  describe('Scenario: the provider took the mail and the record of it is still on the queue', () => {
+    // The rows say `queued` with a claim that has run out. Handing them over
+    // again now would be a second copy; the record-only job is what finishes them.
+    let after: Awaited<ReturnType<typeof afterTwoTicksWith>>
+
+    beforeAll(async () => {
+      after = await afterTwoTicksWith({ claimedMinutesAgo: 15, createdMinutesAgo: 20 })
+    })
+
+    it('⭐ sends nothing', () => {
+      expect(after.mailed).toBe(0)
+    })
+
+    it('keeps the broadcast open for the record', () => {
+      expect(after.status).toBe('sending')
+    })
+  })
+
+  describe('Scenario: a consumer died holding its rows and nothing ever came back for them', () => {
+    let after: Awaited<ReturnType<typeof afterTwoTicksWith>>
+
+    beforeAll(async () => {
+      after = await afterTwoTicksWith({ claimedMinutesAgo: 170, createdMinutesAgo: 3 * 60 })
+    })
+
+    it('sends the mail, each once', () => {
+      expect(after.mailed).toBe(3)
+    })
+
+    it('finishes the broadcast', () => {
+      expect(after.status).toBe('sent')
+    })
+  })
+
   describe('Scenario: the same queued message reaches two consumers at once', () => {
     let mailed: number
 

@@ -371,7 +371,7 @@ export async function sendAgain(
     // tab, finds nothing left to claim and sends nothing.
     const moved = await db
       .update(messages)
-      .set({ status: 'queued', error: null })
+      .set({ status: 'queued', error: null, claimedAt: null })
       .where(and(inArray(messages.id, ids.slice(i, i + CHUNK)), eq(messages.status, 'failed')))
       .returning({ id: messages.id })
     claimed.push(...moved.map((m) => m.id))

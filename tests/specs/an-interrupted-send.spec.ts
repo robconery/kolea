@@ -185,6 +185,23 @@ function refusingBatches(db: D1Database, times: number): D1Database {
   })
 }
 
+/** A database that refuses its next `times` statements matching `sql`. Everything else works. */
+function refusingQueries(db: D1Database, sql: RegExp, times: number): D1Database {
+  let left = times
+  return new Proxy(db, {
+    get(target, prop) {
+      if (prop === 'prepare') {
+        return (text: string) => {
+          if (sql.test(text) && left-- > 0) throw new Error('database unavailable')
+          return target.prepare(text)
+        }
+      }
+      const value = Reflect.get(target, prop, target) as unknown
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  })
+}
+
 /** A queue that keeps what it is handed, so a spec can deliver it when it likes. */
 function aQueueThatHolds() {
   const held: { body: SendJob; delaySeconds: number }[] = []
@@ -674,6 +691,95 @@ describe('Feature: a send that has to be attempted twice', () => {
     })
   })
 
+  describe('Scenario: a batch that threw while it held its rows', () => {
+    // ⭐ A consumer claims each row before it sends (`messages.claimed_at`), so
+    // two of them cannot send the same one. A batch that throws must give that
+    // claim back: the retry is the same rows coming round again, and a claim
+    // still held would turn it away until the lease ran out.
+    let claimsAfterThrow: (Date | null)[]
+    let errorAfterThrow: string | null | undefined
+    let retry: ReturnType<typeof sendBatchOf>
+    let sent: number
+    let mails: number
+
+    beforeAll(async () => {
+      const world = createWorld()
+      const ids = (await threeMessagesStillWaiting(world)).map((m) => m.id)
+      const before = (await world.outbox()).length
+
+      await whileTheProviderRefuses(
+        () => {
+          throw new Error('connection lost')
+        },
+        () => worker.queue(sendBatchOf(ids).batch, world.env),
+      )
+      const afterThrow = await world.db.select().from(messages).all()
+      claimsAfterThrow = afterThrow.map((m) => m.claimedAt)
+      errorAfterThrow = afterThrow[0]?.error
+
+      // Fifteen seconds later, as far as the rows can tell: the queue's retry.
+      retry = sendBatchOf(ids, 'kolea-send', 2)
+      await worker.queue(retry.batch, world.env)
+      sent = (await world.db.select().from(messages).where(eq(messages.status, 'sent')).all()).length
+      mails = (await world.outbox()).length - before
+    })
+
+    it('gives every row back at once', () => {
+      expect(claimsAfterThrow).toEqual([null, null, null])
+    })
+
+    it('still says on the row what went wrong', () => {
+      expect(errorAfterThrow).toBe('send attempt threw: connection lost')
+    })
+
+    it('sends every one of them on the retry  ⭐', () => {
+      expect(sent).toBe(3)
+    })
+
+    it('has nothing left to retry after that', () => {
+      expect(retry.retried).toHaveLength(0)
+    })
+
+    it('sends each person one mail', () => {
+      expect(mails).toBe(3)
+    })
+  })
+
+  describe('Scenario: a query failing after the rows were claimed, before the provider was asked', () => {
+    // The same promise when the throw comes from the database half-way through
+    // a batch: nothing went out, so nothing may stay held.
+    let claimsAfterThrow: (Date | null)[]
+    let sent: number
+    let mails: number
+
+    beforeAll(async () => {
+      const world = createWorld()
+      const ids = (await threeMessagesStillWaiting(world)).map((m) => m.id)
+      const before = (await world.outbox()).length
+      // The first read after the claim is the subscribers behind the batch.
+      const env = { ...world.env, DB: refusingQueries(world.env.DB, /from "subscribers"/i, 1) }
+
+      await worker.queue(sendBatchOf(ids).batch, env)
+      claimsAfterThrow = (await world.db.select().from(messages).all()).map((m) => m.claimedAt)
+
+      await worker.queue(sendBatchOf(ids, 'kolea-send', 2).batch, env)
+      sent = (await world.db.select().from(messages).where(eq(messages.status, 'sent')).all()).length
+      mails = (await world.outbox()).length - before
+    })
+
+    it('gives every row back', () => {
+      expect(claimsAfterThrow).toEqual([null, null, null])
+    })
+
+    it('sends every one of them on the retry  ⭐', () => {
+      expect(sent).toBe(3)
+    })
+
+    it('sends each person one mail', () => {
+      expect(mails).toBe(3)
+    })
+  })
+
   describe('Scenario: the database going away under the consumer', () => {
     // Every query refused, on both queues. The send queue has retries left to
     // spend; the dead-letter queue has nothing behind it, so a give-up it
@@ -832,6 +938,55 @@ describe('Feature: a send that has to be attempted twice', () => {
     })
 
     it('has sent each person exactly one mail  ⭐', () => {
+      expect(mails).toBe(3)
+    })
+  })
+
+  describe('Scenario: the original messages coming round again before that record has landed', () => {
+    // The provider has the mail, the record of it is still waiting on the
+    // queue, and the queue redelivers the send jobs in between. The rows still
+    // say `queued`, so the claim is all that stands between each reader and a
+    // second copy. It is kept on mail the provider took, and only there.
+    let again: ReturnType<typeof sendBatchOf>
+    let mailsBeforeRecord: number
+    let rows: Message[]
+    let mails: number
+
+    beforeAll(async () => {
+      const world = createWorld()
+      const ids = (await threeMessagesStillWaiting(world)).map((m) => m.id)
+      const before = (await world.outbox()).length
+      const queue = aQueueThatHolds()
+      const env = { ...world.env, SEND_QUEUE: queue.binding, DB: refusingBatches(world.env.DB, 1) }
+
+      await worker.queue(sendBatchOf(ids).batch, env)
+
+      again = sendBatchOf(ids, 'kolea-send', 2)
+      await worker.queue(again.batch, env)
+      mailsBeforeRecord = (await world.outbox()).length - before
+
+      await worker.queue(queueBatchOf(queue.held.map((job) => job.body)).batch, env)
+      rows = await world.db.select().from(messages).all()
+      mails = (await world.outbox()).length - before
+    })
+
+    it('sends nobody a second copy  ⭐', () => {
+      expect(mailsBeforeRecord).toBe(3)
+    })
+
+    it('asks the redelivered messages to wait, not to stop', () => {
+      expect(again.retried).toHaveLength(3)
+    })
+
+    it('ends with every row sent once the record lands', () => {
+      expect(rows.filter((row) => row.status === 'sent')).toHaveLength(3)
+    })
+
+    it('lets go of the claim with the record', () => {
+      expect(rows.map((row) => row.claimedAt)).toEqual([null, null, null])
+    })
+
+    it('has sent each person exactly one mail', () => {
       expect(mails).toBe(3)
     })
   })

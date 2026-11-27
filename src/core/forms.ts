@@ -1031,7 +1031,7 @@ export async function resendFailedReplies(env: Env, db: Db, formId: number): Pro
   for (let i = 0; i < ids.length; i += 90) {
     const done = await db
       .update(messages)
-      .set({ status: 'queued', error: null })
+      .set({ status: 'queued', error: null, claimedAt: null })
       .where(and(inArray(messages.id, ids.slice(i, i + 90)), eq(messages.status, 'failed')))
       .returning({ id: messages.id })
     flipped.push(...done.map((d) => d.id))

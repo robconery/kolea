@@ -160,6 +160,8 @@ export async function preflightBroadcast(
       unsubToken: 'sample-token',
       scope: { kind: 'broadcast' },
       scopeLabel: env.FROM_NAME,
+      accountName: env.SITE_TITLE ?? null,
+      postalAddress: env.POSTAL_ADDRESS ?? null,
       subscriber: first
         ? {
             email: first.email,

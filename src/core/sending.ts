@@ -309,16 +309,52 @@ async function loadByIds<T>(
  * lookups, and one write for every result.
  *
  * Idempotent: anything not `queued` is skipped, so queue redelivery after a
- * crash can never double-send (SPEC 3.8).
+ * crash can never double-send (SPEC 3.8). And exclusive: each row is claimed
+ * before anything is sent, so two consumers holding the same row cannot both
+ * send it.
  *
  * Throws `UnrecordedSendError` if the provider accepted mail and that one write
  * failed. The caller must not simply send again.
+ *
+ * ⭐ A batch that throws gives its rows back. Whatever went wrong (a query, the
+ * provider's connection, the write of a batch nobody accepted), the caller is
+ * about to retry these rows, and a claim still held would turn that retry away
+ * for the whole lease. The one exception is mail the provider took: those rows
+ * stay claimed, so nothing sends them again while the record of the send is
+ * still on its way (`UnrecordedSendError`).
  */
 export async function sendMessages(
   env: Env,
   db: Db,
   messageIds: number[],
   opts: SendOptions = {},
+): Promise<Map<number, SendOutcome>> {
+  const held = new Set<number>()
+  try {
+    return await sendClaimed(env, db, messageIds, opts, held)
+  } catch (err) {
+    const taken =
+      err instanceof UnrecordedSendError ? new Set(err.accepted.map((a) => a.messageId)) : new Set<number>()
+    try {
+      await releaseClaims(
+        db,
+        [...held].filter((id) => !taken.has(id)),
+      )
+    } catch {
+      // The database may be what failed. The claim then runs out on its own
+      // (`CLAIM_LEASE_MS`), well inside the queue's retry budget.
+    }
+    throw err
+  }
+}
+
+/** `sendMessages` proper. Every row it claims goes into `held`. */
+async function sendClaimed(
+  env: Env,
+  db: Db,
+  messageIds: number[],
+  opts: SendOptions,
+  held: Set<number>,
 ): Promise<Map<number, SendOutcome>> {
   const outcomes = new Map<number, SendOutcome>()
   const ids = [...new Set(messageIds)]
@@ -342,6 +378,7 @@ export async function sendMessages(
     candidates.map((m) => m.id),
   )
   const queued = candidates.filter((m) => claimed.has(m.id))
+  for (const id of claimed) held.add(id)
   for (const m of candidates) {
     // Someone else is sending it right now. Retryable, not skipped: if that
     // consumer dies, this queue message is what comes back for the row once
@@ -518,18 +555,7 @@ export async function sendMessages(
   // ── one provider request for the lot
 
   const provider = providerFor(env, db)
-  let results: Awaited<ReturnType<EmailProvider['sendBatch']>>
-  try {
-    results = await provider.sendBatch(pending.map((p) => p.email))
-  } catch (err) {
-    // Nothing went out; hand the rows straight back so the queue's retry of
-    // this batch can claim them, rather than waiting out the lease.
-    await releaseClaims(
-      db,
-      pending.map((p) => p.message.id),
-    )
-    throw err
-  }
+  const results = await provider.sendBatch(pending.map((p) => p.email))
 
   // ── and one write for everything it said
   //
@@ -665,6 +691,9 @@ export async function recordAccepted(db: Db, accepted: AcceptedWrite[]): Promise
 /**
  * How long a send claim holds. Far longer than one provider call; a claim this
  * old belongs to a consumer that died mid-send, and the row is free again.
+ *
+ * A claim is given up sooner whenever there is something to say: every recorded
+ * result clears it (`recordResults`), and so does a batch that throws.
  */
 export const CLAIM_LEASE_MS = 10 * 60 * 1000
 /** Ids per claim statement: 90 plus the three fixed parameters, under D1's 100. */

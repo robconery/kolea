@@ -1326,7 +1326,9 @@ export const messages = sqliteTable(
     /**
      * ⭐ The send claim: set by `sendMessages` in ONE conditional update
      * (`status = 'queued'` and no live claim) before the provider is called,
-     * cleared again when a retryable failure puts the row back in line. Two
+     * and cleared with every recorded result and by a batch that throws. It
+     * is kept only on mail the provider took whose record is still on its way
+     * (a record-only job), which is what stops a redelivery sending it again. Two
      * consumers holding the same queued row (a queue redelivery, or a stranded
      * broadcast row handed over again) can therefore never both send it: only
      * the one whose update matched goes on. A claim older than
