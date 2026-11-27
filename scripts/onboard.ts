@@ -16,7 +16,7 @@
  *   bun scripts/onboard.ts zones             the domains on the account
  *   bun scripts/onboard.ts preflight         zone exists, hostnames are free
  *   bun scripts/onboard.ts provision         D1, R2 ×2, Queues ×2
- *   bun scripts/onboard.ts access            Access: 1 Allow app, 8 Bypass apps
+ *   bun scripts/onboard.ts access            Access: 1 Allow app, 13 Bypass apps
  *   bun scripts/onboard.ts render            wrangler.template.jsonc → wrangler.jsonc
  *   bun scripts/onboard.ts resend-domain     add the domain, write its DNS into Cloudflare
  *   bun scripts/onboard.ts resend-status     is the domain verified yet
@@ -47,28 +47,59 @@ const DB_BINDING = 'DB'
 const BUCKETS = ['kolea-media', 'kolea-downloads']
 const QUEUES = ['kolea-send', 'kolea-dlq']
 
-/** Paths that must open for everyone. Each one carries its own auth, or is public by design. */
+/**
+ * Paths that must open for everyone. Each one carries its own auth, or is public by design.
+ *
+ * A path ending in `/*` covers everything under it and NOT the path itself; a
+ * path with no wildcard is matched exactly. That is why the agent sign-in
+ * (OAuth) endpoints are listed one by one: `/oauth/authorize` is the operator's
+ * consent page and must stay behind the login, so `oauth/*` would be wrong, and
+ * `mcp/*` does not cover `/mcp`, which is where an agent added by URL connects.
+ */
 const BYPASS: [path: string, why: string][] = [
-  ['t', 'Tracking: open pixels and click redirects'],
-  ['f', 'Forms: signup posts from anywhere'],
-  ['p', 'Preferences: the reader’s preference center'],
-  ['d', 'Downloads: the grant token is the auth'],
-  ['media', 'Media: images embedded in sent mail'],
-  ['api', 'API: bearer-key authenticated inside'],
-  ['webhooks', 'Webhooks: signature-verified inside'],
-  ['mcp', 'MCP: path secret + admin key inside'],
+  ['t/*', 'Tracking: open pixels and click redirects'],
+  ['f/*', 'Forms: signup posts and confirmation links'],
+  ['p/*', 'Preferences: the reader’s preference center'],
+  ['d/*', 'Downloads: the grant token is the auth'],
+  ['media/*', 'Media: images embedded in sent mail'],
+  ['api/*', 'API: bearer-key authenticated inside'],
+  ['webhooks/*', 'Webhooks: signature-verified inside'],
+  ['mcp/*', 'MCP: path secret + admin key inside'],
+  ['mcp', 'MCP by URL: an access token inside'],
+  ['.well-known/*', 'Agent sign-in discovery: public metadata, no data'],
+  ['oauth/register', 'Agent sign-in registration: an agent introduces itself'],
+  ['oauth/token', 'Agent sign-in token: a one-time code is the auth'],
+  ['oauth/revoke', 'Agent sign-in revocation: the token is the auth'],
 ]
+
+/** The bypasses that exist only so an agent can be added by URL. */
+const AGENT_SIGN_IN = new Set(['mcp', '.well-known/*', 'oauth/register', 'oauth/token', 'oauth/revoke'])
 
 /** What the Worker reads as secrets. The Cloudflare token is deliberately not on this list. */
 const WORKER_SECRETS = [
   'RESEND_API_KEY',
   'RESEND_WEBHOOK_SECRET',
+  'MAILGUN_API_KEY',
+  'MAILGUN_WEBHOOK_SIGNING_KEY',
   'MCP_PATH_SECRET',
+  'MEMBER_SESSION_SECRET',
+  'AI_KEY_ENCRYPTION_SECRET',
+  'CLOUDFLARE_DNS_API_TOKEN',
   'STRIPE_SECRET_KEY',
   'STRIPE_WEBHOOK_SECRET',
   'UNSPLASH_ACCESS_KEY',
   'OPENROUTER_KEY',
 ]
+
+/**
+ * Secrets this script makes up itself, because any long random string will do:
+ * the member session cookie's signing key and the key that encrypts a saved
+ * model key. Locally they go in `.dev.vars`; in production they are made once,
+ * on the first push, and never again. Rotating either has a cost (every member
+ * is signed out; every saved model key must be pasted again), so a later push
+ * that cannot find them leaves whatever Cloudflare already holds alone.
+ */
+const GENERATED_SECRETS = ['MEMBER_SESSION_SECRET', 'AI_KEY_ENCRYPTION_SECRET']
 
 /** First line of every file this script writes. `render` only overwrites a file that has it. */
 const MARKER = '// 🐦 Kōlea: rendered by `bun scripts/onboard.ts'
@@ -394,6 +425,13 @@ const commands: Record<string, (args: string[]) => Promise<void>> = {
     await commands['local-config']!([])
     if (existsSync('.dev.vars')) {
       info('.dev.vars already exists; leaving it alone.')
+      // A file from before these existed still works. The screens that need
+      // them say so; this says where to get them.
+      const have = readFileSync('.dev.vars', 'utf8')
+      const absent = GENERATED_SECRETS.filter((k) => !new RegExp(`^${k}=`, 'm').test(have))
+      if (absent.length) {
+        info(`It has no ${absent.join(' or ')}. Reader sign-in and saved model keys need them: see .dev.vars.example.`)
+      }
     } else {
       const secret = randomHex(24)
       writeFileSync(
@@ -402,10 +440,14 @@ const commands: Record<string, (args: string[]) => Promise<void>> = {
           '# Local secrets. Gitignored. See .dev.vars.example for everything you can add.',
           '# EMAIL_PROVIDER stays "console" (from wrangler.jsonc): mail goes to the Outbox, never the wire.',
           `MCP_PATH_SECRET=${secret}`,
+          '# Signs the cookie a reader gets when they sign in on the local site.',
+          `MEMBER_SESSION_SECRET=${randomHex(32)}`,
+          '# Encrypts a model key saved on Settings → AI.',
+          `AI_KEY_ENCRYPTION_SECRET=${randomHex(32)}`,
           '',
         ].join('\n'),
       )
-      ok('Wrote .dev.vars (console mail, MCP on a random local path)')
+      ok('Wrote .dev.vars (console mail, MCP on a random local path, local secrets for sign-in and saved keys)')
     }
     // Quietly: wrangler redraws its table once per migration, which buries the
     // three lines that matter under several hundred that don't.
@@ -565,20 +607,34 @@ const commands: Record<string, (args: string[]) => Promise<void>> = {
     // Bypass first: until they exist, an Allow on the whole host would send
     // every pixel, unsubscribe and signup to a login screen.
     for (const [path, why] of BYPASS) {
-      const domain = `${host}/${path}/*`
+      const domain = `${host}/${path}`
       if (byDomain(domain)) {
         ok(`Bypass ${domain} already exists`)
         continue
       }
-      await cf('POST', `/accounts/${acct}/access/apps`, {
-        name: `Kōlea · ${why.split(':')[0]}`,
-        type: 'self_hosted',
-        domain,
-        session_duration: '24h',
-        app_launcher_visible: false,
-        policies: [{ name: 'Everyone', decision: 'bypass', precedence: 1, include: [{ everyone: {} }] }],
-      })
-      ok(`Bypass ${domain}  (${why})`)
+      const create = () =>
+        cf('POST', `/accounts/${acct}/access/apps`, {
+          name: `Kōlea · ${why.split(':')[0]}`,
+          type: 'self_hosted',
+          domain,
+          session_duration: '24h',
+          app_launcher_visible: false,
+          policies: [{ name: 'Everyone', decision: 'bypass', precedence: 1, include: [{ everyone: {} }] }],
+        })
+      if (!AGENT_SIGN_IN.has(path)) {
+        await create()
+        ok(`Bypass ${domain}  (${why})`)
+        continue
+      }
+      // No reader depends on these, so one that Cloudflare refuses is reported
+      // and the rest of the login protection still goes up.
+      try {
+        await create()
+        ok(`Bypass ${domain}  (${why})`)
+      } catch (e) {
+        bad(`Bypass ${domain} was not created: ${(e as Error).message}`)
+        info('Only adding Kōlea to an agent by URL needs it. Add it by hand: docs/INSTALL.md, step 8.')
+      }
     }
 
     let admin = byDomain(host)
@@ -780,6 +836,11 @@ const commands: Record<string, (args: string[]) => Promise<void>> = {
       sec.MCP_PATH_SECRET = randomHex(24)
       writeSecrets(sec)
     }
+    // Made once, on the first push (see GENERATED_SECRETS).
+    if (!s.SECRETS_PUSHED) {
+      for (const k of GENERATED_SECRETS) if (!sec[k]) sec[k] = randomHex(32)
+      writeSecrets(sec)
+    }
     const payload: State = {}
     for (const k of WORKER_SECRETS) if (sec[k]) payload[k] = sec[k] as string
     const file = `${DIR}/bulk.json`
@@ -876,6 +937,13 @@ const commands: Record<string, (args: string[]) => Promise<void>> = {
         failed++
         bad('/t/ redirects to a login: the Tracking bypass is missing. Re-run access.')
       } else ok(`/t/ is public (${pixel.status})`)
+
+      // Only the discovery document: it is a GET that returns public metadata.
+      const discovery = await get(`https://${host}/.well-known/oauth-authorization-server`)
+      if (toLogin(discovery)) {
+        failed++
+        bad('/.well-known/ redirects to a login: the agent sign-in bypasses are missing. Re-run access.')
+      } else ok(`/.well-known/ is public (${discovery.status})`)
 
       if (s.SITE_HOST) {
         const site = await get(`https://${s.SITE_HOST}/`)

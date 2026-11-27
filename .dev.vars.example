@@ -1,6 +1,7 @@
 # Kōlea — local secrets.
 #
-# `bun run setup` writes a `.dev.vars` for you, holding only MCP_PATH_SECRET.
+# `bun run setup` writes a `.dev.vars` for you, holding three random local
+# secrets: MCP_PATH_SECRET, MEMBER_SESSION_SECRET and AI_KEY_ENCRYPTION_SECRET.
 # Copy any other line you need from here into it, then restart `bun run dev`
 # (wrangler reads the file once, at startup).
 #
@@ -30,6 +31,34 @@ PREVIEW_EMAIL=you@example.com
 # Bulk mail law in most places asks for one. Unset, the line is left out.
 # POSTAL_ADDRESS="1 Example Road, Springfield"
 
+# ── Mailgun (instead of Resend) ─────────────────────────────────────────────
+# EMAIL_PROVIDER=mailgun
+# MAILGUN_API_KEY=key-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+# The sending domain registered in Mailgun, and the region of the account.
+# MAILGUN_DOMAIN=mg.example.com
+# MAILGUN_REGION=us
+# "HTTP webhook signing key" on Mailgun's Webhooks page, not the API key. Point
+# Mailgun's webhooks at /webhooks/mailgun. Without it that endpoint answers 503
+# and Mailgun retries, so bounces wait for the key instead of being lost.
+# MAILGUN_WEBHOOK_SIGNING_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+# ── Sending domains ─────────────────────────────────────────────────────────
+# Optional. A Cloudflare API token with Zone:Read and DNS:Edit on the zones you
+# send from. It adds an "Add to Cloudflare" button to the Sending domains
+# screen. Unset, the records are shown to copy by hand.
+# CLOUDFLARE_DNS_API_TOKEN=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+# Optional, local only: try that screen with no network and no token. The
+# check reads an in-memory DNS, and the button writes to it.
+# DNS_RESOLVER=fake
+# CLOUDFLARE_DNS=fake
+
+# ── Members on the public site ──────────────────────────────────────────────
+# Signs the cookie a reader gets when they sign in by emailed link. Any long
+# random string: openssl rand -hex 32. Unset, readers cannot sign in, and
+# members-only and Premium posts show their teaser to everyone. Changing it
+# signs every member out. `bun run setup` writes one for you.
+# MEMBER_SESSION_SECRET=
+
 # ── MCP ─────────────────────────────────────────────────────────────────────
 # The unguessable path segment the MCP server answers on: POST /mcp/<secret>.
 # Unset means the endpoint 404s, so MCP is off until you set this.
@@ -39,6 +68,8 @@ MCP_PATH_SECRET=set-me-to-something-random
 # ── Stripe ──────────────────────────────────────────────────────────────────
 # Restricted key, read-only on charges / refunds / customers / products / prices.
 # Used by the daily reconciliation cron and the stripe_* MCP tools.
+# To sell from offer pages or run Premium memberships, the key must also be
+# allowed to write Checkout Sessions. A read-only key cannot start a checkout.
 STRIPE_SECRET_KEY=rk_test_xxxxxxxxxxxx
 # From the Stripe dashboard endpoint pointed at /webhooks/stripe. Without it that
 # endpoint fails closed with a 503 — an endpoint that accepts unsigned bodies is
@@ -65,8 +96,9 @@ OPENROUTER_KEY=sk-or-v1-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 # AI_MODEL_CLEANUP=anthropic/claude-opus-5.5
 # AI_MODEL_SEQUENCE=anthropic/claude-opus-5.5
 # Optional. Lets Settings → AI store your own OpenRouter, Anthropic or OpenAI
-# key, encrypted (AES-GCM). Unset means no key can be saved there.
-# Generate one with: openssl rand -base64 32
+# key, encrypted (AES-GCM). Unset means no key can be saved there. Changing it
+# makes every saved key unreadable until it is pasted again.
+# Generate one with: openssl rand -base64 32. `bun run setup` writes one for you.
 # AI_KEY_ENCRYPTION_SECRET=
 # Optional, local only: `fake` answers every helper on this machine, no key needed.
 # AI_PROVIDER=fake
