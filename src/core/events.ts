@@ -1,7 +1,7 @@
-import { and, eq } from 'drizzle-orm'
+import { and, eq, isNull } from 'drizzle-orm'
 import type { Db } from '../db/index.ts'
 import { events, messages, subscribers } from '../db/schema.ts'
-import type { ProviderEvent } from '../providers/types.ts'
+import { OUTCOME_UNKNOWN, type ProviderEvent } from '../providers/types.ts'
 import { logActivity } from './activity.ts'
 import { touchFromMessage } from './campaigns.ts'
 import { leaveBroadcasts, suppressAddress } from './consent.ts'
@@ -102,11 +102,7 @@ export async function recordOpen(
  * bounce is transient, and nothing here may act on a narrower consent scope.
  */
 export async function applyProviderEvent(db: Db, ev: ProviderEvent): Promise<void> {
-  const msg = await db
-    .select()
-    .from(messages)
-    .where(eq(messages.providerMessageId, ev.providerMessageId))
-    .get()
+  const msg = await findEventMessage(db, ev)
   if (!msg) return
 
   if (ev.type === 'unsubscribe') {
@@ -137,6 +133,61 @@ export async function applyProviderEvent(db: Db, ev: ProviderEvent): Promise<voi
       .where(eq(subscribers.id, msg.subscriberId))
     await logLeaving(db, msg.subscriberId, 'complained', msg.id, msg.toEmail)
   }
+}
+
+type MessageRow = typeof messages.$inferSelect
+
+/**
+ * The message a provider event is about.
+ *
+ * By our own id first, when the provider echoed it back (`ev.messageId`, from
+ * the tag the adapter put on the mail): a primary-key read, the cheapest there
+ * is, and the one that still works for mail whose provider id was never
+ * written. Then by the provider's id, which is indexed too.
+ *
+ * ⭐ The echoed id is a hint, never an authority. A webhook body is the
+ * provider's word only when its signature checked out, and a numeric id is easy
+ * to guess, so the row it names is used only if it is unmistakably the same
+ * mail: its provider id matches the event's, or the provider was asked for it
+ * and its answer was never recorded (`provider_called_at` set, no provider id).
+ * Anything else falls through to the provider-id lookup, exactly as before.
+ *
+ * In the second case the event is the record that never landed: it proves the
+ * provider took the mail. So the row is completed from it: it gets the
+ * provider's id, and a row still `queued`, or marked failed as `outcome
+ * unknown`, becomes `sent`. This only ever moves a row towards "sent", never
+ * sends anything, and it is what lets an unrecorded send settle itself instead
+ * of waiting for the operator.
+ */
+async function findEventMessage(db: Db, ev: ProviderEvent): Promise<MessageRow | undefined> {
+  if (ev.messageId) {
+    const tagged = await db.select().from(messages).where(eq(messages.id, ev.messageId)).get()
+    if (tagged?.providerMessageId === ev.providerMessageId) return tagged
+    if (tagged && tagged.providerMessageId === null && tagged.providerCalledAt !== null) {
+      return await adoptUnrecordedSend(db, tagged, ev)
+    }
+  }
+  return await db
+    .select()
+    .from(messages)
+    .where(eq(messages.providerMessageId, ev.providerMessageId))
+    .get()
+}
+
+/** Write onto the row what its lost record would have said. See `findEventMessage`. */
+async function adoptUnrecordedSend(db: Db, msg: MessageRow, ev: ProviderEvent): Promise<MessageRow> {
+  const settles = msg.status === 'queued' || (msg.status === 'failed' && (msg.error ?? '').startsWith(OUTCOME_UNKNOWN))
+  const updated = await db
+    .update(messages)
+    .set({
+      providerMessageId: ev.providerMessageId,
+      ...(settles
+        ? { status: 'sent' as const, sentAt: msg.providerCalledAt ?? ev.occurredAt, error: null, claimedAt: null }
+        : {}),
+    })
+    .where(and(eq(messages.id, msg.id), isNull(messages.providerMessageId)))
+    .returning()
+  return updated[0] ?? msg
 }
 
 /**
