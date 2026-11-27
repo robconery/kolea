@@ -40,6 +40,12 @@ but there is a migration to apply and four things to do on your first visit.
   and creating keys.
 - **Nothing new is needed in your `wrangler.jsonc`.** There is no new binding,
   queue or schedule. The new settings are optional and are listed under Added.
+- **Then apply migration 0031, the same way, before deploying.** It adds one
+  nullable column (`messages.provider_called_at`) and four indexes, and swaps the
+  single-column index on `messages.broadcast_id` for one on `(broadcast_id,
+  status)`. Every `CREATE INDEX` says `IF NOT EXISTS`, so an index you already
+  made by hand under the same name is left alone. Like 0030, it only adds, and the
+  running Worker keeps working against it.
 
 ### Added
 
@@ -142,6 +148,26 @@ but there is a migration to apply and four things to do on your first visit.
 
 ### Fixed
 
+- **A large send no longer overloads the database through its own webhooks.**
+  Every provider webhook looked its mail up by an unindexed column and read the
+  whole `messages` table. It is indexed now, and mail sent through Resend carries
+  its own message id as a tag (`kolea_message_id`), so a webhook finds its row by
+  primary key. A webhook that could not be applied because the database was busy
+  is answered 503, so the provider delivers it again, instead of 401, which told
+  it the webhook was forged.
+- **Nobody is left `queued` with nothing coming for them, and nobody is mailed
+  twice.** A broadcast page that died between writing its recipients and queuing
+  them hands them over itself on the next pass. Each message is marked just
+  before the provider is asked for it, and a marked message is never sent again
+  by anything automatic: it settles from its record, from a webhook that names
+  it, or goes to Undelivered as "may have gone" for you to check. A Resend
+  request that got no answer is asked again once, identically, and then treated
+  the same way.
+- **Pressing Send during a database hiccup no longer shows an error** for a send
+  that is in fact under way. You are told it is sending and will carry on by
+  itself.
+- **Faster tag segments and preference pages** on a large list, from indexes on
+  `subscriber_tags (tag_id)` and `sequence_enrollments (subscriber_id)`.
 - **Icons on reader-facing pages.** A form or the preference centre showed no icon
   in the browser tab on a live install, because the icon files sat behind your
   login. Those pages now take them from under `/media/`, which is already open.

@@ -41,7 +41,7 @@ async function threeMessagesStillWaiting(world: World) {
   const queued = await threeQueuedMessages(world)
   await world.db
     .update(messages)
-    .set({ status: 'queued', sentAt: null, provider: null, providerMessageId: null })
+    .set({ status: 'queued', sentAt: null, provider: null, providerMessageId: null, providerCalledAt: null })
   return queued
 }
 
@@ -234,6 +234,7 @@ async function watchingTheProvider<T>(run: () => Promise<T>): Promise<{ requests
 
 const A_MAIL: OutgoingEmail = {
   ref: 1,
+  messageId: 1,
   to: 'one@example.test',
   fromEmail: 'sender@example.test',
   fromName: 'Sender',
@@ -304,7 +305,7 @@ describe('Feature: a send that has to be attempted twice', () => {
       // …then withdraw consent, and re-send the whole batch.
       await world.db
         .update(messages)
-        .set({ status: 'queued', sentAt: null, provider: null, providerMessageId: null })
+        .set({ status: 'queued', sentAt: null, provider: null, providerMessageId: null, providerCalledAt: null })
         .where(eq(messages.status, 'sent'))
       await world.db
         .insert(suppressions)
@@ -360,7 +361,7 @@ describe('Feature: a send that has to be attempted twice', () => {
       // Put them back on the queue as though the send had not happened yet.
       await world.db
         .update(messages)
-        .set({ status: 'queued', sentAt: null, provider: null, providerMessageId: null })
+        .set({ status: 'queued', sentAt: null, provider: null, providerMessageId: null, providerCalledAt: null })
       const { batch, acked: a, retried: r } = sendBatchOf(queued.map((m) => m.id))
       acked = a
       retried = r
@@ -425,7 +426,7 @@ describe('Feature: a send that has to be attempted twice', () => {
     beforeAll(async () => {
       world = createWorld()
       const queued = await threeQueuedMessages(world)
-      await world.db.update(messages).set({ status: 'queued', sentAt: null })
+      await world.db.update(messages).set({ status: 'queued', sentAt: null, providerCalledAt: null })
       const before = (await world.outbox()).length
 
       const { batch, acked: a } = sendBatchOf([queued[0]!.id], 'kolea-dlq')
@@ -1036,12 +1037,17 @@ describe('Feature: a send that has to be attempted twice', () => {
   })
 
   describe('Scenario: that write refused, with no queue to keep the acceptance on', () => {
-    // The last resort. The messages go round again, and whether anyone gets a
-    // second copy is now up to the provider recognising the request. Our part
-    // is to make it the same request: same messages, same order, same bytes.
+    // The last resort, and the case the provider's idempotency key cannot
+    // cover: a retry may come round in a differently composed batch, which is
+    // a new request to the provider and a second copy for the reader. So the
+    // rows are never sent again. Each stays marked as asked
+    // (`provider_called_at`) until a record turns up, and if none ever does it
+    // goes to the operator as mail that may have gone (SPEC 4.9, 4.13).
     let first: ReturnType<typeof sendBatchOf>
+    let again: ReturnType<typeof sendBatchOf>
     let requests: OutgoingEmail[][]
-    let sent: number
+    let afterRedelivery: Message[]
+    let afterGivingUp: Message[]
 
     beforeAll(async () => {
       const world = createWorld()
@@ -1049,13 +1055,18 @@ describe('Feature: a send that has to be attempted twice', () => {
       const env = { ...world.env, DB: refusingBatches(world.env.DB, 1) }
 
       first = sendBatchOf(ids)
+      again = sendBatchOf([...ids].reverse(), 'kolea-send', 2)
       const watched = await watchingTheProvider(async () => {
         await worker.queue(first.batch, env)
         // Redelivered, and in a different order.
-        await worker.queue(sendBatchOf([...ids].reverse(), 'kolea-send', 2).batch, env)
+        await worker.queue(again.batch, env)
       })
       requests = watched.requests
-      sent = (await world.db.select().from(messages).where(eq(messages.status, 'sent')).all()).length
+      afterRedelivery = await world.db.select().from(messages).all()
+
+      // Out of retries, the jobs land on the dead-letter queue.
+      await worker.queue(sendBatchOf(ids, 'kolea-dlq').batch, world.env)
+      afterGivingUp = await world.db.select().from(messages).all()
     })
 
     it('retries every message, having nowhere else to keep the fact', () => {
@@ -1066,12 +1077,20 @@ describe('Feature: a send that has to be attempted twice', () => {
       expect(Math.min(...first.delays)).toBeGreaterThanOrEqual(7)
     })
 
-    it('asks the provider for exactly the same thing the second time  ⭐', () => {
-      expect(requests[1]).toEqual(requests[0]!)
+    it('asks the provider nothing the second time  ⭐', () => {
+      expect(requests).toHaveLength(1)
     })
 
-    it('ends with every row sent', () => {
-      expect(sent).toBe(3)
+    it('asks the redelivered messages to wait for a record, not to send', () => {
+      expect(again.retried).toHaveLength(3)
+    })
+
+    it('keeps every row marked as asked', () => {
+      expect(afterRedelivery.filter((row) => row.providerCalledAt !== null)).toHaveLength(3)
+    })
+
+    it('hands every row to the operator as mail that may have gone once the retries are spent', () => {
+      expect(afterGivingUp.filter((row) => row.status === 'failed' && row.error?.startsWith('outcome unknown'))).toHaveLength(3)
     })
   })
 
@@ -1137,8 +1156,10 @@ describe('Feature: a send that has to be attempted twice', () => {
       expect(api.keys[3]).not.toBe(api.keys[2]!)
     })
 
-    it('treats "the same request is still in flight" as worth another try', () => {
-      expect(inFlight[0]).toMatchObject({ ok: false, retryable: true })
+    // With the send claim, only the adapter's own retry of a request that got
+    // no answer can meet itself in flight, and the first try may yet succeed.
+    it('treats "the same request is still in flight" as mail that may have gone', () => {
+      expect(inFlight[0]).toMatchObject({ ok: false, retryable: false, outcomeUnknown: true })
     })
 
     it('treats a key reused with a different payload as final', () => {

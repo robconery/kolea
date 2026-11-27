@@ -191,7 +191,7 @@ describe('Feature: cancelling really stops a send', () => {
       await aPerson(w)
       id = await aBroadcast(w, { subject: 'Stopped' })
       await startBroadcast(w.env, w.db, id)
-      await w.db.update(messages).set({ status: 'queued' }).where(eq(messages.broadcastId, id))
+      await w.db.update(messages).set({ status: 'queued', providerCalledAt: null }).where(eq(messages.broadcastId, id))
       await w.db.update(broadcasts).set({ status: 'cancelled' }).where(eq(broadcasts.id, id))
       result = await reviseSentBroadcast(w.db, id, { subject: 'Fixed', bodyJson: null, bodyMd: 'Fixed body.' })
       await drainQueued(w.env, w.db)
@@ -224,7 +224,7 @@ describe('Feature: resuming a cancelled send', () => {
       await startBroadcast(w.env, w.db, id)
       // What a cancel mid-send leaves behind: one row the provider never took…
       const stranded = await w.db.select().from(messages).where(eq(messages.toEmail, 'stranded@example.test')).get()
-      await w.db.update(messages).set({ status: 'failed', error: 'broadcast cancelled', providerMessageId: null }).where(eq(messages.id, stranded!.id))
+      await w.db.update(messages).set({ status: 'failed', error: 'broadcast cancelled', providerMessageId: null, providerCalledAt: null }).where(eq(messages.id, stranded!.id))
       await w.db.delete(devOutbox).where(eq(devOutbox.toEmail, 'stranded@example.test'))
       // …and people in the audience past the cursor, whom the walk never reached.
       // (They were on the list at dispatch: anyone who joined after it is not in

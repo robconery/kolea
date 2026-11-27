@@ -368,10 +368,13 @@ export async function sendAgain(
   const claimed: number[] = []
   for (let i = 0; i < ids.length; i += CHUNK) {
     // The claim: only rows still `failed` move, so a second click, or a second
-    // tab, finds nothing left to claim and sends nothing.
+    // tab, finds nothing left to claim and sends nothing. The provider mark
+    // goes too: this is the operator deciding to send again (and for mail that
+    // may have gone, only after confirming they checked), which is the one
+    // thing allowed to override it.
     const moved = await db
       .update(messages)
-      .set({ status: 'queued', error: null, claimedAt: null })
+      .set({ status: 'queued', error: null, claimedAt: null, providerCalledAt: null })
       .where(and(inArray(messages.id, ids.slice(i, i + CHUNK)), eq(messages.status, 'failed')))
       .returning({ id: messages.id })
     claimed.push(...moved.map((m) => m.id))

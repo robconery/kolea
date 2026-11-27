@@ -79,9 +79,18 @@ api.post('/webhooks/:provider{resend|mailgun|stripe}', async (c) => {
     // A bad signature is rejected and observable, never silently accepted.
     return c.json({ error: String(err) }, reader.rejectStatus)
   }
-  // Outside the try: a database failure here is a 500 the provider retries, not
-  // a "bad signature" that tells it to give up on a real bounce.
-  for (const ev of evs) await applyProviderEvent(db, ev)
+  // ⭐ Its own try, and a different answer. The webhook was genuine; we could not
+  // take it right now (most often the database refusing under load). A 503 is
+  // what makes the provider deliver it again later. A 401 would say "forged",
+  // and a real bounce or complaint would be lost. Events already applied are
+  // safe to see twice: each one's dedupe key makes the replay a no-op.
+  try {
+    for (const ev of evs) await applyProviderEvent(db, ev)
+  } catch (err) {
+    return c.json({ error: 'could not record the event right now; deliver it again', detail: String(err).slice(0, 300) }, 503, {
+      'Retry-After': '60',
+    })
+  }
   return c.json({ ok: true, applied: evs.length })
 })
 

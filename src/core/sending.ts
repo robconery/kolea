@@ -333,8 +333,16 @@ export async function sendMessages(
   try {
     return await sendClaimed(env, db, messageIds, opts, held)
   } catch (err) {
+    // Every row given back here is one nothing was handed over for: the batch
+    // threw before the provider was asked, the provider call threw (an adapter
+    // throws only when no request can have reached the provider; see
+    // `EmailProvider.sendBatch`), or the provider refused it and only the write
+    // of that refusal failed. Mail the provider took is the exception, and stays
+    // held and marked (`UnrecordedSendError`).
     const taken =
-      err instanceof UnrecordedSendError ? new Set(err.accepted.map((a) => a.messageId)) : new Set<number>()
+      err instanceof UnrecordedSendError
+        ? new Set([...err.accepted.map((a) => a.messageId), ...err.unsure])
+        : new Set<number>()
     try {
       await releaseClaims(
         db,
@@ -342,7 +350,10 @@ export async function sendMessages(
       )
     } catch {
       // The database may be what failed. The claim then runs out on its own
-      // (`CLAIM_LEASE_MS`), well inside the queue's retry budget.
+      // (`CLAIM_LEASE_MS`), well inside the queue's retry budget. A row whose
+      // `provider_called_at` could not be cleared is never claimed again
+      // automatically, and the sweep reports it as `outcome unknown` instead:
+      // the safe side to be wrong on.
     }
     throw err
   }
@@ -373,17 +384,28 @@ async function sendClaimed(
   // ⭐ Claim before sending. Re-reading `queued` is not enough on its own: two
   // consumers that read the same row before either wrote `sent` would both
   // send it. Only the rows this one conditional update matched are ours.
+  const claimAt = new Date()
   const claimed = await claimForSending(
     db,
     candidates.map((m) => m.id),
+    claimAt,
   )
   const queued = candidates.filter((m) => claimed.has(m.id))
   for (const id of claimed) held.add(id)
   for (const m of candidates) {
-    // Someone else is sending it right now. Retryable, not skipped: if that
-    // consumer dies, this queue message is what comes back for the row once
-    // the claim expires.
-    if (!claimed.has(m.id)) outcomes.set(m.id, { status: 'failed', error: 'being sent by another consumer', retryable: true })
+    if (claimed.has(m.id)) continue
+    // Not ours. Retryable, not skipped. Either another consumer is sending it
+    // right now, and this job is what comes back for the row if that consumer
+    // dies before it asks the provider; or the provider was already asked and
+    // the record of its answer is on its way. Neither is sent from here, and if
+    // nothing ever lands the dead-letter queue says `outcome unknown`.
+    outcomes.set(m.id, {
+      status: 'failed',
+      error: m.providerCalledAt
+        ? 'the provider was already asked for this; waiting for its record'
+        : 'being sent by another consumer',
+      retryable: true,
+    })
   }
   if (queued.length === 0) return outcomes
 
@@ -539,6 +561,7 @@ async function sendClaimed(
       message: msg,
       email: {
         ref: msg.id,
+        messageId: msg.id,
         to: sub.email,
         fromEmail: env.FROM_EMAIL,
         fromName: env.FROM_NAME,
@@ -552,9 +575,29 @@ async function sendClaimed(
 
   if (pending.length === 0) return outcomes
 
+  // ── the last write before the provider is asked
+  //
+  // ⭐ From this statement on, the provider may have the mail. The claim says
+  // "somebody is working on this row" and runs out; this says "the provider was
+  // asked", and nothing automatic ever sends a row that carries it again
+  // (`claimForSending`, the broadcast sweep). Only rows still ours, with the
+  // claim this batch took, are marked, and only the marked ones are sent.
+  const provider = providerFor(env, db)
+  const asked = await markProviderCalled(
+    db,
+    pending.map((p) => p.message.id),
+    claimAt,
+  )
+  for (let i = pending.length - 1; i >= 0; i--) {
+    const id = (pending[i] as (typeof pending)[number]).message.id
+    if (asked.has(id)) continue
+    outcomes.set(id, { status: 'failed', error: 'being sent by another consumer', retryable: true })
+    pending.splice(i, 1)
+  }
+  if (pending.length === 0) return outcomes
+
   // ── one provider request for the lot
 
-  const provider = providerFor(env, db)
   const results = await provider.sendBatch(pending.map((p) => p.email))
 
   // ── and one write for everything it said
@@ -570,10 +613,12 @@ async function sendClaimed(
   for (const [i, { message }] of pending.entries()) {
     const result = results[i]
     if (!result) {
-      // Shouldn't happen — the port promises one result per input — but a silent
-      // `sent` here would be a lost email, so treat it as retryable.
-      writes.push({ messageId: message.id, failed: { error: 'no provider result', retryable: true } })
-      outcomes.set(message.id, { status: 'failed', error: 'no provider result', retryable: true })
+      // Shouldn't happen: the port promises one result per input. But the
+      // request went, so the provider may have this one. A silent `sent` would
+      // be a lost email and a retry could be a second copy, so it is neither.
+      const error = `${OUTCOME_UNKNOWN}: the provider returned no result for this message`
+      writes.push({ messageId: message.id, failed: { error, retryable: false, unknown: true } })
+      outcomes.set(message.id, { status: 'failed', error, retryable: false })
       continue
     }
 
@@ -597,7 +642,7 @@ async function sendClaimed(
     const error =
       unknown && !result.error.startsWith(OUTCOME_UNKNOWN) ? `${OUTCOME_UNKNOWN}: ${result.error}` : result.error
     const retryable = result.retryable && !unknown
-    writes.push({ messageId: message.id, failed: { error, retryable } })
+    writes.push({ messageId: message.id, failed: { error, retryable, unknown } })
     outcomes.set(message.id, {
       status: 'failed',
       error,
@@ -610,8 +655,10 @@ async function sendClaimed(
     await recordResults(db, writes)
   } catch (err) {
     const accepted = writes.filter((w): w is AcceptedWrite => 'accepted' in w)
-    if (accepted.length === 0) throw err
-    throw new UnrecordedSendError(accepted, err)
+    // "May have gone" whose record also failed: never given back for a retry.
+    const unsure = writes.flatMap((w) => ('failed' in w && w.failed.unknown ? [w.messageId] : []))
+    if (accepted.length === 0 && unsure.length === 0) throw err
+    throw new UnrecordedSendError(accepted, err, unsure)
   }
 
   return outcomes
@@ -623,7 +670,13 @@ export interface AcceptedWrite {
   accepted: AcceptedSend
 }
 
-type ResultWrite = AcceptedWrite | { messageId: number; failed: { error: string; retryable: boolean } }
+type ResultWrite =
+  | AcceptedWrite
+  | {
+      messageId: number
+      /** `unknown`: the provider may have it (`OUTCOME_UNKNOWN`), so the row stays marked as asked. */
+      failed: { error: string; retryable: boolean; unknown?: boolean }
+    }
 
 /**
  * ⭐ The provider took these and the database would not hear it.
@@ -636,6 +689,12 @@ export class UnrecordedSendError extends Error {
   constructor(
     readonly accepted: AcceptedWrite[],
     cause: unknown,
+    /**
+     * Messages whose answer was "may have gone" (`OUTCOME_UNKNOWN`) and whose
+     * record failed with the rest. They keep their claim and their provider
+     * mark like the accepted ones, but there is no acceptance to carry.
+     */
+    readonly unsure: number[] = [],
   ) {
     super(`the provider accepted ${accepted.length} message(s) but the result could not be recorded`, {
       cause,
@@ -671,6 +730,10 @@ async function recordResults(db: Db, writes: ResultWrite[]): Promise<void> {
               error: w.failed.error,
               // Free at once, so the queue's retry of this row can claim it.
               claimedAt: null,
+              // The provider answered "not taken", so asking again is safe. An
+              // answer of "may have gone" keeps the mark: that row is the
+              // operator's to look at, never a retry's.
+              ...(w.failed.unknown ? {} : { providerCalledAt: null }),
             },
       )
       .where(and(eq(messages.id, w.messageId), ne(messages.status, 'sent'))),
@@ -699,19 +762,26 @@ export const CLAIM_LEASE_MS = 10 * 60 * 1000
 /** Ids per claim statement: 90 plus the three fixed parameters, under D1's 100. */
 const CLAIM_CHUNK = 90
 
-/** Atomically take the still-queued, unclaimed rows among `ids`. Returns the ones taken. */
-async function claimForSending(db: Db, ids: number[]): Promise<Set<number>> {
-  const now = Date.now()
+/**
+ * Atomically take the still-queued, unclaimed rows among `ids`. Returns the ones taken.
+ *
+ * ⭐ Never a row the provider was already asked for (`provider_called_at`),
+ * however old its claim. An expired claim on such a row is what a consumer
+ * that died after the provider took the mail leaves behind, and taking it
+ * would be that reader's second copy.
+ */
+async function claimForSending(db: Db, ids: number[], at: Date): Promise<Set<number>> {
   const taken = new Set<number>()
   for (let i = 0; i < ids.length; i += CLAIM_CHUNK) {
     const rows = await db
       .update(messages)
-      .set({ claimedAt: new Date(now) })
+      .set({ claimedAt: at })
       .where(
         and(
           inArray(messages.id, ids.slice(i, i + CLAIM_CHUNK)),
           eq(messages.status, 'queued'),
-          or(isNull(messages.claimedAt), lt(messages.claimedAt, new Date(now - CLAIM_LEASE_MS))),
+          isNull(messages.providerCalledAt),
+          or(isNull(messages.claimedAt), lt(messages.claimedAt, new Date(at.getTime() - CLAIM_LEASE_MS))),
         ),
       )
       .returning({ id: messages.id })
@@ -720,11 +790,42 @@ async function claimForSending(db: Db, ids: number[]): Promise<Set<number>> {
   return taken
 }
 
+/**
+ * Mark the rows the provider is about to be asked for, one conditional write
+ * per chunk. Only rows that still carry this batch's own claim match: a claim
+ * that ran out and was taken by another consumer is theirs now.
+ */
+async function markProviderCalled(db: Db, ids: number[], claimAt: Date): Promise<Set<number>> {
+  const at = new Date()
+  const marked = new Set<number>()
+  for (let i = 0; i < ids.length; i += CLAIM_CHUNK) {
+    const rows = await db
+      .update(messages)
+      .set({ providerCalledAt: at })
+      .where(
+        and(
+          inArray(messages.id, ids.slice(i, i + CLAIM_CHUNK)),
+          eq(messages.status, 'queued'),
+          eq(messages.claimedAt, claimAt),
+          isNull(messages.providerCalledAt),
+        ),
+      )
+      .returning({ id: messages.id })
+    for (const r of rows) marked.add(r.id)
+  }
+  return marked
+}
+
+/**
+ * Give rows back after a batch that threw: the claim and the provider mark
+ * both. Only ever for rows nothing was handed over for (see the catch in
+ * `sendMessages`), so clearing the mark cannot open the way to a second copy.
+ */
 async function releaseClaims(db: Db, ids: number[]): Promise<void> {
   for (let i = 0; i < ids.length; i += CLAIM_CHUNK) {
     await db
       .update(messages)
-      .set({ claimedAt: null })
+      .set({ claimedAt: null, providerCalledAt: null })
       .where(and(inArray(messages.id, ids.slice(i, i + CLAIM_CHUNK)), eq(messages.status, 'queued')))
   }
 }

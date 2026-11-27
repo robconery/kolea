@@ -6,6 +6,7 @@ import type { Env } from '../types.ts'
 import { canReceiveBroadcastIn, loadConsentSnapshot } from './consent.ts'
 import { publishPost } from './posts.ts'
 import { audienceUpperBound, countSegment, resolveSegment } from './segments.ts'
+import { OUTCOME_UNKNOWN } from '../providers/types.ts'
 import { CLAIM_LEASE_MS, dispatch } from './sending.ts'
 
 // ─────────────────────────────────────────────────── authoring
@@ -240,6 +241,10 @@ export async function resumeBroadcast(
       and(
         eq(messages.broadcastId, id),
         isNull(messages.providerMessageId),
+        // Never a row the provider was asked for and never answered about:
+        // cancelling marked it failed, but the provider may still have it. It
+        // stays with the operator (Undelivered), not with a bulk resume.
+        isNull(messages.providerCalledAt),
         or(
           eq(messages.status, 'queued'),
           and(eq(messages.status, 'failed'), eq(messages.error, 'broadcast cancelled')),
@@ -428,22 +433,43 @@ export async function dispatchBroadcastPage(
   })
 
   const created: number[] = []
+  // Keys of rows that were already there: an earlier pass over this same page
+  // wrote them and may have died before handing them to the queue.
+  const existing: string[] = []
   for (let i = 0; i < rows.length; i += INSERT_CHUNK) {
+    const chunk = rows.slice(i, i + INSERT_CHUNK)
     const inserted = await db
       .insert(messages)
-      .values(rows.slice(i, i + INSERT_CHUNK))
+      .values(chunk)
       .onConflictDoNothing()
-      .returning({ id: messages.id, status: messages.status })
+      .returning({ id: messages.id, status: messages.status, idempotencyKey: messages.idempotencyKey })
     created.push(...inserted.filter((r) => r.status === 'queued').map((r) => r.id))
+    if (inserted.length < chunk.length) {
+      const fresh = new Set(inserted.map((r) => r.idempotencyKey))
+      existing.push(...chunk.map((r) => r.idempotencyKey).filter((k) => !fresh.has(k)))
+    }
   }
 
+  // ⭐ Resuming a page that died half-way. The rows from the earlier pass are
+  // `queued` and may have no job on the queue at all (that pass threw between
+  // the insert and the hand-over), and the insert above hands back none of
+  // them. So the ones still waiting are handed over again now, instead of
+  // sitting there until the sweep. A row that did reach the queue the first
+  // time gets a second job, which is harmless: the consumer claims each row
+  // before sending and skips anything no longer `queued`, and a row the
+  // provider was already asked for is never claimed again (`provider_called_at`).
+  const redo = await stillWaiting(db, existing)
+
+  await dispatch(env, db, [...created, ...redo])
+
+  // The cursor moves only once the page is on the queue. Moving it first is how
+  // a page that died before its hand-over left its people stranded: the next
+  // pass started after them and never looked back.
   const lastId = candidates[candidates.length - 1]!.id
   await db
     .update(broadcasts)
     .set({ cursorSubscriberId: lastId })
     .where(eq(broadcasts.id, broadcastId))
-
-  await dispatch(env, db, created)
 
   // A short page was the last one. Close in the same pass when nothing is left
   // queued (an inline send, or a page that was all suppressed); otherwise the
@@ -454,11 +480,38 @@ export async function dispatchBroadcastPage(
 }
 
 /**
+ * The rows among these idempotency keys that are still waiting for a first
+ * send: `queued`, never accepted, and never handed to the provider. One query
+ * per 90 keys, and only on a page that found rows already there.
+ */
+async function stillWaiting(db: Db, keys: string[]): Promise<number[]> {
+  const ids: number[] = []
+  for (let i = 0; i < keys.length; i += 90) {
+    const rows = await db
+      .select({ id: messages.id })
+      .from(messages)
+      .where(
+        and(
+          inArray(messages.idempotencyKey, keys.slice(i, i + 90)),
+          eq(messages.status, 'queued'),
+          isNull(messages.providerMessageId),
+          isNull(messages.providerCalledAt),
+        ),
+      )
+      .all()
+    ids.push(...rows.map((r) => r.id))
+  }
+  return ids
+}
+
+/**
  * `sent` once the walk is over and no message for it is still `queued` (SPEC 3.7).
  *
  * ⭐ A queued row can be stranded: a page that died after inserting its rows
  * but before `dispatch` leaves them `queued` with nothing in the queue for
- * them, and the rerun's `onConflictDoNothing` insert hands back none of them.
+ * them. The rerun of that page hands those over again itself
+ * (`dispatchBroadcastPage`), but a rerun is not guaranteed (the walk may
+ * already be past it, a resumed send, an older install's page).
  * Left alone they would hold this broadcast in `sending` forever, and every
  * later broadcast queues up behind it. So once the walk is over, queued rows
  * that were never attempted and are old enough that nobody can still be
@@ -474,6 +527,10 @@ export async function dispatchBroadcastPage(
  *
  * Safe to repeat: `sendMessages` claims a row atomically and skips anything no
  * longer queued, so a row that did reach the queue after all is still sent once.
+ * And only rows the provider was never asked for are handed over at all
+ * (`provider_called_at`). A row it was asked for and never answered about is
+ * the one case the system cannot settle alone: it is marked failed, `outcome
+ * unknown`, for the operator, never sent again and never left `queued`.
  */
 async function closeIfFinished(env: Env, db: Db, broadcastId: number): Promise<void> {
   const queuedLeft = async () =>
@@ -488,6 +545,31 @@ async function closeIfFinished(env: Env, db: Db, broadcastId: number): Promise<v
     const now = Date.now()
     const untouched = new Date(now - STRANDED_AFTER_MS)
     const abandoned = new Date(now - ABANDONED_AFTER_MS)
+
+    // ⭐ Asked, and never answered. The provider was handed these and no record
+    // of what it said ever landed: the consumer died mid-send, or the result
+    // and its record-only job were both lost. Sending them again could be a
+    // second copy, and leaving them `queued` holds the broadcast open with
+    // nobody coming. So once nothing can still be on its way for them (the
+    // same two hours as below, counted from the provider call), they become
+    // `failed` with an `outcome unknown` error, which puts them on the
+    // Undelivered screen under "check before sending" (SPEC 4.13). A record
+    // that turns up later still wins: it writes `sent` over `failed`.
+    await db
+      .update(messages)
+      .set({
+        status: 'failed',
+        error: `${OUTCOME_UNKNOWN}: the provider was asked to send this and no answer was ever recorded`,
+        claimedAt: null,
+      })
+      .where(
+        and(
+          eq(messages.broadcastId, broadcastId),
+          eq(messages.status, 'queued'),
+          lt(messages.providerCalledAt, abandoned),
+        ),
+      )
+
     const stranded = await db
       .select({ id: messages.id })
       .from(messages)
@@ -496,6 +578,9 @@ async function closeIfFinished(env: Env, db: Db, broadcastId: number): Promise<v
           eq(messages.broadcastId, broadcastId),
           eq(messages.status, 'queued'),
           isNull(messages.providerMessageId),
+          // Only rows the provider was never asked for. Those are the only
+          // ones a second hand-over cannot turn into a second copy.
+          isNull(messages.providerCalledAt),
           or(
             // Never attempted: no consumer has claimed it or written to it.
             and(isNull(messages.error), isNull(messages.claimedAt), lt(messages.createdAt, untouched)),
@@ -535,11 +620,57 @@ async function closeIfFinished(env: Env, db: Db, broadcastId: number): Promise<v
  * ignores drafts, so callers that skip this step silently send nothing.
  */
 export async function startBroadcast(env: Env, db: Db, broadcastId: number): Promise<number> {
+  await promoteDraft(db, broadcastId)
+  return await sendBroadcastNow(env, db, broadcastId)
+}
+
+/** `draft` → `scheduled`, due now. The one write that commits to sending. */
+async function promoteDraft(db: Db, broadcastId: number): Promise<void> {
   await db
     .update(broadcasts)
     .set({ status: 'scheduled', scheduledAt: new Date() })
     .where(and(eq(broadcasts.id, broadcastId), eq(broadcasts.status, 'draft')))
-  return await sendBroadcastNow(env, db, broadcastId)
+}
+
+/**
+ * What a person (or an agent) who pressed Send is told.
+ *
+ * - `ok: false`: the send could not be confirmed as started at all. Nothing
+ *   went out from this call; the broadcast may still be a draft, or the write
+ *   may have landed and the minutely run will pick it up. The screen says so.
+ * - `interrupted`: it started, and this call stopped part-way through (the
+ *   database refused a page). Nothing is lost: the broadcast is `scheduled`
+ *   and due, or `sending`, and the minutely cron carries on from the cursor.
+ */
+export type LaunchResult =
+  | { ok: true; materialized: number; interrupted: string | null }
+  | { ok: false; reason: string }
+
+/**
+ * `startBroadcast` for the people pressing the button. Same send, but a page
+ * that throws part-way is reported rather than thrown.
+ *
+ * A send of thousands spends several pages in this one request. When the
+ * database is overloaded one of them can fail after others went on the
+ * queue, and a 500 then tells the operator "it failed" about a send that is
+ * in fact under way and will finish by itself. Worse, it invites a second
+ * press. This says what actually happened.
+ */
+export async function launchBroadcast(env: Env, db: Db, broadcastId: number): Promise<LaunchResult> {
+  try {
+    await promoteDraft(db, broadcastId)
+  } catch (err) {
+    return { ok: false, reason: rootMessage(err) }
+  }
+  const { materialized, error } = await driveBroadcast(env, db, broadcastId, MAX_PAGES)
+  return { ok: true, materialized, interrupted: error === null ? null : rootMessage(error) }
+}
+
+/** The database's own words: Drizzle wraps a failed query in its own error. */
+function rootMessage(err: unknown): string {
+  let root = err
+  while (root instanceof Error && root.cause instanceof Error) root = root.cause
+  return (root instanceof Error ? root.message : String(root)).slice(0, 300)
 }
 
 /**
@@ -556,13 +687,33 @@ export async function sendBroadcastNow(
   broadcastId: number,
   maxPages = MAX_PAGES,
 ): Promise<number> {
+  const { materialized, error } = await driveBroadcast(env, db, broadcastId, maxPages)
+  if (error !== null) throw error
+  return materialized
+}
+
+/**
+ * The page loop, keeping what it got done when a page throws. Every page is
+ * resumable (the cursor moves only after its rows are on the queue), so
+ * stopping at a throw loses nothing; the caller decides whether to throw.
+ */
+async function driveBroadcast(
+  env: Env,
+  db: Db,
+  broadcastId: number,
+  maxPages: number,
+): Promise<{ materialized: number; error: unknown }> {
   let total = 0
-  for (let page = 0; page < maxPages; page++) {
-    const { materialized, done } = await dispatchBroadcastPage(env, db, broadcastId)
-    total += materialized
-    if (done) break
+  try {
+    for (let page = 0; page < maxPages; page++) {
+      const { materialized, done } = await dispatchBroadcastPage(env, db, broadcastId)
+      total += materialized
+      if (done) break
+    }
+  } catch (err) {
+    return { materialized: total, error: err }
   }
-  return total
+  return { materialized: total, error: null }
 }
 
 export interface BroadcastStats {

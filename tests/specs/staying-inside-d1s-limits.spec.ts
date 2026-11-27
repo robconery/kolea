@@ -275,7 +275,13 @@ describe('Feature: a big day stays inside D1’s limits', () => {
    * A broadcast whose walk is over, with three rows still `queued` in the state
    * a consumer left them in. Returns what two ticks then did.
    */
-  async function afterTwoTicksWith(row: { error?: string; claimedMinutesAgo?: number; createdMinutesAgo: number }) {
+  async function afterTwoTicksWith(row: {
+    error?: string
+    claimedMinutesAgo?: number
+    /** When the provider was asked for these (`provider_called_at`), if it was. */
+    askedMinutesAgo?: number
+    createdMinutesAgo: number
+  }) {
     const world = createWorld()
     const people = [
       await aPerson(world, { email: 'one@example.test' }),
@@ -300,6 +306,7 @@ describe('Feature: a big day stays inside D1’s limits', () => {
         idempotencyKey: `broadcast:${id}:${p.id}`,
         error: row.error ?? null,
         claimedAt: row.claimedMinutesAgo === undefined ? null : minutesAgo(row.claimedMinutesAgo),
+        providerCalledAt: row.askedMinutesAgo === undefined ? null : minutesAgo(row.askedMinutesAgo),
         createdAt: minutesAgo(row.createdMinutesAgo),
       })),
     )
@@ -308,6 +315,7 @@ describe('Feature: a big day stays inside D1’s limits', () => {
     return {
       mailed: (await world.outbox()).length,
       status: (await world.db.select().from(broadcasts).where(eq(broadcasts.id, id)).get())?.status,
+      rows: await world.db.select().from(messages).where(eq(messages.broadcastId, id)).all(),
     }
   }
 
@@ -383,6 +391,86 @@ describe('Feature: a big day stays inside D1’s limits', () => {
 
     it('finishes the broadcast', () => {
       expect(after.status).toBe('sent')
+    })
+  })
+
+  describe('Scenario: the provider was asked hours ago and no answer was ever recorded', () => {
+    // ⭐ SPEC 3.11, 4.8. The consumer died after the provider took the mail, or
+    // the result and its record-only job were both lost. The claim ran out long
+    // ago, which is exactly what a consumer that died *before* sending looks
+    // like; `provider_called_at` is the difference. Nothing sends these again,
+    // and nothing leaves them `queued` either: they go to the operator.
+    let after: Awaited<ReturnType<typeof afterTwoTicksWith>>
+
+    beforeAll(async () => {
+      after = await afterTwoTicksWith({ claimedMinutesAgo: 170, askedMinutesAgo: 170, createdMinutesAgo: 3 * 60 })
+    })
+
+    it('⭐ sends nobody a second copy', () => {
+      expect(after.mailed).toBe(0)
+    })
+
+    it('marks every one failed as mail that may have gone', () => {
+      expect(after.rows.filter((r) => r.status === 'failed' && r.error?.startsWith('outcome unknown'))).toHaveLength(3)
+    })
+
+    it('finishes the broadcast, so the next one is not blocked behind it', () => {
+      expect(after.status).toBe('sent')
+    })
+  })
+
+  describe('Scenario: the provider was asked half an hour ago and its record may still be coming', () => {
+    let after: Awaited<ReturnType<typeof afterTwoTicksWith>>
+
+    beforeAll(async () => {
+      after = await afterTwoTicksWith({ claimedMinutesAgo: 30, askedMinutesAgo: 30, createdMinutesAgo: 40 })
+    })
+
+    it('sends nothing', () => {
+      expect(after.mailed).toBe(0)
+    })
+
+    it('leaves the rows queued for their record', () => {
+      expect(after.rows.filter((r) => r.status === 'queued')).toHaveLength(3)
+    })
+
+    it('keeps the broadcast open for it', () => {
+      expect(after.status).toBe('sending')
+    })
+  })
+
+  describe('Scenario: the questions every page of a send asks, at the size of a real list', () => {
+    // A few thousand people, so the planner has a real choice to make. Each of
+    // these is asked per page of a broadcast or per reader on the preference
+    // center, and each once read a whole table to answer.
+    let tagged: string
+    let enrollments: string
+    let queuedLeft: string
+
+    beforeAll(() => {
+      const world = createWorld()
+      bulkPeople(world, 3000)
+      const db = sqlite(world)
+      db.run(`insert into tags (slug, name, created_at) values ('t1', 'T1', 0), ('t2', 'T2', 0)`)
+      db.run(`insert into subscriber_tags (subscriber_id, tag_id, tagged_at) select id, 1 + id % 2, 0 from subscribers`)
+      db.run('analyze')
+      const plan = (sql: string) =>
+        (db.query(`explain query plan ${sql}`).all() as { detail: string }[]).map((r) => r.detail).join(' / ')
+      tagged = plan('select subscriber_id from subscriber_tags where tag_id in (1, 2)')
+      enrollments = plan('select sequence_id, status from sequence_enrollments where subscriber_id = 7')
+      queuedLeft = plan(`select count(*) from messages where broadcast_id = 1 and status = 'queued'`)
+    })
+
+    it('finds the people carrying a tag by index', () => {
+      expect(tagged).toContain('USING COVERING INDEX subscriber_tags_tag_idx')
+    })
+
+    it('finds one person’s series by index', () => {
+      expect(enrollments).toContain('USING INDEX sequence_enrollments_subscriber_idx')
+    })
+
+    it('counts what a broadcast still has queued from the index alone', () => {
+      expect(queuedLeft).toContain('USING COVERING INDEX messages_broadcast_status_idx')
     })
   })
 

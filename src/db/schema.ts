@@ -102,8 +102,14 @@ export const subscriberTags = sqliteTable(
       .references(() => tags.id, { onDelete: 'cascade' }),
     taggedAt: ts('tagged_at').notNull(),
   },
-  // Pure junction: compound PK, no surrogate id.
-  (t) => [primaryKey({ columns: [t.subscriberId, t.tagId] })],
+  (t) => [
+    // Pure junction: compound PK, no surrogate id.
+    primaryKey({ columns: [t.subscriberId, t.tagId] }),
+    // The other direction: "who carries this tag". Every segment with a tag
+    // filter asks it on every page of a broadcast, and the primary key leads
+    // with the subscriber, so without this each ask read the whole table.
+    index('subscriber_tags_tag_idx').on(t.tagId, t.subscriberId),
+  ],
 )
 
 // ─────────────────────────────────────────────────────────── custom fields
@@ -580,6 +586,10 @@ export const sequenceEnrollments = sqliteTable(
   (t) => [
     uniqueIndex('sequence_enrollments_key').on(t.sequenceId, t.subscriberId),
     index('sequence_enrollments_due_idx').on(t.status, t.nextRunAt),
+    // One person's enrollments: the preference center lists them and
+    // "unsubscribe from everything" cancels them. The unique key leads with the
+    // sequence, so it cannot answer this without reading every enrollment.
+    index('sequence_enrollments_subscriber_idx').on(t.subscriberId),
   ],
 )
 
@@ -1332,14 +1342,46 @@ export const messages = sqliteTable(
      * consumers holding the same queued row (a queue redelivery, or a stranded
      * broadcast row handed over again) can therefore never both send it: only
      * the one whose update matched goes on. A claim older than
-     * `CLAIM_LEASE_MS` belongs to a consumer that died, and is free again.
+     * `CLAIM_LEASE_MS` belongs to a consumer that died, and is free again,
+     * unless that consumer had already asked the provider (`provider_called_at`).
      */
     claimedAt: ts('claimed_at'),
+    /**
+     * ⭐ When the provider was asked to send this row. Written by `sendMessages`
+     * in one conditional update just before the provider call, after the
+     * claim, and kept until a result is recorded.
+     *
+     * The claim alone cannot prevent a second copy. It runs out after
+     * `CLAIM_LEASE_MS`, and a consumer that dies after the provider took the
+     * mail (or whose write of the result failed with nowhere to keep it) leaves
+     * a row that still says `queued` behind an expired claim. That looks exactly
+     * like a consumer that died before it sent anything. This column is the
+     * difference. A row that carries it is never claimed again by anything
+     * automatic: the provider may have it. The record-only job writes it `sent`,
+     * a webhook that names it does the same (`core/events.ts`), and if neither
+     * ever arrives it becomes `failed` with an `outcome unknown` error and goes
+     * to the operator (the dead-letter queue and the broadcast sweep both do
+     * this). Never sent twice, and never left `queued` with nobody coming.
+     *
+     * Cleared only when the provider's answer is known to be "not taken": a
+     * retryable refusal, a batch that threw before or instead of the provider
+     * call, and the operator's own "send again", which is an explicit decision.
+     */
+    providerCalledAt: ts('provider_called_at'),
     createdAt: ts('created_at').notNull(),
     sentAt: ts('sent_at'),
   },
   (t) => [
-    index('messages_broadcast_idx').on(t.broadcastId),
+    // A broadcast's mail by status: the minutely tick counts what is still
+    // queued and the stats group by status. With the status in the index both
+    // read the index alone, not every row of a send of thousands. Replaces the
+    // single-column broadcast index, whose every use it also covers.
+    index('messages_broadcast_status_idx').on(t.broadcastId, t.status),
+    // ⭐ Every provider webhook names its mail by the provider's id. Without this
+    // each one read the whole table: a few webhooks per mail during a large send
+    // was enough to overload the database. Named to match an index an operator
+    // may already have created by hand; the migration says IF NOT EXISTS.
+    index('messages_provider_message_id_idx').on(t.providerMessageId),
     index('messages_subscriber_idx').on(t.subscriberId),
     // "Has this sale already been thanked?" — asked before every purchase send.
     index('messages_sale_idx').on(t.saleId),
