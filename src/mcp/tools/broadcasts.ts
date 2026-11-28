@@ -278,18 +278,27 @@ export function registerBroadcasts(server: McpServer, ctx: Ctx): void {
     'broadcast_send',
     {
       description:
-        'Send a broadcast for real. Requires a preflight_token from broadcast_preflight for this exact broadcast, unused, under 10 minutes old, and minted after the last edit. This is irreversible.',
+        'Send a broadcast for real. Requires a preflight_token from broadcast_preflight for this exact broadcast, unused, under 10 minutes old, and minted after the last edit. Refused while the body links somewhere readers cannot open (localhost, a private or test address, a non-web scheme); the preflight lists them as devLinks. Fix them with broadcast_update, or pass allow_dev_links: true only if the operator says they are intended. This is irreversible.',
       inputSchema: z.object({
         id: z.number().int(),
         preflight_token: z.string().describe('From broadcast_preflight'),
+        allow_dev_links: z
+          .boolean()
+          .optional()
+          .describe('Send even though some links point at localhost, a private or test address. Only when the operator confirms they are intended.'),
       }),
       annotations: { destructiveHint: true, idempotentHint: false },
     },
-    async ({ id, preflight_token }) => {
+    async ({ id, preflight_token, allow_dev_links }) => {
       if (!(await agentSendAllowed(ctx.env, ctx.db))) return fail(agentSendRefusal(ctx.env))
 
-      const r = await sendBroadcastWithToken(ctx.env, ctx.db, id, preflight_token)
+      const r = await sendBroadcastWithToken(ctx.env, ctx.db, id, preflight_token, {
+        allowDevLinks: allow_dev_links === true,
+      })
       if (!r.ok) {
+        if (r.code === 'dev_links') {
+          return fail(r.reason, `Fix the links with broadcast_update({ id: ${id} }), then broadcast_preflight again.`)
+        }
         return r.code === 'preflight'
           ? fail(r.reason, `Call broadcast_preflight({ id: ${id} }) and pass the token it returns.`)
           : fail(r.reason)
@@ -311,19 +320,23 @@ export function registerBroadcasts(server: McpServer, ctx: Ctx): void {
     'broadcast_schedule',
     {
       description:
-        'Park a draft to go out at a future time. The cron tick picks it up. No preflight token needed — broadcast_cancel can still stop it before it starts.',
+        'Park a draft to go out at a future time. The cron tick picks it up. No preflight token needed — broadcast_cancel can still stop it before it starts. Refused while the body links somewhere readers cannot open, unless allow_dev_links is true.',
       inputSchema: z.object({
         id: z.number().int(),
         at: z.string().describe('ISO 8601 timestamp, in the future'),
+        allow_dev_links: z
+          .boolean()
+          .optional()
+          .describe('Schedule even though some links point at localhost, a private or test address. Only when the operator confirms they are intended.'),
       }),
     },
-    async ({ id, at }) => {
+    async ({ id, at, allow_dev_links }) => {
       if (!(await agentSendAllowed(ctx.env, ctx.db))) return fail(agentSendRefusal(ctx.env))
 
       const ms = Date.parse(at)
       if (Number.isNaN(ms)) return fail(`"${at}" is not a parseable timestamp.`)
 
-      const result = await scheduleBroadcast(ctx.db, id, new Date(ms))
+      const result = await scheduleBroadcast(ctx.db, id, new Date(ms), { allowDevLinks: allow_dev_links === true })
       return result.ok ? ok({ scheduled: true, at: new Date(ms) }) : failed(result)
     },
   )

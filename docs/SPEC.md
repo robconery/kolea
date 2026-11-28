@@ -229,6 +229,20 @@ by itself, and the minutely cron continues it from where it stopped. If the send
 be confirmed as started at all, the operator is told that, and that nothing went out from
 that press.
 
+3.15 A link a reader cannot open is caught before a broadcast goes out. Such a link is
+one whose host is `localhost` or under `.localhost`, a loopback address (`127.0.0.0/8`,
+`::1`), `0.0.0.0`, a private IPv4 range (`10/8`, `172.16/12`, `192.168/16`), a name under
+`.local`, `.test`, `.internal` or `.example`, or a name with no dot at all; or one whose
+scheme is not `http`, `https`, `mailto` or `tel`. Links are read from the editor's
+document (text links, buttons, linked images) and from the markdown body. Relative links,
+`#anchors` and merge tags are not judged. The send confirmation lists each such link with
+the reason, and the send goes ahead only with a separate "send anyway" confirmation; a
+send posted without it sends nothing and shows the screen again. Sending or scheduling
+through MCP or the REST API is refused, naming the links, unless the call says
+`allow_dev_links: true`; the broadcast preflight lists them as `devLinks`. A broadcast
+without such links sends exactly as before. Saving a sequence step that has one warns,
+naming it, and saves.
+
 ## 4. Sending & delivery
 
 4.1 Each message is sent individually through the configured provider. One failure

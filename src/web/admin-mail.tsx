@@ -10,6 +10,7 @@ import {
   launchBroadcast,
 } from '../core/broadcasts.ts'
 import { fromAddressStanding } from '../core/domains.ts'
+import { type DevLink, devLinks } from '../core/link-safety.ts'
 import { listCampaigns } from '../core/campaigns.ts'
 import { storeMedia } from '../core/media.ts'
 import { setPostTags, tagSlug, tagsForPost } from '../core/post-tags.ts'
@@ -1310,6 +1311,24 @@ mail.post('/broadcasts/:id/revise', async (c) => {
 })
 
 /**
+ * The links readers can't open, named one by one with why. Shared by the
+ * confirmation screen and the step editor, so both say it the same way.
+ */
+const DevLinkWarning: FC<{ links: DevLink[]; lead?: string }> = ({ links, lead }) => (
+  <div class="flash warn" style="margin:0 0 20px" data-test="dev-links">
+    <strong>{links.length === 1 ? 'This link won’t open for readers.' : 'These links won’t open for readers.'}</strong>{' '}
+    {lead ?? 'They point at your own machine or a private network. Go back and fix them, unless they are meant to be there.'}
+    <ul style="margin:8px 0 0;padding-left:18px;line-height:1.6">
+      {links.map((l) => (
+        <li>
+          <span class="mono" style="word-break:break-all">{l.url}</span> <span class="faint">{l.reason}</span>
+        </li>
+      ))}
+    </ul>
+  </div>
+)
+
+/**
  * The confirmation screen: the last stop before real inboxes. It names the
  * audience and its size as of now, shows how the piece opens, and warns when
  * it looks unfinished. The send route below refuses anything that didn't come
@@ -1350,6 +1369,10 @@ mail.get('/broadcasts/:id/send', async (c) => {
   }
 
   const people = `${audienceSize.toLocaleString('en-US')} ${audienceSize === 1 ? 'person' : 'people'}`
+  // Links that only work on the writer's machine or network (SPEC 3.15). They
+  // don't block: a staging list may mean them. They do need a second,
+  // separate yes, and the send route refuses without it.
+  const local = devLinks({ json: b.bodyJson, md: b.bodyMd })
 
   return c.html(
     <Layout title={`Send · ${b.subject}`} nav="bc">
@@ -1391,15 +1414,22 @@ mail.get('/broadcasts/:id/send', async (c) => {
               <strong>Check before sending.</strong> {warnings.join(' ')}
             </div>
           ) : null}
+          {local.length ? <DevLinkWarning links={local} /> : null}
 
           <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
             <a class="btn" href={`/broadcasts/${id}`}>
               Back to editing
             </a>
             {blockers.length ? null : (
-              <form method="post" action={`/broadcasts/${id}/send`} style="display:inline">
+              <form method="post" action={`/broadcasts/${id}/send`} style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
                 <input type="hidden" name="confirm" value="send" />
                 <input type="hidden" name="expected" value={String(audienceSize)} />
+                {local.length ? (
+                  <label style="display:flex;gap:8px;align-items:center" data-test="dev-links-ok">
+                    <input type="checkbox" name="dev_links_ok" value="1" required />
+                    <span>Send anyway, these links are intended</span>
+                  </label>
+                ) : null}
                 <button class="btn accent">Send to {people}</button>
               </form>
             )}
@@ -1500,6 +1530,16 @@ mail.post('/broadcasts/:id/send', async (c) => {
     // Looks like a plain redirect, so the audit trail is told it was a refusal.
     refuse(c, 'send was not confirmed on the confirmation screen')
     return c.redirect(`/broadcasts/${id}/send`)
+  }
+
+  // Links readers can't open need their own tick (SPEC 3.15). The box is
+  // `required` on the screen, but a form can be posted without the screen, so
+  // the rule lives here.
+  if (devLinks({ json: b.bodyJson, md: b.bodyMd }).length && String(form.get('dev_links_ok') ?? '') !== '1') {
+    refuse(c, 'send has links readers cannot open, and they were not confirmed as intended')
+    return c.redirect(
+      `/broadcasts/${id}/send?flash=${encodeURIComponent('Not sent. Some links only work on your own machine or network. Fix them, or tick "Send anyway" if they are intended.')}&kind=warn`,
+    )
   }
 
   // The audience can change between the screen and the click (people join,
@@ -2203,6 +2243,18 @@ mail.get('/sequences/:id', async (c) => {
   )
 })
 
+/**
+ * The flash after a step is saved. A step has no confirmation screen (it goes
+ * out on a tick once the sequence is live), so a link readers can't open is
+ * named here, the one moment the writer is looking (SPEC 3.15).
+ */
+function stepSavedFlash(done: string, body: { bodyJson: DocNode | null; bodyMd: string }): string {
+  const local = devLinks({ json: body.bodyJson, md: body.bodyMd })
+  if (!local.length) return `flash=${encodeURIComponent(done)}`
+  const list = local.map((l) => `${l.url} (${l.reason})`).join(', ')
+  return `flash=${encodeURIComponent(`${done} Check ${local.length === 1 ? 'this link' : 'these links'}, readers can't open ${local.length === 1 ? 'it' : 'them'}: ${list}.`)}&kind=warn`
+}
+
 mail.post('/sequences/:id/steps', async (c) => {
   const db = getDb(c.env)
   const id = Number(c.req.param('id'))
@@ -2229,7 +2281,7 @@ mail.post('/sequences/:id/steps', async (c) => {
     return c.redirect(`/sequences/${id}/steps/${added.stepId}${q}`)
   }
 
-  return c.redirect(`/sequences/${id}?flash=Step added.`)
+  return c.redirect(`/sequences/${id}?${stepSavedFlash('Step added.', readEditorBody(form))}`)
 })
 
 /**
@@ -2566,7 +2618,7 @@ mail.post('/sequences/:id/steps/:stepId', async (c) => {
   }
   if (String(form.get('council') ?? '') === '1') return c.redirect(`/sequences/${id}/steps/${stepId}/council`)
 
-  return c.redirect(`/sequences/${id}/steps/${stepId}?flash=Saved.`)
+  return c.redirect(`/sequences/${id}/steps/${stepId}?${stepSavedFlash('Saved.', readEditorBody(form))}`)
 })
 
 mail.post('/sequences/:id/steps/:stepId/delete', async (c) => {

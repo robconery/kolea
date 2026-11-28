@@ -125,6 +125,12 @@ but there is a migration to apply and four things to do on your first visit.
 - **A first-run checklist.** "Get set up" sits on the dashboard until its six steps
   are done or you dismiss it. An install that is already running sees it too, with
   the steps it has already done ticked.
+- **Links readers can't open are caught before a send.** A link to `localhost`, a
+  private or test address (`192.168.x.x`, `*.local`, `*.test` and the like), or a
+  `file:` link is listed on the send confirmation with why it won't open, and the
+  send needs a second tick, "Send anyway, these links are intended". Agents and the
+  REST API are refused with the links named unless they pass `allow_dev_links:
+  true`, and the preflight lists them. Saving a sequence step with one warns.
 - `bun run setup` now also writes `MEMBER_SESSION_SECRET` and
   `AI_KEY_ENCRYPTION_SECRET` into a new `.dev.vars`, and **Seed demo data** adds two
   custom fields and a finished import to look at.

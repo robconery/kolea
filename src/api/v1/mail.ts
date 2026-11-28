@@ -252,13 +252,16 @@ export function mailRoutes(r: Hono<V1>): void {
       tag: 'broadcasts',
       status: 202,
       summary:
-        'Send a draft for real. Needs the preflight_token from POST /broadcasts/{id}/preflight for this broadcast, unused, under 10 minutes old, minted after the last edit. Irreversible.',
-      body: z.object({ preflight_token: z.string().min(1).max(200) }),
+        'Send a draft for real. Needs the preflight_token from POST /broadcasts/{id}/preflight for this broadcast, unused, under 10 minutes old, minted after the last edit. Refused with 422 dev_links while the body links somewhere readers cannot open (localhost, a private or test address, a non-web scheme), unless allow_dev_links is true. Irreversible.',
+      body: z.object({ preflight_token: z.string().min(1).max(200), allow_dev_links: z.boolean().optional() }),
     },
     async ({ c, db, env, id, body }) => {
-      const result = await sendBroadcastWithToken(env, db, id, body.preflight_token)
+      const result = await sendBroadcastWithToken(env, db, id, body.preflight_token, {
+        allowDevLinks: body.allow_dev_links === true,
+      })
       if (!result.ok) {
         if (result.code === 'not_found') return notFound(c, 'broadcast')
+        if (result.code === 'dev_links') return problem(c, 422, 'dev_links', result.reason, 'allow_dev_links')
         if (result.code === 'preflight') {
           return problem(c, 409, 'preflight_refused', result.reason, 'preflight_token')
         }
@@ -278,12 +281,14 @@ export function mailRoutes(r: Hono<V1>): void {
       method: 'post',
       path: '/broadcasts/:id/schedule',
       tag: 'broadcasts',
-      summary: 'Park a draft to go out at a future time. Cancel can still stop it before it starts.',
-      body: z.object({ at: z.iso.datetime({ offset: true }) }),
+      summary:
+        'Park a draft to go out at a future time. Cancel can still stop it before it starts. Refused with 422 dev_links while the body links somewhere readers cannot open, unless allow_dev_links is true.',
+      body: z.object({ at: z.iso.datetime({ offset: true }), allow_dev_links: z.boolean().optional() }),
     },
     async ({ c, db, id, body }) => {
       const at = new Date(body.at)
-      const result = await scheduleBroadcast(db, id, at)
+      const result = await scheduleBroadcast(db, id, at, { allowDevLinks: body.allow_dev_links === true })
+      if (result.code === 'dev_links') return problem(c, 422, 'dev_links', result.reason!, 'allow_dev_links')
       if (!result.ok) return refused(c, { ...result, field: /past/.test(result.reason ?? '') ? 'at' : undefined })
       return data(c, broadcastView((await getBroadcast(db, id))!))
     },
