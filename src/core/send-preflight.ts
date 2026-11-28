@@ -5,6 +5,7 @@ import type { Env } from '../types.ts'
 import { getBroadcast, launchBroadcast } from './broadcasts.ts'
 import { canReceiveBroadcastIn, loadConsentSnapshot } from './consent.ts'
 import { fieldKeys } from './fields.ts'
+import { type DevLink, devLinkRefusal, devLinks } from './link-safety.ts'
 import { authoredLead, postUrl } from './posts.ts'
 import { consumePreflight, digestOf, mintPreflight } from './preflight.ts'
 import { previewHtml, renderEmail } from './render.ts'
@@ -70,7 +71,7 @@ export async function sequenceDigest(db: Db, id: number): Promise<string> {
   ])
 }
 
-export type Refusal = { ok: false; reason: string; code: 'not_found' | 'conflict' | 'preflight' }
+export type Refusal = { ok: false; reason: string; code: 'not_found' | 'conflict' | 'preflight' | 'dev_links' }
 
 export interface BroadcastPreflight {
   broadcast: { id: number; subject: string; status: string; campaignId: number | null }
@@ -81,6 +82,8 @@ export interface BroadcastPreflight {
   countsAreComplete: boolean
   filteredOut: Record<string, number>
   warnings: string[]
+  /** Links a reader could not open (SPEC 3.15). The send is refused while any remain, unless overridden. */
+  devLinks: DevLink[]
   sampleRenderedFor: string
   sampleText: string
   preflight_token: string
@@ -204,6 +207,8 @@ export async function preflightBroadcast(
         .join(', ')}`,
     )
   }
+  const local = devLinks({ json: b.bodyJson, md: b.bodyMd })
+  if (local.length) warnings.push(devLinkRefusal(local, 'allow_dev_links').replace(/^Not sent: /, 'Will be refused: '))
   if (!b.campaignId) warnings.push('No campaign — clicks will not be attributed to anything.')
   if (partial) {
     warnings.push(
@@ -222,6 +227,7 @@ export async function preflightBroadcast(
       countsAreComplete: !partial,
       filteredOut: Object.fromEntries(blockedBy),
       warnings,
+      devLinks: local,
       sampleRenderedFor: first?.email ?? '(no real recipient — sample values used)',
       sampleText: sample.text.slice(0, 2000),
       preflight_token: token,
@@ -234,12 +240,18 @@ export async function preflightBroadcast(
  * ⭐ Send a draft for real, spending the token its preflight minted. Refused
  * unless the token is for this broadcast, unused, unexpired, and minted after
  * the last edit. Single-use is stamped before anything is sent.
+ *
+ * Refused too while the body links somewhere readers can't open (SPEC 3.15),
+ * unless the caller says the links are intended. That check runs before the
+ * token is spent, so fixing the links and calling again needs no new preflight
+ * unless the fix was an edit (which it is, so it does).
  */
 export async function sendBroadcastWithToken(
   env: Env,
   db: Db,
   id: number,
   token: string,
+  opts: { allowDevLinks?: boolean; flag?: string } = {},
 ): Promise<
   { ok: true; expectedRecipients: number; materialized: number; interrupted: string | null } | Refusal
 > {
@@ -247,6 +259,11 @@ export async function sendBroadcastWithToken(
   if (!b) return { ok: false, reason: 'No such broadcast.', code: 'not_found' }
   if (b.status !== 'draft') {
     return { ok: false, reason: `Broadcast #${id} is already ${b.status}.`, code: 'conflict' }
+  }
+
+  const local = devLinks({ json: b.bodyJson, md: b.bodyMd })
+  if (local.length && !opts.allowDevLinks) {
+    return { ok: false, reason: devLinkRefusal(local, opts.flag ?? 'allow_dev_links'), code: 'dev_links' }
   }
 
   const check = await consumePreflight(db, 'broadcast_send', id, await broadcastDigest(b), token)

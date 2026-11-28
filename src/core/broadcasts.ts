@@ -4,6 +4,7 @@ import type { DocNode, SegmentRule } from '../db/schema.ts'
 import { broadcasts, events, messages } from '../db/schema.ts'
 import type { Env } from '../types.ts'
 import { canReceiveBroadcastIn, loadConsentSnapshot } from './consent.ts'
+import { devLinkRefusal, devLinks } from './link-safety.ts'
 import { publishPost } from './posts.ts'
 import { audienceUpperBound, countSegment, resolveSegment } from './segments.ts'
 import { OUTCOME_UNKNOWN } from '../providers/types.ts'
@@ -162,16 +163,25 @@ export async function deleteBroadcast(
 /**
  * Park a draft until a future time. The cron tick picks it up (see `worker.tsx`),
  * so scheduling is just a status plus a timestamp — nothing is held in memory.
+ *
+ * Scheduling is where the send is decided, since the cron sends without asking
+ * again, so links readers can't open are refused here (SPEC 3.15) unless the
+ * caller says they are intended.
  */
 export async function scheduleBroadcast(
   db: Db,
   id: number,
   at: Date,
-): Promise<{ ok: boolean; reason?: string }> {
+  opts: { allowDevLinks?: boolean; flag?: string } = {},
+): Promise<{ ok: boolean; reason?: string; code?: 'dev_links' }> {
   const b = await getBroadcast(db, id)
   if (!b) return { ok: false, reason: 'no such broadcast' }
   if (b.status !== 'draft') return { ok: false, reason: `broadcast is ${b.status}, not a draft` }
   if (at.getTime() <= Date.now()) return { ok: false, reason: 'scheduled time is in the past' }
+  const local = devLinks({ json: b.bodyJson, md: b.bodyMd })
+  if (local.length && !opts.allowDevLinks) {
+    return { ok: false, reason: devLinkRefusal(local, opts.flag ?? 'allow_dev_links'), code: 'dev_links' }
+  }
 
   await db
     .update(broadcasts)

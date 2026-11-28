@@ -67,6 +67,8 @@ const RULES: Rule[] = [
     path: new RegExp(`^/broadcasts/${ID}/(edit|preview|revise|publish|unpublish|feature-image/(upload|unsplash|clear))$`),
     min: 'writer',
   },
+  // Fixing a link in sent mail is a correction like `revise`: it sends nothing.
+  { method: 'POST', path: new RegExp(`^/broadcasts/${ID}/links/(fix|${ID}/remove)$`), min: 'writer' },
 
   // ── Writing: sequences and their steps, never switching one on
   { method: 'POST', path: /^\/sequences$/, min: 'writer' },

@@ -15,6 +15,7 @@ import {
   scheduleBroadcast,
   updateBroadcast,
 } from '../../core/broadcasts.ts'
+import { broadcastLinks, fixBroadcastLink, removeLinkFixFor } from '../../core/link-fixes.ts'
 import { mdToDoc } from '../../core/md-to-doc.ts'
 import { previewHtml } from '../../core/render.ts'
 import { countSegment, describeRule, getSegment } from '../../core/segments.ts'
@@ -278,18 +279,27 @@ export function registerBroadcasts(server: McpServer, ctx: Ctx): void {
     'broadcast_send',
     {
       description:
-        'Send a broadcast for real. Requires a preflight_token from broadcast_preflight for this exact broadcast, unused, under 10 minutes old, and minted after the last edit. This is irreversible.',
+        'Send a broadcast for real. Requires a preflight_token from broadcast_preflight for this exact broadcast, unused, under 10 minutes old, and minted after the last edit. Refused while the body links somewhere readers cannot open (localhost, a private or test address, a non-web scheme); the preflight lists them as devLinks. Fix them with broadcast_update, or pass allow_dev_links: true only if the operator says they are intended. This is irreversible.',
       inputSchema: z.object({
         id: z.number().int(),
         preflight_token: z.string().describe('From broadcast_preflight'),
+        allow_dev_links: z
+          .boolean()
+          .optional()
+          .describe('Send even though some links point at localhost, a private or test address. Only when the operator confirms they are intended.'),
       }),
       annotations: { destructiveHint: true, idempotentHint: false },
     },
-    async ({ id, preflight_token }) => {
+    async ({ id, preflight_token, allow_dev_links }) => {
       if (!(await agentSendAllowed(ctx.env, ctx.db))) return fail(agentSendRefusal(ctx.env))
 
-      const r = await sendBroadcastWithToken(ctx.env, ctx.db, id, preflight_token)
+      const r = await sendBroadcastWithToken(ctx.env, ctx.db, id, preflight_token, {
+        allowDevLinks: allow_dev_links === true,
+      })
       if (!r.ok) {
+        if (r.code === 'dev_links') {
+          return fail(r.reason, `Fix the links with broadcast_update({ id: ${id} }), then broadcast_preflight again.`)
+        }
         return r.code === 'preflight'
           ? fail(r.reason, `Call broadcast_preflight({ id: ${id} }) and pass the token it returns.`)
           : fail(r.reason)
@@ -311,19 +321,23 @@ export function registerBroadcasts(server: McpServer, ctx: Ctx): void {
     'broadcast_schedule',
     {
       description:
-        'Park a draft to go out at a future time. The cron tick picks it up. No preflight token needed — broadcast_cancel can still stop it before it starts.',
+        'Park a draft to go out at a future time. The cron tick picks it up. No preflight token needed — broadcast_cancel can still stop it before it starts. Refused while the body links somewhere readers cannot open, unless allow_dev_links is true.',
       inputSchema: z.object({
         id: z.number().int(),
         at: z.string().describe('ISO 8601 timestamp, in the future'),
+        allow_dev_links: z
+          .boolean()
+          .optional()
+          .describe('Schedule even though some links point at localhost, a private or test address. Only when the operator confirms they are intended.'),
       }),
     },
-    async ({ id, at }) => {
+    async ({ id, at, allow_dev_links }) => {
       if (!(await agentSendAllowed(ctx.env, ctx.db))) return fail(agentSendRefusal(ctx.env))
 
       const ms = Date.parse(at)
       if (Number.isNaN(ms)) return fail(`"${at}" is not a parseable timestamp.`)
 
-      const result = await scheduleBroadcast(ctx.db, id, new Date(ms))
+      const result = await scheduleBroadcast(ctx.db, id, new Date(ms), { allowDevLinks: allow_dev_links === true })
       return result.ok ? ok({ scheduled: true, at: new Date(ms) }) : failed(result)
     },
   )
@@ -478,6 +492,72 @@ export function registerBroadcasts(server: McpServer, ctx: Ctx): void {
         return failed(result, b.status === 'draft' ? 'A draft is edited with broadcast_update.' : undefined)
       }
       return ok({ revised: true, sent: 0, note: 'Saved. Nothing was sent.' })
+    },
+  )
+
+  defineTool(
+    server,
+    ctx,
+    'broadcast_links',
+    {
+      description:
+        'Every link in a broadcast: as mailed, as it stands now, and any clicked from delivered copies, with how many people clicked each and any fix in place. Use it to pick from_url for broadcast_fix_link.',
+      inputSchema: z.object({ id: z.number().int() }),
+      annotations: { readOnlyHint: true },
+    },
+    async ({ id }) => {
+      const links = await broadcastLinks(ctx.db, id)
+      if (!links) return fail('No such broadcast.')
+      return ok(
+        links.map((l) => ({ url: l.url, clicks: l.clicks, inBody: l.inBody, fixedTo: l.fix?.toUrl ?? null })),
+      )
+    },
+  )
+
+  defineTool(
+    server,
+    ctx,
+    'broadcast_fix_link',
+    {
+      description:
+        'Correct one link in a broadcast that already went out (sent, or cancelled part-way). Clicks on from_url in copies already delivered go to to_url from now on, and the stored body (so the web page, and a resumed send) gets to_url in place of from_url. NEVER sends anything. to_url must be http(s) and reachable from the internet. Fixing the same link again re-points it. Only tracked links can be redirected: a link opened from the plain-text part, or with click tracking off, still goes to the old address.',
+      inputSchema: z.object({
+        id: z.number().int(),
+        from_url: z.string().min(1).describe('The link exactly as it is in the mail; see broadcast_links'),
+        to_url: z.string().min(1).describe('Where it should go, https://…'),
+      }),
+      annotations: { idempotentHint: true },
+    },
+    async ({ id, from_url, to_url }) => {
+      const r = await fixBroadcastLink(ctx.db, id, from_url, to_url)
+      if (!r.ok) {
+        return fail(r.reason, r.reason.includes('not in this broadcast') ? `List them with broadcast_links({ id: ${id} }).` : undefined)
+      }
+      return ok({
+        fixed: true,
+        from: r.fromUrl,
+        to: r.toUrl,
+        rewrittenInBody: r.rewritten,
+        sent: 0,
+        note: 'Clicks from delivered copies now go to the new link. Nothing was sent.',
+      })
+    },
+  )
+
+  defineTool(
+    server,
+    ctx,
+    'broadcast_remove_link_fix',
+    {
+      description:
+        'Undo broadcast_fix_link for one link: clicks on from_url in delivered copies go to from_url again. The stored body keeps the corrected link; change it with broadcast_revise if needed.',
+      inputSchema: z.object({ id: z.number().int(), from_url: z.string().min(1) }),
+      annotations: { destructiveHint: true },
+    },
+    async ({ id, from_url }) => {
+      const r = await removeLinkFixFor(ctx.db, id, from_url)
+      if (!r.ok) return fail(r.reason, `See the fixes with broadcast_links({ id: ${id} }).`)
+      return ok({ removed: true, from: r.fix.fromUrl, wasGoingTo: r.fix.toUrl })
     },
   )
 

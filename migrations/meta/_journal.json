@@ -225,6 +225,13 @@
       "when": 1795814491738,
       "tag": "0031_messy_blackheart",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1795899091415,
+      "tag": "0032_special_vivisector",
+      "breakpoints": true
     }
   ]
 }
