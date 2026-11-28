@@ -65,13 +65,19 @@ export async function applyTagRules(
     sequenceId = step?.sequenceId ?? null
   }
 
-  const url = typeof meta.url === 'string' ? meta.url.toLowerCase() : ''
+  // A click on a fixed link (SPEC 5.15) carries the link as mailed and where
+  // the reader was sent. A rule matches either: one written for the old link
+  // keeps working for readers of copies already delivered, and one written for
+  // the corrected link works whichever copy the reader has.
+  const urls = [meta.url, meta.fixed_to]
+    .filter((u): u is string => typeof u === 'string')
+    .map((u) => u.toLowerCase())
   let applied = 0
 
   for (const r of rules) {
     if (r.broadcastId !== null && r.broadcastId !== msg.broadcastId) continue
     if (r.sequenceId !== null && r.sequenceId !== sequenceId) continue
-    if (r.urlContains && !url.includes(r.urlContains.toLowerCase())) continue
+    if (r.urlContains && !urls.some((u) => u.includes(r.urlContains!.toLowerCase()))) continue
 
     const added = await addTags(db, msg.subscriberId, [r.tagId])
     if (added === 0) continue // already tagged — don't inflate the counter

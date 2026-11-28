@@ -10,6 +10,7 @@ import {
   launchBroadcast,
 } from '../core/broadcasts.ts'
 import { fromAddressStanding } from '../core/domains.ts'
+import { type BroadcastLink, broadcastLinks, fixBroadcastLink, removeLinkFix } from '../core/link-fixes.ts'
 import { type DevLink, devLinks } from '../core/link-safety.ts'
 import { listCampaigns } from '../core/campaigns.ts'
 import { storeMedia } from '../core/media.ts'
@@ -699,6 +700,7 @@ mail.get('/broadcasts/:id', async (c) => {
   // different. There is no autosave and no send: every save rewrites a live
   // page, so it happens when the Save button is pressed and not before.
   const save = revising ? <button class="btn primary">Save changes</button> : null
+  const links = revising ? await broadcastLinks(db, id) : null
   // A cancelled send can be picked up where it stopped. A link, not a submit:
   // it opens its own confirmation screen and never sends from here.
   const resume =
@@ -765,6 +767,7 @@ mail.get('/broadcasts/:id', async (c) => {
             ) : null}
           </div>
           <WebPanel env={c.env} b={b} topics={topics} mode={revising ? 'sent' : 'locked'} />
+          {links ? <FixLinks id={id} links={links} /> : null}
           {/* A sent broadcast can still be mailed to its author, one copy, as many
               times as they like: that is how a change to the email template gets
               looked at in a real inbox. `formaction`, so it never saves the
@@ -1327,6 +1330,92 @@ const DevLinkWarning: FC<{ links: DevLink[]; lead?: string }> = ({ links, lead }
     </ul>
   </div>
 )
+
+/**
+ * ⭐ "Fix a link" on a sent broadcast (SPEC 5.15). Inside the composer's form,
+ * like the preview button, so its buttons post with `formaction` and never
+ * save what is in the editor: a save there rewrites the live page, and only
+ * Save should do that.
+ */
+const FixLinks: FC<{ id: number; links: BroadcastLink[] }> = ({ id, links }) => {
+  const fixable = links.filter((l) => /^https?:\/\//i.test(l.url))
+  if (!fixable.length) return null
+  return (
+    <div class="side-sec" data-test="fix-link">
+      <h3>Fix a link</h3>
+      <p class="faint" style="margin:0 0 10px">
+        Clicks from mail already delivered go to the new link. The web page gets it too. Nothing is sent.
+      </p>
+      <ul style="margin:0 0 12px;padding:0;list-style:none;line-height:1.5">
+        {fixable.map((l) => (
+          <li style="margin:0 0 8px">
+            <span class="mono" style="word-break:break-all">{l.url}</span>{' '}
+            <span class="faint">
+              · {l.clicks} {l.clicks === 1 ? 'click' : 'clicks'}
+            </span>
+            {l.fix ? (
+              <div class="faint" style="margin:2px 0 0">
+                → <span class="mono" style="word-break:break-all">{l.fix.toUrl}</span>{' '}
+                <button
+                  class="btn sm"
+                  type="submit"
+                  formaction={`/broadcasts/${id}/links/${l.fix.id}/remove`}
+                  formnovalidate
+                  title="Clicks from delivered mail go to the original link again. The mail keeps the new link."
+                >
+                  Remove fix
+                </button>
+              </div>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+      <div class="field">
+        <label for="fix_from">Link</label>
+        <select id="fix_from" name="fix_from">
+          {fixable.map((l) => (
+            <option value={l.url}>{l.url}</option>
+          ))}
+        </select>
+      </div>
+      <div class="field">
+        <label for="fix_to">Should go to</label>
+        <input type="url" id="fix_to" name="fix_to" placeholder="https://" autocomplete="off" />
+      </div>
+      <div style="margin-top:10px">
+        <button class="btn sm" type="submit" formaction={`/broadcasts/${id}/links/fix`} formnovalidate>
+          Fix link
+        </button>
+      </div>
+    </div>
+  )
+}
+
+mail.post('/broadcasts/:id/links/fix', async (c) => {
+  const db = getDb(c.env)
+  const id = Number(c.req.param('id'))
+  const form = await c.req.formData()
+  // Only the two fields this section owns. The rest of the composer's form
+  // rides along with the submit and is ignored on purpose (see `FixLinks`).
+  const r = await fixBroadcastLink(db, id, String(form.get('fix_from') ?? ''), String(form.get('fix_to') ?? ''))
+  if (!r.ok) {
+    if (r.reason === 'No such broadcast.') return c.notFound()
+    return c.redirect(`/broadcasts/${id}?flash=${encodeURIComponent(r.reason)}&kind=warn`)
+  }
+  return c.redirect(
+    `/broadcasts/${id}?flash=${encodeURIComponent(`Fixed. Clicks on ${r.fromUrl} now go to ${r.toUrl}. Nothing was sent.`)}`,
+  )
+})
+
+mail.post('/broadcasts/:id/links/:fixId/remove', async (c) => {
+  const db = getDb(c.env)
+  const id = Number(c.req.param('id'))
+  const r = await removeLinkFix(db, id, Number(c.req.param('fixId')))
+  if (!r.ok) return c.redirect(`/broadcasts/${id}?flash=${encodeURIComponent(r.reason)}&kind=warn`)
+  return c.redirect(
+    `/broadcasts/${id}?flash=${encodeURIComponent(`Fix removed. Clicks on ${r.fix.fromUrl} go there again.`)}&kind=warn`,
+  )
+})
 
 /**
  * The confirmation screen: the last stop before real inboxes. It names the

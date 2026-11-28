@@ -46,6 +46,9 @@ but there is a migration to apply and four things to do on your first visit.
   status)`. Every `CREATE INDEX` says `IF NOT EXISTS`, so an index you already
   made by hand under the same name is left alone. Like 0030, it only adds, and the
   running Worker keeps working against it.
+- **Then apply migration 0032, the same way, before deploying.** It creates one
+  table, `link_fixes`, and its index, both `IF NOT EXISTS`. It touches nothing
+  that exists.
 
 ### Added
 
@@ -131,6 +134,12 @@ but there is a migration to apply and four things to do on your first visit.
   send needs a second tick, "Send anyway, these links are intended". Agents and the
   REST API are refused with the links named unless they pass `allow_dev_links:
   true`, and the preflight lists them. Saving a sequence step with one warns.
+- **Fix a link after sending.** A sent broadcast's screen has a "Fix a link" box:
+  pick a link, type where it should go, and clicks from mail already delivered go
+  to the new address. The stored mail and its web page get the new link too, and
+  "show as mailed" keeps the original. Each link shows how many people clicked it.
+  Agents have `broadcast_links`, `broadcast_fix_link` and
+  `broadcast_remove_link_fix`. Needs migration 0032.
 - `bun run setup` now also writes `MEMBER_SESSION_SECRET` and
   `AI_KEY_ENCRYPTION_SECRET` into a new `.dev.vars`, and **Seed demo data** adds two
   custom fields and a finished import to look at.

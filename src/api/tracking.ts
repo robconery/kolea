@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { recordEvent, recordOpen } from '../core/events.ts'
+import { fixedDestination } from '../core/link-fixes.ts'
 import { getDb } from '../db/index.ts'
 import type { Env } from '../types.ts'
 
@@ -50,12 +51,24 @@ tracking.get('/t/click/:id', async (c) => {
   const url = c.req.query('u')
   if (!url) return c.notFound()
 
-  // Recording must never be able to break the reader's click (SPEC 5.4).
+  // A link fixed after the send (SPEC 5.15) sends the reader to the corrected
+  // address. A lookup that fails falls back to the link as written: a click
+  // that goes where the mail said is better than one that goes nowhere.
+  let to = url
   try {
-    if (messageId) await recordEvent(db, messageId, 'click', { url })
+    if (messageId) to = (await fixedDestination(db, messageId, url)) ?? url
+  } catch {
+    /* swallow — the redirect matters more than the fix */
+  }
+
+  // Recording must never be able to break the reader's click (SPEC 5.4).
+  // `url` stays the link as mailed, so per-link counts keep adding up across a
+  // fix; `fixed_to` says where the reader was actually sent.
+  try {
+    if (messageId) await recordEvent(db, messageId, 'click', to === url ? { url } : { url, fixed_to: to })
   } catch {
     /* swallow — the redirect matters more than the datapoint */
   }
 
-  return c.redirect(url, 302)
+  return c.redirect(to, 302)
 })

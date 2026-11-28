@@ -15,6 +15,7 @@ import {
   scheduleBroadcast,
   updateBroadcast,
 } from '../../core/broadcasts.ts'
+import { broadcastLinks, fixBroadcastLink, removeLinkFixFor } from '../../core/link-fixes.ts'
 import { mdToDoc } from '../../core/md-to-doc.ts'
 import { previewHtml } from '../../core/render.ts'
 import { countSegment, describeRule, getSegment } from '../../core/segments.ts'
@@ -491,6 +492,72 @@ export function registerBroadcasts(server: McpServer, ctx: Ctx): void {
         return failed(result, b.status === 'draft' ? 'A draft is edited with broadcast_update.' : undefined)
       }
       return ok({ revised: true, sent: 0, note: 'Saved. Nothing was sent.' })
+    },
+  )
+
+  defineTool(
+    server,
+    ctx,
+    'broadcast_links',
+    {
+      description:
+        'Every link in a broadcast: as mailed, as it stands now, and any clicked from delivered copies, with how many people clicked each and any fix in place. Use it to pick from_url for broadcast_fix_link.',
+      inputSchema: z.object({ id: z.number().int() }),
+      annotations: { readOnlyHint: true },
+    },
+    async ({ id }) => {
+      const links = await broadcastLinks(ctx.db, id)
+      if (!links) return fail('No such broadcast.')
+      return ok(
+        links.map((l) => ({ url: l.url, clicks: l.clicks, inBody: l.inBody, fixedTo: l.fix?.toUrl ?? null })),
+      )
+    },
+  )
+
+  defineTool(
+    server,
+    ctx,
+    'broadcast_fix_link',
+    {
+      description:
+        'Correct one link in a broadcast that already went out (sent, or cancelled part-way). Clicks on from_url in copies already delivered go to to_url from now on, and the stored body (so the web page, and a resumed send) gets to_url in place of from_url. NEVER sends anything. to_url must be http(s) and reachable from the internet. Fixing the same link again re-points it. Only tracked links can be redirected: a link opened from the plain-text part, or with click tracking off, still goes to the old address.',
+      inputSchema: z.object({
+        id: z.number().int(),
+        from_url: z.string().min(1).describe('The link exactly as it is in the mail; see broadcast_links'),
+        to_url: z.string().min(1).describe('Where it should go, https://…'),
+      }),
+      annotations: { idempotentHint: true },
+    },
+    async ({ id, from_url, to_url }) => {
+      const r = await fixBroadcastLink(ctx.db, id, from_url, to_url)
+      if (!r.ok) {
+        return fail(r.reason, r.reason.includes('not in this broadcast') ? `List them with broadcast_links({ id: ${id} }).` : undefined)
+      }
+      return ok({
+        fixed: true,
+        from: r.fromUrl,
+        to: r.toUrl,
+        rewrittenInBody: r.rewritten,
+        sent: 0,
+        note: 'Clicks from delivered copies now go to the new link. Nothing was sent.',
+      })
+    },
+  )
+
+  defineTool(
+    server,
+    ctx,
+    'broadcast_remove_link_fix',
+    {
+      description:
+        'Undo broadcast_fix_link for one link: clicks on from_url in delivered copies go to from_url again. The stored body keeps the corrected link; change it with broadcast_revise if needed.',
+      inputSchema: z.object({ id: z.number().int(), from_url: z.string().min(1) }),
+      annotations: { destructiveHint: true },
+    },
+    async ({ id, from_url }) => {
+      const r = await removeLinkFixFor(ctx.db, id, from_url)
+      if (!r.ok) return fail(r.reason, `See the fixes with broadcast_links({ id: ${id} }).`)
+      return ok({ removed: true, from: r.fix.fromUrl, wasGoingTo: r.fix.toUrl })
     },
   )
 

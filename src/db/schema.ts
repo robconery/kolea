@@ -1445,6 +1445,39 @@ export const events = sqliteTable(
   ],
 )
 
+/**
+ * ⭐ A link corrected after the mail went out.
+ *
+ * Mail that has been delivered cannot be changed, but every tracked link in it
+ * comes back through `/t/click/:id?u=<url>` first. So a fix is a row, not an
+ * edit: the click route looks up `(broadcast_id, u)` here and, when a row
+ * exists, sends the reader to `to_url` instead. Fixing also rewrites the href in
+ * the stored body (`core/link-fixes.ts`), so the web page and any later send
+ * carry the corrected link without needing this table at all.
+ *
+ * Keyed by broadcast, not by message: one wrong link went to everyone who got
+ * the broadcast. `from_url` is the link exactly as it was written, which is
+ * exactly what the renderer put in `u` (`core/render.ts`), so the lookup is an
+ * equality match on the unique index and never a scan.
+ *
+ * Cascade: a fix for a deleted broadcast has nothing left to redirect for.
+ */
+export const linkFixes = sqliteTable(
+  'link_fixes',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    broadcastId: integer('broadcast_id')
+      .notNull()
+      .references(() => broadcasts.id, { onDelete: 'cascade' }),
+    fromUrl: text('from_url').notNull(),
+    toUrl: text('to_url').notNull(),
+    createdAt: ts('created_at').notNull(),
+  },
+  (t) => [uniqueIndex('link_fixes_broadcast_from_key').on(t.broadcastId, t.fromUrl)],
+)
+
+export type LinkFix = typeof linkFixes.$inferSelect
+
 // ─────────────────────────────────────────────────────────── activities
 
 /**

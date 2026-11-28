@@ -350,7 +350,7 @@ again. Applying the same webhook again later changes nothing that was already ap
 5.3 Webhooks are idempotent: the same provider event delivered twice produces one event row.
 
 5.4 A click redirects to the original URL, recording the event. Tracking failure must
-never prevent the redirect.
+never prevent the redirect. The one exception is a link fixed after the send (5.15).
 
 5.5 Per broadcast, the operator can see: sent, delivered, opened, clicked, bounced,
 complained, unsubscribed.
@@ -390,6 +390,20 @@ asked for it (4.5a). Otherwise the message is found by the provider's id, as if 
 been named. In the second case the webhook stands in for the record that never landed:
 the message gets the provider's id, and one still `queued`, or `failed` as `outcome
 unknown`, becomes `sent`.
+
+5.15 A link in a broadcast that has gone out (`sent`, or `cancelled` part-way) can be
+fixed. A fix names the link as it was mailed and the corrected link, which must be
+`http` or `https` and pass 3.15. From then on a tracked click on the old link in any copy
+of that broadcast redirects to the corrected link; the click event records the link as
+mailed (`url`) and where the reader was sent (`fixed_to`), and a click tag rule's
+URL filter matches either. Finding the fix is one indexed lookup; if it fails, the click
+redirects to the link as written. Fixing also rewrites the link in the stored body,
+keeping the as-mailed copy the first time, so the published post and any resumed send
+carry the corrected link. Fixing a link already fixed re-points every earlier fix that led
+to it. Removing a fix sends clicks to the link as mailed again and leaves the body as it
+is. Only a link in the broadcast (as mailed, as it stands, or clicked from it) can be
+fixed. Fixing sends nothing. Untracked links (click tracking off, unsubscribe and download
+links, the plain-text part) cannot be redirected.
 
 > ⚠️ TODO: per-subscriber engagement history vs. per-campaign aggregate only. Schema
 > supports both; this decides UI scope.
